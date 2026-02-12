@@ -16,6 +16,7 @@ jobs:
   actionlint:
     name: actionlint
     permissions:
+      actions: read # for codeql-action/upload-sarif telemetry
       contents: read # to check out the code
       security-events: write # for uploading the SARIF report
     runs-on: ubuntu-latest
@@ -43,6 +44,7 @@ jobs:
   zizmor:
     name: zizmor
     permissions:
+      actions: read # for codeql-action/upload-sarif telemetry
       contents: read # Required to checkout the repository
       security-events: write # add zizmor security events
     runs-on: ubuntu-latest
