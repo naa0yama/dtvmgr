@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TitleLookupResponse>
+    <Result>
+        <Code>200</Code>
+        <Message></Message>
+    </Result>
+    <TitleItems>
+        <TitleItem id="6309">
+            <TID>6309</TID>
+            <LastUpdate>2022-06-30 01:56:20</LastUpdate>
+            <Title>SPY×FAMILY</Title>
+            <ShortTitle></ShortTitle>
+            <TitleYomi>すぱいふぁみりー</TitleYomi>
+            <TitleEN>SPY FAMILY</TitleEN>
+            <Comment>*スタッフ
+:原作:遠藤達哉</Comment>
+            <Cat>10</Cat>
+            <TitleFlag>0</TitleFlag>
+            <FirstYear>2022</FirstYear>
+            <FirstMonth>4</FirstMonth>
+            <FirstEndYear>2022</FirstEndYear>
+            <FirstEndMonth>6</FirstEndMonth>
+            <FirstCh>テレビ東京</FirstCh>
+            <Keywords></Keywords>
+            <UserPoint>113</UserPoint>
+            <UserPointRank>903</UserPointRank>
+            <SubTitles>*01*オペレーション〈梟(ストリクス)〉
+*02*妻役を確保せよ
+*03*受験対策をせよ
+*04*名門校面接試験
+*05*合否の行方
+*06*ナカヨシ作戦
+*07*標的(ターゲット)の次男
+*08*対秘密警察偽装作戦
+*09*ラブラブを見せつけよ
+*10*ドッジボール大作戦
+*11*〈星(ステラ)〉
+*12*ペンギンパーク</SubTitles>
+        </TitleItem>
+    </TitleItems>
+</TitleLookupResponse>

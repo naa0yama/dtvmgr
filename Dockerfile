@@ -44,7 +44,7 @@ ARG CACHE_VERSION \
 	USER_GID \
 	TZ
 
-ENV LANG=C.utf8 LC_ALL=C.utf8
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 SHELL [ "/bin/bash", "-c" ]
 

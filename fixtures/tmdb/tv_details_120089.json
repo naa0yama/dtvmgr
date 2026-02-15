@@ -1,0 +1,46 @@
+{
+	"adult": false,
+	"backdrop_path": "/7VcGME1e0VxngBNhBl9u3Gi6p3U.jpg",
+	"first_air_date": "2022-04-09",
+	"genres": [
+		{ "id": 16, "name": "Animation" },
+		{ "id": 10759, "name": "Action & Adventure" },
+		{ "id": 35, "name": "Comedy" }
+	],
+	"id": 120089,
+	"in_production": true,
+	"last_air_date": "2023-12-23",
+	"name": "SPY×FAMILY",
+	"number_of_episodes": 37,
+	"number_of_seasons": 2,
+	"origin_country": ["JP"],
+	"original_language": "ja",
+	"original_name": "SPY×FAMILY",
+	"overview": "World peace is at stake and secret agent Twilight must undergo his most difficult mission yet—pretending to be a family man.",
+	"popularity": 148.5,
+	"poster_path": "/3r4LYFnRKBnVUzBbGsAlYcR2hiw.jpg",
+	"seasons": [
+		{
+			"air_date": "2022-04-09",
+			"episode_count": 25,
+			"id": 178394,
+			"name": "Season 1",
+			"overview": "Master spy Twilight is the best at what he does when it comes to going undercover on dangerous missions in the name of a better world.",
+			"poster_path": "/3r4LYFnRKBnVUzBbGsAlYcR2hiw.jpg",
+			"season_number": 1,
+			"vote_average": 8.5
+		},
+		{
+			"air_date": "2023-10-07",
+			"episode_count": 12,
+			"id": 346780,
+			"name": "Season 2",
+			"overview": "The Forgers continue their charade as a family while Twilight works to prevent war between Westalis and Ostania.",
+			"poster_path": "/xkCRvnIDvMz6oSv6bNqJhMFap42.jpg",
+			"season_number": 2,
+			"vote_average": 8.3
+		}
+	],
+	"status": "Returning Series",
+	"vote_average": 8.6
+}

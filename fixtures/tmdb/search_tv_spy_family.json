@@ -1,0 +1,23 @@
+{
+	"page": 1,
+	"results": [
+		{
+			"adult": false,
+			"backdrop_path": "/7VcGME1e0VxngBNhBl9u3Gi6p3U.jpg",
+			"genre_ids": [16, 10759, 35],
+			"id": 120089,
+			"origin_country": ["JP"],
+			"original_language": "ja",
+			"original_name": "SPY×FAMILY",
+			"overview": "World peace is at stake and secret agent Twilight must undergo his most difficult mission yet—pretending to be a family man.",
+			"popularity": 148.5,
+			"poster_path": "/3r4LYFnRKBnVUzBbGsAlYcR2hiw.jpg",
+			"first_air_date": "2022-04-09",
+			"name": "SPY×FAMILY",
+			"vote_average": 8.6,
+			"vote_count": 1520
+		}
+	],
+	"total_pages": 1,
+	"total_results": 1
+}

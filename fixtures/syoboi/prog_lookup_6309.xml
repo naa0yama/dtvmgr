@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ProgLookupResponse>
+    <ProgItems>
+        <ProgItem id="574823">
+            <LastUpdate>2022-03-10 01:24:53</LastUpdate>
+            <PID>574823</PID>
+            <TID>6309</TID>
+            <StTime>2022-04-09 23:00:00</StTime>
+            <StOffset>0</StOffset>
+            <EdTime>2022-04-09 23:30:00</EdTime>
+            <Count>1</Count>
+            <SubTitle></SubTitle>
+            <ProgComment></ProgComment>
+            <Flag>2</Flag>
+            <Deleted>0</Deleted>
+            <Warn>1</Warn>
+            <ChID>7</ChID>
+            <Revision>0</Revision>
+            <STSubTitle>オペレーション〈梟(ストリクス)〉</STSubTitle>
+        </ProgItem>
+        <ProgItem id="574824">
+            <LastUpdate>2022-03-10 01:24:53</LastUpdate>
+            <PID>574824</PID>
+            <TID>6309</TID>
+            <StTime>2022-04-16 23:00:00</StTime>
+            <StOffset>0</StOffset>
+            <EdTime>2022-04-16 23:30:00</EdTime>
+            <Count>2</Count>
+            <SubTitle></SubTitle>
+            <ProgComment></ProgComment>
+            <Flag>0</Flag>
+            <Deleted>0</Deleted>
+            <Warn>0</Warn>
+            <ChID>7</ChID>
+            <Revision>0</Revision>
+            <STSubTitle>妻役を確保せよ</STSubTitle>
+        </ProgItem>
+        <ProgItem id="574825">
+            <LastUpdate>2022-03-10 01:24:53</LastUpdate>
+            <PID>574825</PID>
+            <TID>6309</TID>
+            <StTime>2022-04-23 23:00:00</StTime>
+            <StOffset>0</StOffset>
+            <EdTime>2022-04-23 23:30:00</EdTime>
+            <Count>3</Count>
+            <SubTitle></SubTitle>
+            <ProgComment></ProgComment>
+            <Flag>0</Flag>
+            <Deleted>0</Deleted>
+            <Warn>0</Warn>
+            <ChID>7</ChID>
+            <Revision>0</Revision>
+            <STSubTitle>受験対策をせよ</STSubTitle>
+        </ProgItem>
+    </ProgItems>
+    <Result>
+        <Code>200</Code>
+        <Message></Message>
+    </Result>
+</ProgLookupResponse>

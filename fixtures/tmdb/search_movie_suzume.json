@@ -1,0 +1,23 @@
+{
+	"page": 1,
+	"results": [
+		{
+			"adult": false,
+			"backdrop_path": "/tJLcRbCMddGYCHv8PiVzEiWWoHA.jpg",
+			"genre_ids": [16, 12, 14],
+			"id": 916224,
+			"original_language": "ja",
+			"original_title": "すずめの戸締まり",
+			"overview": "Suzume, a 17-year-old girl from a quiet Kyushu town, encounters a young man who tells her, \"I'm looking for a door.\"",
+			"popularity": 92.3,
+			"poster_path": "/vIeu8WysZrTSFb2uhPViKjX9EcC.jpg",
+			"release_date": "2022-11-11",
+			"title": "Suzume",
+			"video": false,
+			"vote_average": 8.0,
+			"vote_count": 2840
+		}
+	],
+	"total_pages": 1,
+	"total_results": 1
+}
