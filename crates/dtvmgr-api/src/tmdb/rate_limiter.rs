@@ -40,7 +40,7 @@ impl TmdbRateLimiter {
         if let Some(last) = self.last_request {
             let elapsed = now.duration_since(last);
             if elapsed < self.min_interval {
-                tokio::time::sleep(self.min_interval - elapsed).await;
+                tokio::time::sleep(self.min_interval.saturating_sub(elapsed)).await;
             }
         }
 

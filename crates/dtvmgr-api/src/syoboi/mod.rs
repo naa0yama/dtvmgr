@@ -17,5 +17,5 @@ pub use api::{LocalSyoboiApi, SyoboiApi};
 pub use client::{SyoboiClient, SyoboiClientBuilder};
 pub use params::{ProgLookupParams, TimeRange};
 #[allow(clippy::module_name_repetitions)]
-pub use types::{SyoboiChannel, SyoboiProgram, SyoboiTitle};
+pub use types::{SyoboiChannel, SyoboiChannelGroup, SyoboiProgram, SyoboiTitle};
 pub use util::{lookup_all_programs, parse_sub_titles};

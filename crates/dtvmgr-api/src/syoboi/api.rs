@@ -4,7 +4,7 @@
 use anyhow::Result;
 
 use super::params::ProgLookupParams;
-use super::types::{SyoboiChannel, SyoboiProgram, SyoboiTitle};
+use super::types::{SyoboiChannel, SyoboiChannelGroup, SyoboiProgram, SyoboiTitle};
 
 /// Syoboi Calendar API trait.
 ///
@@ -33,4 +33,14 @@ pub trait LocalSyoboiApi {
     ///
     /// Returns an error if the HTTP request or XML parsing fails.
     async fn lookup_channels(&self, ch_ids: Option<&[u32]>) -> Result<Vec<SyoboiChannel>>;
+
+    /// Looks up channel group information.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request or XML parsing fails.
+    async fn lookup_channel_groups(
+        &self,
+        ch_gids: Option<&[u32]>,
+    ) -> Result<Vec<SyoboiChannelGroup>>;
 }

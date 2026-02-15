@@ -6,6 +6,7 @@ use std::sync::LazyLock;
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use regex::Regex;
+use tracing::instrument;
 
 use super::api::LocalSyoboiApi;
 use super::params::{ProgLookupParams, TimeRange};
@@ -53,6 +54,7 @@ pub fn parse_sub_titles(raw: &str) -> Vec<(u32, String)> {
 ///
 /// Returns an error if `params.range` is `None`, any underlying API request
 /// fails, or timestamp conversion fails.
+#[instrument(skip_all)]
 pub async fn lookup_all_programs(
     api: &(impl LocalSyoboiApi + Sync),
     params: &ProgLookupParams,
@@ -181,8 +183,8 @@ mod tests {
     use chrono::NaiveDate;
 
     use super::*;
-    use crate::libs::syoboi::api::LocalSyoboiApi;
-    use crate::libs::syoboi::types::{SyoboiChannel, SyoboiTitle};
+    use crate::syoboi::api::LocalSyoboiApi;
+    use crate::syoboi::types::{SyoboiChannel, SyoboiChannelGroup, SyoboiTitle};
 
     /// Mock API that returns pre-configured batches in order.
     struct MockSyoboiApi {
@@ -216,6 +218,13 @@ mod tests {
         }
 
         async fn lookup_channels(&self, _ch_ids: Option<&[u32]>) -> Result<Vec<SyoboiChannel>> {
+            Ok(vec![])
+        }
+
+        async fn lookup_channel_groups(
+            &self,
+            _ch_gids: Option<&[u32]>,
+        ) -> Result<Vec<SyoboiChannelGroup>> {
             Ok(vec![])
         }
     }

@@ -64,7 +64,7 @@ use predicates::prelude::predicate;
 fn test_cli_subcommand() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
-    cmd.args(["api", "prog", "--help"])
+    cmd.args(["syoboi", "prog", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains("--time-since"));

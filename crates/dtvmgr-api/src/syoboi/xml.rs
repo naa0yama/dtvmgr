@@ -3,7 +3,7 @@
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 
-use super::types::{SyoboiChannel, SyoboiProgram, SyoboiTitle};
+use super::types::{SyoboiChannel, SyoboiChannelGroup, SyoboiProgram, SyoboiTitle};
 
 /// Deserializes empty strings as `None` (for `String` fields).
 pub fn deserialize_empty_string_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -113,6 +113,21 @@ pub struct ChItems {
     pub items: Vec<SyoboiChannel>,
 }
 
+/// `ChGroupLookup` full response.
+#[derive(Debug, Deserialize)]
+#[serde(rename = "ChGroupLookupResponse")]
+pub struct ChGroupLookupResponse {
+    #[serde(rename = "ChGroupItems")]
+    pub ch_group_items: ChGroupItems,
+}
+
+/// `ChGroupItems` container.
+#[derive(Debug, Deserialize)]
+pub struct ChGroupItems {
+    #[serde(rename = "ChGroupItem", default)]
+    pub items: Vec<SyoboiChannelGroup>,
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -174,7 +189,7 @@ mod tests {
     #[test]
     fn test_parse_title_lookup_response() {
         // Arrange
-        let xml = include_str!("../../../fixtures/syoboi/title_lookup_6309.xml");
+        let xml = include_str!("../../../../fixtures/syoboi/title_lookup_6309.xml");
 
         // Act
         let response: TitleLookupResponse = quick_xml::de::from_str(xml).unwrap();
@@ -188,7 +203,7 @@ mod tests {
     #[test]
     fn test_parse_prog_lookup_response() {
         // Arrange
-        let xml = include_str!("../../../fixtures/syoboi/prog_lookup_6309.xml");
+        let xml = include_str!("../../../../fixtures/syoboi/prog_lookup_6309.xml");
 
         // Act
         let response: ProgLookupResponse = quick_xml::de::from_str(xml).unwrap();
@@ -201,7 +216,7 @@ mod tests {
     #[test]
     fn test_parse_ch_lookup_response() {
         // Arrange
-        let xml = include_str!("../../../fixtures/syoboi/ch_lookup_all.xml");
+        let xml = include_str!("../../../../fixtures/syoboi/ch_lookup_all.xml");
 
         // Act
         let response: ChLookupResponse = quick_xml::de::from_str(xml).unwrap();
@@ -212,9 +227,27 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_ch_group_lookup_response() {
+        // Arrange
+        let xml = include_str!("../../../../fixtures/syoboi/ch_group_lookup_all.xml");
+
+        // Act
+        let response: ChGroupLookupResponse = quick_xml::de::from_str(xml).unwrap();
+
+        // Assert
+        assert_eq!(response.ch_group_items.items.len(), 3);
+        assert_eq!(response.ch_group_items.items[0].ch_gid, 1);
+        assert_eq!(
+            response.ch_group_items.items[0].ch_group_name,
+            "テレビ 関東"
+        );
+        assert_eq!(response.ch_group_items.items[0].ch_group_order, 1200);
+    }
+
+    #[test]
     fn test_parse_empty_response() {
         // Arrange
-        let xml = include_str!("../../../fixtures/syoboi/empty_response.xml");
+        let xml = include_str!("../../../../fixtures/syoboi/empty_response.xml");
 
         // Act
         let response: TitleLookupResponse = quick_xml::de::from_str(xml).unwrap();

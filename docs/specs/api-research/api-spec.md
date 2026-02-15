@@ -3389,6 +3389,82 @@ GET https://cal.syoboi.jp/db.php?Command=TitleLookup&TID=3893
 
 ---
 
+### db.php (ChLookup)
+
+```xml
+GET https://cal.syoboi.jp/db.php?Command=ChLookup&ChID=*
+
+<?xml version="1.0" encoding="UTF-8"?>
+<ChLookupResponse>
+    <Result>
+        <Code>200</Code>
+        <Message></Message>
+    </Result>
+    <ChItems>
+        <ChItem id="1">
+            <LastUpdate>2020-10-11 05:58:16</LastUpdate>
+            <ChID>1</ChID>
+            <ChName>NHK総合</ChName>
+            <ChiEPGName>ＮＨＫ総合</ChiEPGName>
+            <ChURL>https://www.nhk.or.jp/</ChURL>
+            <ChEPGURL>https://www.nhk.jp/timetable/</ChEPGURL>
+            <ChComment>
+            </ChComment>
+            <ChGID>11</ChGID>
+            <ChNumber>1</ChNumber>
+        </ChItem>
+        <ChItem id="2">
+            <LastUpdate>2020-10-11 05:58:25</LastUpdate>
+            <ChID>2</ChID>
+            <ChName>NHK Eテレ</ChName>
+            <ChiEPGName>ＮＨＫ教育</ChiEPGName>
+            <ChURL>https://www.nhk.or.jp/</ChURL>
+            <ChEPGURL>https://www.nhk.jp/timetable/</ChEPGURL>
+            <ChComment>NHK Eテレ1
+(2011年5月31日までは「NHK教育」の名称で放送)</ChComment>
+            <ChGID>11</ChGID>
+            <ChNumber>2</ChNumber>
+        </ChItem>
+
+        ...(snip)...
+
+    </ChItems>
+</ChLookupResponse>
+```
+
+### db.php (ChGroupLookup)
+
+```xml
+GET https://cal.syoboi.jp/db.php?Command=ChGroupLookup&ChGID=*
+
+<?xml version="1.0" encoding="UTF-8"?>
+<ChGroupLookupResponse>
+    <Result>
+        <Code>200</Code>
+        <Message></Message>
+    </Result>
+    <ChGroupItems>
+        <ChGroupItem id="1">
+            <LastUpdate>2010-01-15 21:46:14</LastUpdate>
+            <ChGID>1</ChGID>
+            <ChGroupName>テレビ 関東</ChGroupName>
+            <ChGroupComment></ChGroupComment>
+            <ChGroupOrder>1200</ChGroupOrder>
+        </ChGroupItem>
+        <ChGroupItem id="2">
+            <LastUpdate>2010-01-15 21:44:11</LastUpdate>
+            <ChGID>2</ChGID>
+            <ChGroupName>BSデジタル</ChGroupName>
+            <ChGroupComment></ChGroupComment>
+            <ChGroupOrder>3000</ChGroupOrder>
+        </ChGroupItem>
+
+        ...(snip)...
+
+    </ChGroupItems>
+</ChGroupLookupResponse>
+```
+
 ### TMDB
 
 ```json

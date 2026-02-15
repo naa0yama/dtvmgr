@@ -151,6 +151,10 @@ RUN --mount=type=bind,source=rust-toolchain.toml,target=/rust-toolchain.toml \
 USER ${USER_NAME}
 ENV CARGO_HOME=/home/${USER_NAME}/.cargo
 
+RUN echo "**** Directory Create ****" && \
+	set -euxo pipefail && \
+	mkdir -p ~/.local ~/.config
+
 RUN echo "**** PATH add zig ****" && \
 	set -euxo pipefail && \
 	echo -e "# Add PATH ziglang\nexport PATH="/usr/local/zig:\$PATH"" >> ~/.bashrc && \

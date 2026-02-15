@@ -14,8 +14,10 @@ Run: `mise run ast-grep`
 ### 1. `error-context-required` (warning)
 
 **Triggers**: `$EXPR?` without `.context()` or `.with_context()` in non-test code.
+Supports multiline method chains (AST-based matching).
 
-**Fix**: Add `.context("message")?` or `.with_context(|| format!("..."))?`.
+**Fix**: Add `.with_context(|| format!("failed to {operation}: {arg}"))?;` with
+the operation description and argument value.
 
 ### 2. `no-blocking-in-async` (error)
 

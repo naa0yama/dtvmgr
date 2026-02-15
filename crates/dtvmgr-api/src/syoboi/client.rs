@@ -6,13 +6,16 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use reqwest::Client;
 use tokio::sync::Mutex;
+use tracing::instrument;
 use url::Url;
 
 use super::api::LocalSyoboiApi;
 use super::params::ProgLookupParams;
 use super::rate_limiter::SyoboiRateLimiter;
-use super::types::{SyoboiChannel, SyoboiProgram, SyoboiTitle};
-use super::xml::{ChLookupResponse, ProgLookupResponse, TitleLookupResponse};
+use super::types::{SyoboiChannel, SyoboiChannelGroup, SyoboiProgram, SyoboiTitle};
+use super::xml::{
+    ChGroupLookupResponse, ChLookupResponse, ProgLookupResponse, TitleLookupResponse,
+};
 
 /// Default base URL.
 const DEFAULT_BASE_URL: &str = "https://cal.syoboi.jp/db.php";
@@ -163,9 +166,18 @@ impl SyoboiClient {
         let response = raw_result.context("ChLookup XML decoding failed")?;
         Ok(response.ch_items.items)
     }
+
+    /// Parses a `ChGroupLookup` XML response.
+    pub(crate) fn parse_ch_group_response(xml: &str) -> Result<Vec<SyoboiChannelGroup>> {
+        let raw_result: std::result::Result<ChGroupLookupResponse, _> =
+            quick_xml::de::from_str(xml);
+        let response = raw_result.context("ChGroupLookup XML decoding failed")?;
+        Ok(response.ch_group_items.items)
+    }
 }
 
 impl LocalSyoboiApi for SyoboiClient {
+    #[instrument(skip_all)]
     async fn lookup_titles(&self, tids: &[u32]) -> Result<Vec<SyoboiTitle>> {
         self.rate_limiter.lock().await.wait().await;
 
@@ -189,6 +201,7 @@ impl LocalSyoboiApi for SyoboiClient {
         Self::parse_title_response(&xml)
     }
 
+    #[instrument(skip_all)]
     async fn lookup_programs(&self, params: &ProgLookupParams) -> Result<Vec<SyoboiProgram>> {
         self.rate_limiter.lock().await.wait().await;
 
@@ -250,6 +263,7 @@ impl LocalSyoboiApi for SyoboiClient {
         Self::parse_prog_response(&xml)
     }
 
+    #[instrument(skip_all)]
     async fn lookup_channels(&self, ch_ids: Option<&[u32]>) -> Result<Vec<SyoboiChannel>> {
         self.rate_limiter.lock().await.wait().await;
 
@@ -276,6 +290,40 @@ impl LocalSyoboiApi for SyoboiClient {
         let xml = result.context("failed to read ChLookup response")?;
 
         Self::parse_ch_response(&xml)
+    }
+
+    #[instrument(skip_all)]
+    async fn lookup_channel_groups(
+        &self,
+        ch_gids: Option<&[u32]>,
+    ) -> Result<Vec<SyoboiChannelGroup>> {
+        self.rate_limiter.lock().await.wait().await;
+
+        let mut query: Vec<(&str, String)> = vec![("Command", String::from("ChGroupLookup"))];
+
+        let ch_gid_str = ch_gids.map_or_else(
+            || String::from("*"),
+            |gids| {
+                gids.iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            },
+        );
+        query.push(("ChGID", ch_gid_str));
+
+        let result = self
+            .http_client
+            .get(self.base_url.clone())
+            .query(&query)
+            .send()
+            .await;
+        let response = result.context("ChGroupLookup request failed")?;
+
+        let result = response.text().await;
+        let xml = result.context("failed to read ChGroupLookup response")?;
+
+        Self::parse_ch_group_response(&xml)
     }
 }
 
@@ -329,7 +377,7 @@ mod tests {
     #[test]
     fn test_parse_title_response() {
         // Arrange
-        let xml = include_str!("../../../fixtures/syoboi/title_lookup_6309.xml");
+        let xml = include_str!("../../../../fixtures/syoboi/title_lookup_6309.xml");
 
         // Act
         let titles = SyoboiClient::parse_title_response(xml).unwrap();
@@ -350,7 +398,7 @@ mod tests {
     #[test]
     fn test_parse_prog_response() {
         // Arrange
-        let xml = include_str!("../../../fixtures/syoboi/prog_lookup_6309.xml");
+        let xml = include_str!("../../../../fixtures/syoboi/prog_lookup_6309.xml");
 
         // Act
         let programs = SyoboiClient::parse_prog_response(xml).unwrap();
@@ -374,7 +422,7 @@ mod tests {
     #[test]
     fn test_parse_ch_response() {
         // Arrange
-        let xml = include_str!("../../../fixtures/syoboi/ch_lookup_all.xml");
+        let xml = include_str!("../../../../fixtures/syoboi/ch_lookup_all.xml");
 
         // Act
         let channels = SyoboiClient::parse_ch_response(xml).unwrap();
@@ -392,7 +440,7 @@ mod tests {
     #[test]
     fn test_parse_empty_response() {
         // Arrange
-        let xml = include_str!("../../../fixtures/syoboi/empty_response.xml");
+        let xml = include_str!("../../../../fixtures/syoboi/empty_response.xml");
 
         // Act
         let titles = SyoboiClient::parse_title_response(xml).unwrap();
@@ -436,7 +484,7 @@ mod tests {
     async fn test_title_lookup_via_http() {
         // Arrange
         let mock_server = wiremock::MockServer::start().await;
-        let xml_body = include_str!("../../../fixtures/syoboi/title_lookup_6309.xml");
+        let xml_body = include_str!("../../../../fixtures/syoboi/title_lookup_6309.xml");
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::path("/db.php"))
@@ -467,7 +515,7 @@ mod tests {
     async fn test_prog_lookup_via_http() {
         // Arrange
         let mock_server = wiremock::MockServer::start().await;
-        let xml_body = include_str!("../../../fixtures/syoboi/prog_lookup_6309.xml");
+        let xml_body = include_str!("../../../../fixtures/syoboi/prog_lookup_6309.xml");
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::path("/db.php"))
@@ -502,7 +550,7 @@ mod tests {
     async fn test_ch_lookup_via_http() {
         // Arrange
         let mock_server = wiremock::MockServer::start().await;
-        let xml_body = include_str!("../../../fixtures/syoboi/ch_lookup_all.xml");
+        let xml_body = include_str!("../../../../fixtures/syoboi/ch_lookup_all.xml");
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::path("/db.php"))
@@ -525,6 +573,53 @@ mod tests {
         // Assert
         assert_eq!(channels.len(), 3);
         assert_eq!(channels[0].ch_name, "NHK総合");
+    }
+
+    #[test]
+    fn test_parse_ch_group_response() {
+        // Arrange
+        let xml = include_str!("../../../../fixtures/syoboi/ch_group_lookup_all.xml");
+
+        // Act
+        let groups = SyoboiClient::parse_ch_group_response(xml).unwrap();
+
+        // Assert
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0].ch_gid, 1);
+        assert_eq!(groups[0].ch_group_name, "テレビ 関東");
+        assert_eq!(groups[0].ch_group_order, 1200);
+        assert_eq!(groups[1].ch_gid, 2);
+        assert_eq!(groups[1].ch_group_name, "BSデジタル");
+    }
+
+    #[tokio::test]
+    async fn test_ch_group_lookup_via_http() {
+        // Arrange
+        let mock_server = wiremock::MockServer::start().await;
+        let xml_body = include_str!("../../../../fixtures/syoboi/ch_group_lookup_all.xml");
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/db.php"))
+            .and(wiremock::matchers::query_param("Command", "ChGroupLookup"))
+            .and(wiremock::matchers::query_param("ChGID", "*"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(xml_body))
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/db.php", mock_server.uri());
+        let client = SyoboiClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        // Act
+        let groups = client.lookup_channel_groups(None).await.unwrap();
+
+        // Assert
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0].ch_group_name, "テレビ 関東");
     }
 
     #[tokio::test]

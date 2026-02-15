@@ -6,6 +6,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use reqwest::Client;
 use tokio::sync::Mutex;
+use tracing::instrument;
 use url::Url;
 
 use super::api::LocalTmdbApi;
@@ -133,6 +134,7 @@ impl TmdbClient {
 
     /// Sends a GET request with Bearer auth, query params, and rate limiting.
     /// Retries up to `MAX_RETRIES` times on HTTP 429.
+    #[instrument(skip_all)]
     async fn get_json<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
@@ -206,6 +208,7 @@ impl TmdbClient {
 }
 
 impl LocalTmdbApi for TmdbClient {
+    #[instrument(skip_all)]
     async fn search_tv(&self, params: &SearchTvParams) -> Result<TmdbSearchTvResponse> {
         let mut query: Vec<(&str, String)> = vec![
             ("query", params.query.clone()),
@@ -223,6 +226,7 @@ impl LocalTmdbApi for TmdbClient {
         self.get_json("search/tv", &query).await
     }
 
+    #[instrument(skip_all)]
     async fn search_movie(&self, params: &SearchMovieParams) -> Result<TmdbSearchMovieResponse> {
         let mut query: Vec<(&str, String)> = vec![
             ("query", params.query.clone()),
@@ -243,12 +247,14 @@ impl LocalTmdbApi for TmdbClient {
         self.get_json("search/movie", &query).await
     }
 
+    #[instrument(skip_all)]
     async fn tv_details(&self, series_id: u64, language: &str) -> Result<TmdbTvDetails> {
         let path = format!("tv/{series_id}");
         let query = [("language", String::from(language))];
         self.get_json(&path, &query).await
     }
 
+    #[instrument(skip_all)]
     async fn tv_season(
         &self,
         series_id: u64,
@@ -330,7 +336,7 @@ mod tests {
     #[test]
     fn test_parse_search_tv_fixture() {
         // Arrange
-        let json = include_str!("../../../fixtures/tmdb/search_tv_spy_family.json");
+        let json = include_str!("../../../../fixtures/tmdb/search_tv_spy_family.json");
 
         // Act
         let response: TmdbSearchTvResponse = serde_json::from_str(json).unwrap();
@@ -348,7 +354,7 @@ mod tests {
     #[test]
     fn test_parse_search_tv_empty_fixture() {
         // Arrange
-        let json = include_str!("../../../fixtures/tmdb/search_tv_empty.json");
+        let json = include_str!("../../../../fixtures/tmdb/search_tv_empty.json");
 
         // Act
         let response: TmdbSearchTvResponse = serde_json::from_str(json).unwrap();
@@ -361,7 +367,7 @@ mod tests {
     #[test]
     fn test_parse_search_movie_fixture() {
         // Arrange
-        let json = include_str!("../../../fixtures/tmdb/search_movie_suzume.json");
+        let json = include_str!("../../../../fixtures/tmdb/search_movie_suzume.json");
 
         // Act
         let response: TmdbSearchMovieResponse = serde_json::from_str(json).unwrap();
@@ -377,7 +383,7 @@ mod tests {
     #[test]
     fn test_parse_tv_details_fixture() {
         // Arrange
-        let json = include_str!("../../../fixtures/tmdb/tv_details_120089.json");
+        let json = include_str!("../../../../fixtures/tmdb/tv_details_120089.json");
 
         // Act
         let details: TmdbTvDetails = serde_json::from_str(json).unwrap();
@@ -393,7 +399,7 @@ mod tests {
     #[test]
     fn test_parse_tv_season_fixture() {
         // Arrange
-        let json = include_str!("../../../fixtures/tmdb/tv_season_120089_1.json");
+        let json = include_str!("../../../../fixtures/tmdb/tv_season_120089_1.json");
 
         // Act
         let season: TmdbTvSeason = serde_json::from_str(json).unwrap();
@@ -424,7 +430,7 @@ mod tests {
     async fn test_search_tv_via_http() {
         // Arrange
         let mock_server = wiremock::MockServer::start().await;
-        let json_body = include_str!("../../../fixtures/tmdb/search_tv_spy_family.json");
+        let json_body = include_str!("../../../../fixtures/tmdb/search_tv_spy_family.json");
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::path("/3/search/tv"))
@@ -456,7 +462,7 @@ mod tests {
     async fn test_search_movie_via_http() {
         // Arrange
         let mock_server = wiremock::MockServer::start().await;
-        let json_body = include_str!("../../../fixtures/tmdb/search_movie_suzume.json");
+        let json_body = include_str!("../../../../fixtures/tmdb/search_movie_suzume.json");
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::path("/3/search/movie"))
@@ -486,7 +492,7 @@ mod tests {
     async fn test_tv_details_via_http() {
         // Arrange
         let mock_server = wiremock::MockServer::start().await;
-        let json_body = include_str!("../../../fixtures/tmdb/tv_details_120089.json");
+        let json_body = include_str!("../../../../fixtures/tmdb/tv_details_120089.json");
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::path("/3/tv/120089"))
@@ -515,7 +521,7 @@ mod tests {
     async fn test_tv_season_via_http() {
         // Arrange
         let mock_server = wiremock::MockServer::start().await;
-        let json_body = include_str!("../../../fixtures/tmdb/tv_season_120089_1.json");
+        let json_body = include_str!("../../../../fixtures/tmdb/tv_season_120089_1.json");
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::path("/3/tv/120089/season/1"))
@@ -544,7 +550,7 @@ mod tests {
     async fn test_bearer_token_is_sent() {
         // Arrange
         let mock_server = wiremock::MockServer::start().await;
-        let json_body = include_str!("../../../fixtures/tmdb/search_tv_empty.json");
+        let json_body = include_str!("../../../../fixtures/tmdb/search_tv_empty.json");
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::header(
@@ -639,7 +645,7 @@ mod tests {
     async fn test_rate_limiter_enforces_interval() {
         // Arrange
         let mock_server = wiremock::MockServer::start().await;
-        let json_body = include_str!("../../../fixtures/tmdb/search_tv_empty.json");
+        let json_body = include_str!("../../../../fixtures/tmdb/search_tv_empty.json");
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(json_body))

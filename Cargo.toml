@@ -1,58 +1,50 @@
-[package]
-name = "dtvmgr"
+[workspace]
+resolver = "3"
+members = ["crates/dtvmgr-api", "crates/dtvmgr-cli", "crates/dtvmgr-db"]
+
+[workspace.package]
 version = "0.1.0"
-categories = ["command-line-utilities"]
 edition = "2024"
-keywords = ["cli", "tool"]
 license = "AGPL3.0"
 repository = "https://github.com/naa0yama/boilerplate-rust"
-description = "A CLI tool built following project rules standards"
 
-[profile.dev]
-opt-level = 1 #		開発時のコンパイル速度向上
-
-[profile.release]
-strip = "symbols"
-debug = 1 #			リリースビルドでもスタックトレース可能に
-
-[features]
-default = []
-otel = [
-	"dep:opentelemetry",
-	"dep:opentelemetry_sdk",
-	"dep:opentelemetry-otlp",
-	"dep:tracing-opentelemetry",
-]
-
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0"
 chrono = "0.4"
 clap = { version = "4.5.45", features = ["derive"] }
+crossterm = "0.28"
 quick-xml = { version = "0.37", features = ["serialize"] }
+ratatui = "0.29"
 regex = "1"
 reqwest = { version = "0.13.1", default-features = false, features = ["json", "query", "rustls", "gzip"] }
+rusqlite = { version = "0.34", features = ["bundled"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.137"
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
+toml = "0.8"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 trait-variant = "0.1"
 url = "2"
 
-# OpenTelemetry (optional, behind `otel` feature)
-opentelemetry = { version = "0.31", optional = true }
-opentelemetry-otlp = { version = "0.31", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"], optional = true }
-opentelemetry_sdk = { version = "0.31", default-features = false, features = ["trace"], optional = true }
-tracing-opentelemetry = { version = "0.32", default-features = false, optional = true }
+# OpenTelemetry
+opentelemetry = { version = "0.31" }
+opentelemetry-otlp = { version = "0.31", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"] }
+opentelemetry_sdk = { version = "0.31", default-features = false, features = ["trace"] }
+tracing-opentelemetry = { version = "0.32", default-features = false }
 
-[dev-dependencies]
+# Dev dependencies
 assert_cmd = "=2.1.2"
 predicates = "=3.1.3"
-tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
+tempfile = "3"
 tracing-mock = "=0.1.0-beta.3"
 wiremock = "0.6"
 
-[lints.clippy]
+# Internal crates
+dtvmgr-api = { path = "crates/dtvmgr-api" }
+dtvmgr-db = { path = "crates/dtvmgr-db" }
+
+[workspace.lints.clippy]
 # project_rules.md に基づくlint設定（priority=-1で個別設定を優先）
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
@@ -89,7 +81,6 @@ single_element_loop = "warn" #                   1要素ループをif文で最�
 # パフォーマンス最適化 - 文字列処理
 inefficient_to_string = "warn" #                 非効率なto_string()を検出(直接変換推奨)
 str_to_string = "warn" #                         &str.to_string()を検出(String::from推奨)
-string_to_string = "warn" #                      String.to_string()を検出(clone推奨)
 format_in_format_args = "warn" #                 format!内のformat!を検出(直接引数推奨)
 manual_string_new = "warn" #                     String::new()の代替パターンを検出
 
@@ -146,7 +137,14 @@ print_stderr = "warn" #                          eprintln!/eprint!の使用を�
 multiple-crate-versions = "allow"
 cargo-common-metadata = "allow"
 
-[lints.rust]
+[workspace.lints.rust]
 warnings = "warn"
 missing_debug_implementations = "warn" #         Debugトレイト未実装を警告
 missing_docs = "warn" #                          pub項目のドキュメント不足を警告
+
+[profile.dev]
+opt-level = 1 #		開発時のコンパイル速度向上
+
+[profile.release]
+strip = "symbols"
+debug = 1 #			リリースビルドでもスタックトレース可能に

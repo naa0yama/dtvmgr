@@ -1,11 +1,17 @@
 //! dtvmgr - TV program data management CLI.
 
-/// Library modules.
-pub mod libs;
+/// Application configuration (TOML).
+mod config;
+/// Terminal UI components.
+mod tui;
+
+use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use chrono::{Duration, Local, NaiveDateTime};
 use clap::{Parser, Subcommand};
+use tracing::instrument;
 use tracing_subscriber::filter::EnvFilter;
 #[cfg(not(feature = "otel"))]
 use tracing_subscriber::fmt;
@@ -14,15 +20,24 @@ use tracing_subscriber::layer::SubscriberExt;
 #[cfg(feature = "otel")]
 use tracing_subscriber::util::SubscriberInitExt;
 
-use crate::libs::syoboi::{
+use crate::config::{AppConfig, resolve_config_path};
+use crate::tui::run_channel_selector;
+use crate::tui::state::{ChannelEntry, ChannelGroup};
+use dtvmgr_api::syoboi::{
     LocalSyoboiApi, ProgLookupParams, SyoboiClient, TimeRange, lookup_all_programs,
 };
-use crate::libs::tmdb::{LocalTmdbApi, SearchMovieParams, SearchTvParams, TmdbClient};
+use dtvmgr_api::tmdb::{LocalTmdbApi, SearchMovieParams, SearchTvParams, TmdbClient};
+use dtvmgr_db::channels::{CachedChannel, CachedChannelGroup};
+use dtvmgr_db::{load_channels, open_db, save_channel_groups, save_channels};
 
 /// CLI argument parser.
 #[derive(Parser)]
 #[command(about, version)]
 struct Cli {
+    /// Override config/data directory.
+    #[arg(long, global = true)]
+    dir: Option<PathBuf>,
+
     /// Subcommand to run.
     #[command(subcommand)]
     command: Commands,
@@ -32,29 +47,48 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Query Syoboi Calendar API.
-    Api(ApiCommand),
+    Syoboi(SyoboiCommand),
     /// Query TMDB API.
     Tmdb(TmdbCommand),
 }
 
-/// Arguments for the `api` subcommand.
+/// Arguments for the `channels` subcommand.
 #[derive(clap::Args)]
-struct ApiCommand {
-    /// API subcommand to run.
+struct ChannelsCommand {
+    /// Channels subcommand to run.
     #[command(subcommand)]
-    command: ApiSubcommands,
+    command: ChannelsSubcommands,
 }
 
-/// Available API subcommands.
+/// Available channels subcommands.
 #[derive(Subcommand)]
-enum ApiSubcommands {
+enum ChannelsSubcommands {
+    /// Interactively select channels via TUI.
+    Select,
+    /// List currently selected channels.
+    List,
+}
+
+/// Arguments for the `syoboi` subcommand.
+#[derive(clap::Args)]
+struct SyoboiCommand {
+    /// Syoboi subcommand to run.
+    #[command(subcommand)]
+    command: SyoboiSubcommands,
+}
+
+/// Available Syoboi subcommands.
+#[derive(Subcommand)]
+enum SyoboiSubcommands {
     /// Query program schedule data (`ProgLookup`).
     Prog(ProgArgs),
     /// Query title data (`TitleLookup`).
     Titles(TitlesArgs),
+    /// Manage channel selection.
+    Channels(ChannelsCommand),
 }
 
-/// Arguments for the `api prog` subcommand.
+/// Arguments for the `syoboi prog` subcommand.
 #[derive(clap::Args)]
 struct ProgArgs {
     /// Start datetime (default: now - 1 day).
@@ -66,12 +100,12 @@ struct ProgArgs {
     #[arg(long)]
     time_until: Option<String>,
 
-    /// Comma-separated channel IDs (e.g. "1,7,19").
+    /// Comma-separated channel IDs (e.g. "1,7,19"). Falls back to config selected channels if omitted.
     #[arg(long, value_delimiter = ',')]
     ch_ids: Option<Vec<u32>>,
 }
 
-/// Arguments for the `api titles` subcommand.
+/// Arguments for the `syoboi titles` subcommand.
 #[derive(clap::Args)]
 struct TitlesArgs {
     /// Comma-separated title IDs (e.g. "6309,7667").
@@ -218,13 +252,16 @@ fn resolve_time_range(args: &ProgArgs) -> Result<TimeRange> {
     }
 }
 
-/// Runs the `api prog` subcommand.
+/// Runs the `syoboi prog` subcommand.
+///
+/// Falls back to `config.toml` selected channels when `--ch-ids` is not specified.
 ///
 /// # Errors
 ///
 /// Returns an error if the API client fails to build, time range is invalid,
 /// or the API request fails.
-async fn run_api_prog(args: &ProgArgs) -> Result<()> {
+#[instrument(skip_all)]
+async fn run_syoboi_prog(args: &ProgArgs, dir: Option<&PathBuf>) -> Result<()> {
     let client = SyoboiClient::builder()
         .user_agent(concat!(
             env!("CARGO_PKG_NAME"),
@@ -241,8 +278,25 @@ async fn run_api_prog(args: &ProgArgs) -> Result<()> {
         range.end.format("%Y-%m-%d %H:%M:%S"),
     );
 
+    let ch_ids = if args.ch_ids.is_some() {
+        args.ch_ids.clone()
+    } else {
+        let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+        let config = AppConfig::load(&config_path).context("failed to load config")?;
+        if config.channels.selected.is_empty() {
+            None
+        } else {
+            tracing::info!(
+                "Using {} channel(s) from config: {:?}",
+                config.channels.selected.len(),
+                config.channels.selected
+            );
+            Some(config.channels.selected)
+        }
+    };
+
     let params = ProgLookupParams {
-        ch_ids: args.ch_ids.clone(),
+        ch_ids,
         range: Some(range),
         ..ProgLookupParams::default()
     };
@@ -270,12 +324,13 @@ async fn run_api_prog(args: &ProgArgs) -> Result<()> {
     Ok(())
 }
 
-/// Runs the `api titles` subcommand.
+/// Runs the `syoboi titles` subcommand.
 ///
 /// # Errors
 ///
 /// Returns an error if the API client fails to build or the API request fails.
-async fn run_api_titles(args: &TitlesArgs) -> Result<()> {
+#[instrument(skip_all)]
+async fn run_syoboi_titles(args: &TitlesArgs) -> Result<()> {
     let client = SyoboiClient::builder()
         .user_agent(concat!(
             env!("CARGO_PKG_NAME"),
@@ -318,6 +373,7 @@ async fn run_api_titles(args: &TitlesArgs) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if `TMDB_API_TOKEN` is not set or the client fails to build.
+#[instrument(skip_all)]
 fn build_tmdb_client() -> Result<TmdbClient> {
     let api_token = std::env::var("TMDB_API_TOKEN")
         .context("TMDB_API_TOKEN environment variable is required")?;
@@ -338,6 +394,7 @@ fn build_tmdb_client() -> Result<TmdbClient> {
 /// # Errors
 ///
 /// Returns an error if the TMDB client fails to build or the API request fails.
+#[instrument(skip_all)]
 async fn run_tmdb_search_tv(args: &TmdbSearchTvArgs) -> Result<()> {
     let client = build_tmdb_client()?;
 
@@ -372,6 +429,7 @@ async fn run_tmdb_search_tv(args: &TmdbSearchTvArgs) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the TMDB client fails to build or the API request fails.
+#[instrument(skip_all)]
 async fn run_tmdb_search_movie(args: &TmdbSearchMovieArgs) -> Result<()> {
     let client = build_tmdb_client()?;
 
@@ -405,6 +463,7 @@ async fn run_tmdb_search_movie(args: &TmdbSearchMovieArgs) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the TMDB client fails to build or the API request fails.
+#[instrument(skip_all)]
 async fn run_tmdb_tv_details(args: &TmdbTvDetailsArgs) -> Result<()> {
     let client = build_tmdb_client()?;
 
@@ -441,6 +500,7 @@ async fn run_tmdb_tv_details(args: &TmdbTvDetailsArgs) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the TMDB client fails to build or the API request fails.
+#[instrument(skip_all)]
 async fn run_tmdb_tv_season(args: &TmdbTvSeasonArgs) -> Result<()> {
     let client = build_tmdb_client()?;
 
@@ -469,6 +529,180 @@ async fn run_tmdb_tv_season(args: &TmdbTvSeasonArgs) -> Result<()> {
     Ok(())
 }
 
+/// Builds a `SyoboiClient` with default user agent.
+///
+/// # Errors
+///
+/// Returns an error if the client fails to build.
+#[instrument(skip_all)]
+fn build_syoboi_client() -> Result<SyoboiClient> {
+    SyoboiClient::builder()
+        .user_agent(concat!(
+            env!("CARGO_PKG_NAME"),
+            "/",
+            env!("CARGO_PKG_VERSION")
+        ))
+        .build()
+        .context("failed to build Syoboi API client")
+}
+
+/// Runs the `syoboi channels select` subcommand.
+///
+/// Fetches channels/groups from API, caches in DB, launches TUI,
+/// and saves selection to config.toml.
+///
+/// # Errors
+///
+/// Returns an error if API calls, DB operations, or TUI fails.
+#[instrument(skip_all)]
+async fn run_channels_select(dir: Option<&PathBuf>) -> Result<()> {
+    let client = build_syoboi_client()?;
+
+    tracing::info!("Fetching channel groups from API...");
+    let api_groups = client
+        .lookup_channel_groups(None)
+        .await
+        .context("failed to fetch channel groups")?;
+
+    tracing::info!("Fetching channels from API...");
+    let api_channels = client
+        .lookup_channels(None)
+        .await
+        .context("failed to fetch channels")?;
+
+    // Cache in DB
+    let conn = open_db(dir).context("failed to open database")?;
+
+    let cached_groups: Vec<CachedChannelGroup> = api_groups
+        .iter()
+        .map(|g| CachedChannelGroup {
+            ch_gid: g.ch_gid,
+            ch_group_name: g.ch_group_name.clone(),
+            ch_group_order: g.ch_group_order,
+        })
+        .collect();
+    save_channel_groups(&conn, &cached_groups).context("failed to cache channel groups")?;
+
+    let cached_channels: Vec<CachedChannel> = api_channels
+        .iter()
+        .map(|ch| CachedChannel {
+            ch_id: ch.ch_id,
+            ch_gid: ch.ch_gid,
+            ch_name: ch.ch_name.clone(),
+        })
+        .collect();
+    save_channels(&conn, &cached_channels).context("failed to cache channels")?;
+
+    // Load config
+    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+    let config = AppConfig::load(&config_path).context("failed to load config")?;
+    let initial_selected: BTreeSet<u32> = config.channels.selected.into_iter().collect();
+
+    // Build TUI data model
+    let groups = build_tui_groups(&cached_groups, &cached_channels);
+
+    tracing::info!(
+        "Loaded {} groups, {} channels. Launching TUI...",
+        cached_groups.len(),
+        cached_channels.len()
+    );
+
+    // Run TUI (blocking)
+    let result =
+        run_channel_selector(groups, initial_selected).context("channel selector TUI failed")?;
+
+    if let Some(selected) = result {
+        let mut config = AppConfig::load(&config_path).unwrap_or_default();
+        config.channels.selected = selected;
+        config.save(&config_path).context("failed to save config")?;
+        tracing::info!(
+            "Saved {} selected channel(s) to {}",
+            config.channels.selected.len(),
+            config_path.display()
+        );
+    } else {
+        tracing::info!("Selection cancelled");
+    }
+
+    Ok(())
+}
+
+/// Builds TUI channel groups from cached data.
+fn build_tui_groups(
+    groups: &[CachedChannelGroup],
+    channels: &[CachedChannel],
+) -> Vec<ChannelGroup> {
+    let mut tui_groups: Vec<ChannelGroup> = groups
+        .iter()
+        .map(|g| ChannelGroup {
+            ch_gid: g.ch_gid,
+            name: g.ch_group_name.clone(),
+            channels: Vec::new(),
+        })
+        .collect();
+
+    // Sort by ch_group_order (already sorted from DB, but ensure)
+    tui_groups.sort_by_key(|g| {
+        groups
+            .iter()
+            .find(|cg| cg.ch_gid == g.ch_gid)
+            .map_or(0, |cg| cg.ch_group_order)
+    });
+
+    for ch in channels {
+        if let Some(ch_gid) = ch.ch_gid
+            && let Some(group) = tui_groups.iter_mut().find(|g| g.ch_gid == ch_gid)
+        {
+            group.channels.push(ChannelEntry {
+                ch_id: ch.ch_id,
+                ch_name: ch.ch_name.clone(),
+            });
+        }
+    }
+
+    // Sort channels within each group by ch_id
+    for group in &mut tui_groups {
+        group.channels.sort_by_key(|ch| ch.ch_id);
+    }
+
+    tui_groups
+}
+
+/// Runs the `syoboi channels list` subcommand.
+///
+/// # Errors
+///
+/// Returns an error if config or DB operations fail.
+#[instrument(skip_all)]
+fn run_channels_list(dir: Option<&PathBuf>) -> Result<()> {
+    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+    let config = AppConfig::load(&config_path).context("failed to load config")?;
+
+    if config.channels.selected.is_empty() {
+        tracing::info!("No channels selected. Run `syoboi channels select` to choose channels.");
+        return Ok(());
+    }
+
+    // Try to load names from DB cache
+    let conn = open_db(dir);
+    let cached_channels = conn
+        .as_ref()
+        .ok()
+        .and_then(|c| load_channels(c).ok())
+        .unwrap_or_default();
+
+    tracing::info!("Selected channels ({}):", config.channels.selected.len());
+    for ch_id in &config.channels.selected {
+        let name = cached_channels
+            .iter()
+            .find(|c| c.ch_id == *ch_id)
+            .map_or("(unknown)", |c| c.ch_name.as_str());
+        tracing::info!("  {:>3}  {}", ch_id, name);
+    }
+
+    Ok(())
+}
+
 /// Entry point.
 ///
 /// # Errors
@@ -482,6 +716,7 @@ async fn main() -> Result<()> {
             .with_env_filter(
                 EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
             )
+            .with_target(false)
             .init();
     }
 
@@ -489,7 +724,7 @@ async fn main() -> Result<()> {
     {
         let env_filter =
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-        let fmt_layer = tracing_subscriber::fmt::layer();
+        let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
 
         let otel_layer = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
             .ok()
@@ -521,9 +756,13 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Commands::Api(api) => match api.command {
-            ApiSubcommands::Prog(args) => run_api_prog(&args).await,
-            ApiSubcommands::Titles(args) => run_api_titles(&args).await,
+        Commands::Syoboi(cmd) => match cmd.command {
+            SyoboiSubcommands::Prog(args) => run_syoboi_prog(&args, cli.dir.as_ref()).await,
+            SyoboiSubcommands::Titles(args) => run_syoboi_titles(&args).await,
+            SyoboiSubcommands::Channels(ch) => match ch.command {
+                ChannelsSubcommands::Select => run_channels_select(cli.dir.as_ref()).await,
+                ChannelsSubcommands::List => run_channels_list(cli.dir.as_ref()),
+            },
         },
         Commands::Tmdb(tmdb) => match tmdb.command {
             TmdbSubcommands::SearchTv(args) => run_tmdb_search_tv(&args).await,

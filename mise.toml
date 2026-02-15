@@ -98,15 +98,15 @@ run = "cargo deny check"
 
 [tasks.zigbuild]
 description = "Cross-compile for specific target"
-run = "cargo zigbuild --release --target ${TARGET:-x86_64-unknown-linux-gnu} --verbose"
+run = "cargo zigbuild -p dtvmgr --release --target ${TARGET:-x86_64-unknown-linux-gnu} --verbose"
 
 [tasks."zigbuild:all"]
 description = "Cross-compile all Tier 1 targets"
 run = """
-cargo zigbuild --release --target aarch64-apple-darwin
-cargo zigbuild --release --target aarch64-unknown-linux-gnu
-cargo zigbuild --release --target x86_64-pc-windows-gnu
-cargo zigbuild --release --target x86_64-unknown-linux-gnu
+cargo zigbuild -p dtvmgr --release --target aarch64-apple-darwin
+cargo zigbuild -p dtvmgr --release --target aarch64-unknown-linux-gnu
+cargo zigbuild -p dtvmgr --release --target x86_64-pc-windows-gnu
+cargo zigbuild -p dtvmgr --release --target x86_64-unknown-linux-gnu
 """
 
 [tasks.pre-commit]

@@ -1,0 +1,46 @@
+[package]
+name = "dtvmgr"
+version.workspace = true
+categories = ["command-line-utilities"]
+edition.workspace = true
+keywords = ["cli", "tool"]
+license.workspace = true
+repository.workspace = true
+description = "A CLI tool built following project rules standards"
+
+[features]
+default = []
+otel = [
+	"dep:opentelemetry",
+	"dep:opentelemetry_sdk",
+	"dep:opentelemetry-otlp",
+	"dep:tracing-opentelemetry",
+]
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+crossterm = { workspace = true }
+dtvmgr-api = { workspace = true }
+dtvmgr-db = { workspace = true }
+ratatui = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# OpenTelemetry (optional, behind `otel` feature)
+opentelemetry = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

@@ -218,6 +218,21 @@ pub struct SyoboiProgram {
     pub st_sub_title: Option<String>,
 }
 
+/// A single channel group from `ChGroupLookup` response.
+#[derive(Debug, Clone, Deserialize)]
+#[allow(clippy::module_name_repetitions)]
+pub struct SyoboiChannelGroup {
+    /// Channel group ID.
+    #[serde(rename = "ChGID")]
+    pub ch_gid: u32,
+    /// Channel group name (e.g. "テレビ 関東", "BSデジタル").
+    #[serde(rename = "ChGroupName")]
+    pub ch_group_name: String,
+    /// Display order for sorting.
+    #[serde(rename = "ChGroupOrder")]
+    pub ch_group_order: u32,
+}
+
 /// A single channel from `ChLookup` response.
 #[derive(Debug, Clone, Deserialize)]
 #[allow(clippy::module_name_repetitions)]
