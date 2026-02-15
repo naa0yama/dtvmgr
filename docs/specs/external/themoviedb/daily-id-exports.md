@@ -1,0 +1,54 @@
+# Daily ID Exports
+
+> **USING THE API**
+
+Download a list of valid IDs from TMDB.
+
+We currently publish a set of daily ID file exports. These are not, nor intended to be full data exports. Instead, they contain a list of the valid IDs you can find on TMDB and some higher level attributes that are helpful for filtering items like the `adult`, `video` and `popularity` values.
+
+### Data Structure
+
+These files themselves are not a valid JSON object. Instead, each line is. Most systems, tools and languages have easy ways of scanning lines in files (skipping and buffering) without having to load the entire file into memory. The assumption here is that you can read every line easily, and you can expect each line to contain a valid JSON object.
+
+### Availability
+
+All of the exported files are available for download from <https://files.tmdb.org>. The export job runs every day starting at around 7:00 AM UTC, and all files are available by 8:00 AM UTC.
+
+There is currently no authentication on these files since they are not very useful unless you're a user of our service. Please note that this could change at some point in the future so if you start having problems accessing these files, check this document for updates.
+
+> **📘 Note**
+> These files are only made available for 3 months after which they are automatically deleted.
+
+| Media Type           | Path         | Name                                        |
+| -------------------- | ------------ | ------------------------------------------- |
+| Movies               | `/p/exports` | `movie_ids_MM_DD_YYYY.json.gz`              |
+| TV Series            | `/p/exports` | `tv_series_ids_MM_DD_YYYY.json.gz`          |
+| People               | `/p/exports` | `person_ids_MM_DD_YYYY.json.gz`             |
+| Collections          | `/p/exports` | `collection_ids_MM_DD_YYYY.json.gz`         |
+| TV Networks          | `/p/exports` | `tv_network_ids_MM_DD_YYYY.json.gz`         |
+| Keywords             | `/p/exports` | `keyword_ids_MM_DD_YYYY.json.gz`            |
+| Production Companies | `/p/exports` | `production_company_ids_MM_DD_YYYY.json.gz` |
+
+### Example
+
+If you were looking for a list of valid movie ids, the full download URL for the file published on May 15, 2024 is located here:
+
+```
+https://files.tmdb.org/p/exports/movie_ids_05_15_2024.json.gz
+```
+
+### Adult ID's
+
+Starting July 5, 2023, we are now also publishing the adult data set. You can find the paths for movies, TV shows and people below.
+
+| Media Type | Path         | Name                                     |
+| ---------- | ------------ | ---------------------------------------- |
+| Movies     | `/p/exports` | `adult_movie_ids_MM_DD_YYYY.json.gz`     |
+| TV Series  | `/p/exports` | `adult_tv_series_ids_MM_DD_YYYY.json.gz` |
+| People     | `/p/exports` | `adult_person_ids_MM_DD_YYYY.json.gz`    |
+
+### Example
+
+```
+http://files.tmdb.org/p/exports/adult_movie_ids_05_15_2024.json.gz
+```

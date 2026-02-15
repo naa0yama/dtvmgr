@@ -25,7 +25,9 @@
 		// Git
 		"type=bind,source=${localEnv:HOME}/.gitconfig.d,target=/home/cuser/.gitconfig.d",
 		// GitHub
-		"type=bind,source=${localEnv:HOME}/.config/gh,target=/home/cuser/.config/gh"
+		"type=bind,source=${localEnv:HOME}/.config/gh,target=/home/cuser/.config/gh",
+		// Happy
+		"type=bind,source=${localEnv:HOME}/.happy,target=/home/cuser/.happy"
 	],
 	"customizations": {
 		"vscode": {

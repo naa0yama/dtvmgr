@@ -39,6 +39,10 @@ Allowed types: feat, update, fix, style, refactor, docs, perf, test, build, ci, 
 5. Run `mise run pre-commit` (runs fmt:check, clippy:strict, ast-grep)
 6. If errors, fix → re-stage → re-run `mise run pre-commit`
 
+## Code Comments
+
+- Write all code comments (doc comments, inline comments) in concise English.
+
 ## Key Coding Rules
 
 - **Imports**: All `use` statements at file top level, grouped: `std` -> external crates -> `crate`/`super`. No wildcards (`*`). Aliases (`as`) permitted for name conflicts and re-exports.
@@ -46,3 +50,7 @@ Allowed types: feat, update, fix, style, refactor, docs, perf, test, build, ci, 
 - **Logging**: Use `tracing` crate, not `println!` / `dbg!`. For container/OTel support, build with `--features otel` and set `OTEL_EXPORTER_OTLP_ENDPOINT` env var.
 - **Tests**: Arrange / Act / Assert pattern. Unit tests in `#[cfg(test)] mod tests`, integration tests in `tests/`. `#![allow(clippy::unwrap_used)]` is permitted in test code.
 - See [docs/project_rules.md](./docs/project_rules.md) for full details.
+
+## Skill Maintenance
+
+- When modifying coding rules, workflow, or project conventions in `CLAUDE.md` or `docs/project_rules.md`, also update the corresponding `.claude/skills/` files to keep them in sync.
