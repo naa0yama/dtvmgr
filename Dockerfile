@@ -17,7 +17,7 @@ ARG CACHE_VERSION=0.8.3
 ## renovate: datasource=github-tags packageName=regexident/cargo-modules versioning=semver automerge=true
 ARG MODULES_VERSION=v0.25.0
 ## renovate: datasource=github-releases packageName=mozilla/sccache versioning=semver automerge=true
-ARG SCCACHE_VERSION=v0.13.0
+ARG SCCACHE_VERSION=v0.14.0
 ## renovate: datasource=github-releases packageName=ziglang/zig versioning=semver automerge=true
 ARG ZIG_VERSION=0.15.1
 ## renovate: datasource=github-releases packageName=rust-cross/cargo-zigbuild versioning=semver automerge=true
