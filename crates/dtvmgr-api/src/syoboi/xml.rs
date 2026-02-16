@@ -70,10 +70,12 @@ pub struct ApiResult {
 #[derive(Debug, Deserialize)]
 #[serde(rename = "TitleLookupResponse")]
 pub struct TitleLookupResponse {
-    #[serde(rename = "Result")]
-    pub result: ApiResult,
-    #[serde(rename = "TitleItems")]
-    pub title_items: TitleItems,
+    /// API result status (absent in some responses).
+    #[serde(rename = "Result", default)]
+    pub result: Option<ApiResult>,
+    /// Title items (absent in error responses).
+    #[serde(rename = "TitleItems", default)]
+    pub title_items: Option<TitleItems>,
 }
 
 /// `TitleItems` container.
@@ -87,8 +89,12 @@ pub struct TitleItems {
 #[derive(Debug, Deserialize)]
 #[serde(rename = "ProgLookupResponse")]
 pub struct ProgLookupResponse {
-    #[serde(rename = "ProgItems")]
-    pub prog_items: ProgItems,
+    /// API result status.
+    #[serde(rename = "Result", default)]
+    pub result: Option<ApiResult>,
+    /// Program items (absent in error responses).
+    #[serde(rename = "ProgItems", default)]
+    pub prog_items: Option<ProgItems>,
 }
 
 /// `ProgItems` container.
@@ -102,8 +108,12 @@ pub struct ProgItems {
 #[derive(Debug, Deserialize)]
 #[serde(rename = "ChLookupResponse")]
 pub struct ChLookupResponse {
-    #[serde(rename = "ChItems")]
-    pub ch_items: ChItems,
+    /// API result status.
+    #[serde(rename = "Result", default)]
+    pub result: Option<ApiResult>,
+    /// Channel items (absent in error responses).
+    #[serde(rename = "ChItems", default)]
+    pub ch_items: Option<ChItems>,
 }
 
 /// `ChItems` container.
@@ -117,8 +127,12 @@ pub struct ChItems {
 #[derive(Debug, Deserialize)]
 #[serde(rename = "ChGroupLookupResponse")]
 pub struct ChGroupLookupResponse {
-    #[serde(rename = "ChGroupItems")]
-    pub ch_group_items: ChGroupItems,
+    /// API result status.
+    #[serde(rename = "Result", default)]
+    pub result: Option<ApiResult>,
+    /// Channel group items (absent in error responses).
+    #[serde(rename = "ChGroupItems", default)]
+    pub ch_group_items: Option<ChGroupItems>,
 }
 
 /// `ChGroupItems` container.
@@ -195,9 +209,10 @@ mod tests {
         let response: TitleLookupResponse = quick_xml::de::from_str(xml).unwrap();
 
         // Assert
-        assert_eq!(response.result.code, 200);
-        assert_eq!(response.title_items.items.len(), 1);
-        assert_eq!(response.title_items.items[0].tid, 6309);
+        assert_eq!(response.result.as_ref().unwrap().code, 200);
+        let items = response.title_items.unwrap();
+        assert_eq!(items.items.len(), 1);
+        assert_eq!(items.items[0].tid, 6309);
     }
 
     #[test]
@@ -209,8 +224,10 @@ mod tests {
         let response: ProgLookupResponse = quick_xml::de::from_str(xml).unwrap();
 
         // Assert
-        assert_eq!(response.prog_items.items.len(), 3);
-        assert_eq!(response.prog_items.items[0].pid, 574_823);
+        assert_eq!(response.result.as_ref().unwrap().code, 200);
+        let items = response.prog_items.unwrap();
+        assert_eq!(items.items.len(), 3);
+        assert_eq!(items.items[0].pid, 574_823);
     }
 
     #[test]
@@ -222,8 +239,10 @@ mod tests {
         let response: ChLookupResponse = quick_xml::de::from_str(xml).unwrap();
 
         // Assert
-        assert_eq!(response.ch_items.items.len(), 3);
-        assert_eq!(response.ch_items.items[0].ch_name, "NHK総合");
+        assert_eq!(response.result.as_ref().unwrap().code, 200);
+        let items = response.ch_items.unwrap();
+        assert_eq!(items.items.len(), 3);
+        assert_eq!(items.items[0].ch_name, "NHK総合");
     }
 
     #[test]
@@ -235,13 +254,12 @@ mod tests {
         let response: ChGroupLookupResponse = quick_xml::de::from_str(xml).unwrap();
 
         // Assert
-        assert_eq!(response.ch_group_items.items.len(), 3);
-        assert_eq!(response.ch_group_items.items[0].ch_gid, 1);
-        assert_eq!(
-            response.ch_group_items.items[0].ch_group_name,
-            "テレビ 関東"
-        );
-        assert_eq!(response.ch_group_items.items[0].ch_group_order, 1200);
+        assert_eq!(response.result.as_ref().unwrap().code, 200);
+        let items = response.ch_group_items.unwrap();
+        assert_eq!(items.items.len(), 3);
+        assert_eq!(items.items[0].ch_gid, 1);
+        assert_eq!(items.items[0].ch_group_name, "テレビ 関東");
+        assert_eq!(items.items[0].ch_group_order, 1200);
     }
 
     #[test]
@@ -253,7 +271,64 @@ mod tests {
         let response: TitleLookupResponse = quick_xml::de::from_str(xml).unwrap();
 
         // Assert
-        assert_eq!(response.result.code, 200);
-        assert!(response.title_items.items.is_empty());
+        assert_eq!(response.result.as_ref().unwrap().code, 200);
+        assert!(response.title_items.unwrap().items.is_empty());
+    }
+
+    #[test]
+    fn test_parse_title_response_without_title_items() {
+        // Arrange: error response with Result but no TitleItems
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<TitleLookupResponse>
+    <Result>
+        <Code>200</Code>
+        <Message></Message>
+    </Result>
+</TitleLookupResponse>"#;
+
+        // Act
+        let response: TitleLookupResponse = quick_xml::de::from_str(xml).unwrap();
+
+        // Assert
+        assert!(response.title_items.is_none());
+    }
+
+    #[test]
+    fn test_parse_title_response_without_result_element() {
+        // Arrange: some API responses omit the <Result> element entirely
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<TitleLookupResponse>
+    <TitleItems>
+        <TitleItem id="100">
+            <TID>100</TID>
+            <LastUpdate>2024-01-01 00:00:00</LastUpdate>
+            <Title>Test Title</Title>
+            <ShortTitle></ShortTitle>
+            <TitleYomi></TitleYomi>
+            <TitleEN></TitleEN>
+            <Comment></Comment>
+            <Cat>1</Cat>
+            <TitleFlag>0</TitleFlag>
+            <FirstYear>2024</FirstYear>
+            <FirstMonth>1</FirstMonth>
+            <FirstEndYear></FirstEndYear>
+            <FirstEndMonth></FirstEndMonth>
+            <FirstCh></FirstCh>
+            <Keywords></Keywords>
+            <UserPoint></UserPoint>
+            <UserPointRank></UserPointRank>
+            <SubTitles></SubTitles>
+        </TitleItem>
+    </TitleItems>
+</TitleLookupResponse>"#;
+
+        // Act
+        let response: TitleLookupResponse = quick_xml::de::from_str(xml).unwrap();
+
+        // Assert
+        assert!(response.result.is_none());
+        let items = response.title_items.unwrap();
+        assert_eq!(items.items.len(), 1);
+        assert_eq!(items.items[0].tid, 100);
     }
 }

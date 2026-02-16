@@ -5,11 +5,11 @@ mod config;
 /// Terminal UI components.
 mod tui;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
+use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
-use chrono::{Duration, Local, NaiveDateTime};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tracing::instrument;
 use tracing_subscriber::filter::EnvFilter;
@@ -24,11 +24,17 @@ use crate::config::{AppConfig, resolve_config_path};
 use crate::tui::run_channel_selector;
 use crate::tui::state::{ChannelEntry, ChannelGroup};
 use dtvmgr_api::syoboi::{
-    LocalSyoboiApi, ProgLookupParams, SyoboiClient, TimeRange, lookup_all_programs,
+    LocalSyoboiApi, ProgLookupParams, SyoboiClient, SyoboiProgram, SyoboiTitle,
+    lookup_all_programs, resolve_time_range,
 };
 use dtvmgr_api::tmdb::{LocalTmdbApi, SearchMovieParams, SearchTvParams, TmdbClient};
 use dtvmgr_db::channels::{CachedChannel, CachedChannelGroup};
-use dtvmgr_db::{load_channels, open_db, save_channel_groups, save_channels};
+use dtvmgr_db::programs::CachedProgram;
+use dtvmgr_db::titles::CachedTitle;
+use dtvmgr_db::{
+    load_channels, load_programs, load_titles, open_db, save_channel_groups, save_channels,
+    upsert_programs, upsert_titles,
+};
 
 /// CLI argument parser.
 #[derive(Parser)]
@@ -50,6 +56,42 @@ enum Commands {
     Syoboi(SyoboiCommand),
     /// Query TMDB API.
     Tmdb(TmdbCommand),
+    /// Local database operations.
+    Db(DbCommand),
+}
+
+/// Arguments for the `db` subcommand.
+#[derive(clap::Args)]
+struct DbCommand {
+    /// Db subcommand to run.
+    #[command(subcommand)]
+    command: DbSubcommands,
+}
+
+/// Available database subcommands.
+#[derive(Subcommand)]
+enum DbSubcommands {
+    /// Sync Syoboi data to local database.
+    Sync(DbSyncArgs),
+    /// Browse cached titles and programs via TUI.
+    List,
+}
+
+/// Arguments for the `db sync` subcommand.
+#[derive(clap::Args)]
+struct DbSyncArgs {
+    /// Start datetime (default: now - 1 day).
+    /// Formats: "2024-01-01T00:00:00", "2024-01-01 00:00:00", "2024-01-01".
+    #[arg(long)]
+    time_since: Option<String>,
+
+    /// End datetime (default: now + 1 day). Same formats as --time-since.
+    #[arg(long)]
+    time_until: Option<String>,
+
+    /// Comma-separated channel IDs. Falls back to config selected channels if omitted.
+    #[arg(long, value_delimiter = ',')]
+    ch_ids: Option<Vec<u32>>,
 }
 
 /// Arguments for the `channels` subcommand.
@@ -187,71 +229,6 @@ struct TmdbTvSeasonArgs {
     language: String,
 }
 
-/// Tries full datetime formats first, returns `None` if both fail.
-fn try_full_datetime(s: &str) -> Option<NaiveDateTime> {
-    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
-        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"))
-        .ok()
-}
-
-/// Converts a datetime string for `--time-since` (date-only defaults to `00:00:00`).
-///
-/// Accepts: `%Y-%m-%dT%H:%M:%S`, `%Y-%m-%d %H:%M:%S`, `%Y-%m-%d`.
-///
-/// # Errors
-///
-/// Returns an error if the string does not match any known format.
-fn to_naive_datetime_since(s: &str) -> Result<NaiveDateTime> {
-    if let Some(dt) = try_full_datetime(s) {
-        return Ok(dt);
-    }
-    NaiveDateTime::parse_from_str(&format!("{s}T00:00:00"), "%Y-%m-%dT%H:%M:%S")
-        .with_context(|| format!("invalid datetime format: {s}"))
-}
-
-/// Converts a datetime string for `--time-until` (date-only defaults to `23:59:59`).
-///
-/// Accepts: `%Y-%m-%dT%H:%M:%S`, `%Y-%m-%d %H:%M:%S`, `%Y-%m-%d`.
-///
-/// # Errors
-///
-/// Returns an error if the string does not match any known format.
-fn to_naive_datetime_until(s: &str) -> Result<NaiveDateTime> {
-    if let Some(dt) = try_full_datetime(s) {
-        return Ok(dt);
-    }
-    NaiveDateTime::parse_from_str(&format!("{s}T23:59:59"), "%Y-%m-%dT%H:%M:%S")
-        .with_context(|| format!("invalid datetime format: {s}"))
-}
-
-/// Resolves time range from CLI arguments using local timezone.
-///
-/// # Errors
-///
-/// Returns an error if only one of `--time-since` / `--time-until` is specified.
-fn resolve_time_range(args: &ProgArgs) -> Result<TimeRange> {
-    match (&args.time_since, &args.time_until) {
-        (None, None) => {
-            let now = Local::now().naive_local();
-            let start = now
-                .checked_sub_signed(Duration::days(1))
-                .context("failed to compute start time")?;
-            let end = now
-                .checked_add_signed(Duration::days(1))
-                .context("failed to compute end time")?;
-            Ok(TimeRange::new(start, end))
-        }
-        (Some(since), Some(until)) => {
-            let start = to_naive_datetime_since(since)?;
-            let end = to_naive_datetime_until(until)?;
-            Ok(TimeRange::new(start, end))
-        }
-        _ => {
-            bail!("both --time-since and --time-until must be specified together");
-        }
-    }
-}
-
 /// Runs the `syoboi prog` subcommand.
 ///
 /// Falls back to `config.toml` selected channels when `--ch-ids` is not specified.
@@ -271,29 +248,14 @@ async fn run_syoboi_prog(args: &ProgArgs, dir: Option<&PathBuf>) -> Result<()> {
         .build()
         .context("failed to build API client")?;
 
-    let range = resolve_time_range(args)?;
+    let range = resolve_time_range(args.time_since.as_deref(), args.time_until.as_deref())?;
     tracing::info!(
         "Time range: {} .. {}",
         range.start.format("%Y-%m-%d %H:%M:%S"),
         range.end.format("%Y-%m-%d %H:%M:%S"),
     );
 
-    let ch_ids = if args.ch_ids.is_some() {
-        args.ch_ids.clone()
-    } else {
-        let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
-        let config = AppConfig::load(&config_path).context("failed to load config")?;
-        if config.channels.selected.is_empty() {
-            None
-        } else {
-            tracing::info!(
-                "Using {} channel(s) from config: {:?}",
-                config.channels.selected.len(),
-                config.channels.selected
-            );
-            Some(config.channels.selected)
-        }
-    };
+    let ch_ids = resolve_ch_ids(args.ch_ids.clone(), dir)?;
 
     let params = ProgLookupParams {
         ch_ids,
@@ -341,7 +303,7 @@ async fn run_syoboi_titles(args: &TitlesArgs) -> Result<()> {
         .context("failed to build API client")?;
 
     let titles = client
-        .lookup_titles(&args.tids)
+        .lookup_titles(&args.tids, None)
         .await
         .context("failed to fetch titles")?;
 
@@ -364,6 +326,266 @@ async fn run_syoboi_titles(args: &TitlesArgs) -> Result<()> {
         );
     }
     tracing::info!("Total: {} titles", titles.len());
+
+    Ok(())
+}
+
+/// Resolves channel IDs from CLI args or config fallback.
+///
+/// Returns `None` if no channels are specified.
+fn resolve_ch_ids(ch_ids: Option<Vec<u32>>, dir: Option<&PathBuf>) -> Result<Option<Vec<u32>>> {
+    if ch_ids.is_some() {
+        return Ok(ch_ids);
+    }
+
+    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+    let config = AppConfig::load(&config_path).context("failed to load config")?;
+    if config.channels.selected.is_empty() {
+        Ok(None)
+    } else {
+        tracing::info!(
+            "Using {} channel(s) from config: {:?}",
+            config.channels.selected.len(),
+            config.channels.selected
+        );
+        Ok(Some(config.channels.selected))
+    }
+}
+
+/// Title lookup chunk size for Syoboi API.
+const TITLE_LOOKUP_CHUNK_SIZE: usize = 50;
+
+/// Max retries per title chunk (rate-limit empty-response recovery).
+///
+/// Cloudflare rate-limit on cal.syoboi.jp typically lasts ~30-35s.
+/// With initial backoff 10s: 10+20+40+80+160 = 310s theoretical max,
+/// but usually resolves by retry 2-3 (cumulative 30-70s).
+const TITLE_CHUNK_MAX_RETRIES: u32 = 5;
+
+/// Initial backoff before retrying a title chunk (doubles each retry).
+const TITLE_CHUNK_INITIAL_BACKOFF: Duration = Duration::from_secs(10);
+
+/// Fields to request from `TitleLookup` during db sync.
+///
+/// Excludes `Comment` (contains unescaped `&` in URLs that breaks XML parsing)
+/// and other fields unused by `to_cached_title`.
+const TITLE_SYNC_FIELDS: &[&str] = &[
+    "TID",
+    "LastUpdate",
+    "Title",
+    "ShortTitle",
+    "TitleYomi",
+    "TitleEN",
+    "Cat",
+    "TitleFlag",
+    "FirstYear",
+    "FirstMonth",
+    "Keywords",
+    "SubTitles",
+];
+
+/// Runs the `db sync` subcommand.
+///
+/// Fetches programs and titles from Syoboi API and upserts into local DB.
+///
+/// # Errors
+///
+/// Returns an error if API calls or DB operations fail.
+#[instrument(skip_all)]
+/// Converts a `SyoboiTitle` to a `CachedTitle` for DB storage.
+fn to_cached_title(t: &SyoboiTitle) -> CachedTitle {
+    CachedTitle {
+        tid: t.tid,
+        tmdb_series_id: None,
+        tmdb_season_number: None,
+        title: t.title.clone(),
+        short_title: t.short_title.clone(),
+        title_yomi: t.title_yomi.clone(),
+        title_en: t.title_en.clone(),
+        cat: t.cat,
+        title_flag: t.title_flag,
+        first_year: t.first_year,
+        first_month: t.first_month,
+        keywords: t.keywords.clone(),
+        sub_titles: t.sub_titles.clone(),
+        last_update: t.last_update.clone(),
+    }
+}
+
+/// Converts a `SyoboiProgram` to a `CachedProgram` for DB storage.
+fn to_cached_program(p: &SyoboiProgram) -> CachedProgram {
+    CachedProgram {
+        pid: p.pid,
+        tid: p.tid,
+        ch_id: p.ch_id,
+        tmdb_episode_id: None,
+        st_time: p.st_time.clone(),
+        st_offset: p.st_offset,
+        ed_time: p.ed_time.clone(),
+        count: p.count,
+        sub_title: p.sub_title.clone(),
+        flag: p.flag,
+        deleted: p.deleted,
+        warn: p.warn,
+        revision: p.revision,
+        last_update: p.last_update.clone(),
+        st_sub_title: p.st_sub_title.clone(),
+        duration_min: None,
+    }
+}
+
+/// Fetches titles in chunks with retry + exponential backoff for empty responses.
+///
+/// When the API returns an empty response for a non-empty chunk (likely
+/// rate-limited), retries up to `TITLE_CHUNK_MAX_RETRIES` times with
+/// exponential backoff starting at `TITLE_CHUNK_INITIAL_BACKOFF`.
+#[allow(clippy::arithmetic_side_effects)]
+async fn fetch_titles_chunked(
+    client: &SyoboiClient,
+    unique_tids: &[u32],
+) -> Result<Vec<SyoboiTitle>> {
+    let mut all_titles = Vec::new();
+    let chunks: Vec<&[u32]> = unique_tids.chunks(TITLE_LOOKUP_CHUNK_SIZE).collect();
+    let total_chunks = chunks.len();
+
+    for (i, chunk) in chunks.into_iter().enumerate() {
+        tracing::debug!(?chunk, "TitleLookup requesting TIDs");
+
+        let mut titles = Vec::new();
+        let mut last_code: u16 = 0;
+        for retry in 0..=TITLE_CHUNK_MAX_RETRIES {
+            let (code, result) = client
+                .lookup_titles_with_status(chunk, Some(TITLE_SYNC_FIELDS))
+                .await
+                .with_context(|| {
+                    format!("failed to fetch titles for chunk of {} TIDs", chunk.len())
+                })?;
+            last_code = code;
+
+            if !result.is_empty() || chunk.is_empty() {
+                titles = result;
+                break;
+            }
+
+            // Empty response for a non-empty chunk — likely rate-limited.
+            if retry < TITLE_CHUNK_MAX_RETRIES {
+                let backoff = TITLE_CHUNK_INITIAL_BACKOFF * 2u32.pow(retry);
+                tracing::warn!(
+                    chunk = i + 1,
+                    total_chunks,
+                    code,
+                    retry = retry + 1,
+                    max_retries = TITLE_CHUNK_MAX_RETRIES,
+                    backoff_secs = backoff.as_secs(),
+                    "TitleLookup returned 0 titles for non-empty chunk, retrying after backoff"
+                );
+                tokio::time::sleep(backoff).await;
+            } else {
+                tracing::warn!(
+                    chunk = i + 1,
+                    total_chunks,
+                    code,
+                    requested = chunk.len(),
+                    "TitleLookup returned 0 titles after all retries, skipping chunk"
+                );
+            }
+        }
+
+        if titles.is_empty() {
+            tracing::warn!(
+                chunk = i + 1,
+                total_chunks,
+                code = last_code,
+                fetched = 0,
+                "TitleLookup chunk completed"
+            );
+        } else {
+            tracing::info!(
+                chunk = i + 1,
+                total_chunks,
+                code = last_code,
+                fetched = titles.len(),
+                "TitleLookup chunk completed"
+            );
+        }
+        all_titles.extend(titles);
+    }
+
+    Ok(all_titles)
+}
+
+async fn run_db_sync(args: &DbSyncArgs, dir: Option<&PathBuf>) -> Result<()> {
+    let client = build_syoboi_client()?;
+
+    let range = resolve_time_range(args.time_since.as_deref(), args.time_until.as_deref())?;
+    tracing::info!(
+        "Time range: {} .. {}",
+        range.start.format("%Y-%m-%d %H:%M:%S"),
+        range.end.format("%Y-%m-%d %H:%M:%S"),
+    );
+
+    let ch_ids = resolve_ch_ids(args.ch_ids.clone(), dir)?;
+
+    let params = ProgLookupParams {
+        ch_ids,
+        range: Some(range),
+        ..ProgLookupParams::default()
+    };
+
+    tracing::info!("Fetching programs from Syoboi API...");
+    let programs = lookup_all_programs(&client, &params)
+        .await
+        .context("failed to fetch programs")?;
+    tracing::info!("Fetched {} programs", programs.len());
+
+    // Extract unique TIDs and fetch titles in chunks
+    let unique_tids: Vec<u32> = programs
+        .iter()
+        .map(|p| p.tid)
+        .collect::<HashSet<u32>>()
+        .into_iter()
+        .collect();
+    tracing::info!("Fetching titles for {} unique TIDs...", unique_tids.len());
+
+    let all_titles = fetch_titles_chunked(&client, &unique_tids).await?;
+    tracing::info!("Fetched {} titles total", all_titles.len());
+
+    // Open DB and upsert
+    let conn = open_db(dir).context("failed to open database")?;
+
+    let cached_titles: Vec<CachedTitle> = all_titles.iter().map(to_cached_title).collect();
+    let titles_changed = upsert_titles(&conn, &cached_titles).context("failed to upsert titles")?;
+    tracing::info!(
+        changed = titles_changed,
+        unchanged = cached_titles.len().saturating_sub(titles_changed),
+        "Titles upsert complete"
+    );
+
+    let valid_tids: HashSet<u32> = cached_titles.iter().map(|t| t.tid).collect();
+    let cached_programs: Vec<CachedProgram> = programs
+        .iter()
+        .filter(|p| valid_tids.contains(&p.tid))
+        .map(to_cached_program)
+        .collect();
+    let skipped = programs.len().saturating_sub(cached_programs.len());
+    if skipped > 0 {
+        tracing::warn!(skipped, "Skipped programs with missing title references");
+    }
+    let programs_changed =
+        upsert_programs(&conn, &cached_programs).context("failed to upsert programs")?;
+    tracing::info!(
+        changed = programs_changed,
+        unchanged = cached_programs.len().saturating_sub(programs_changed),
+        "Programs upsert complete"
+    );
+
+    tracing::info!(
+        "Sync complete: {} titles ({} changed), {} programs ({} changed)",
+        cached_titles.len(),
+        titles_changed,
+        cached_programs.len(),
+        programs_changed,
+    );
 
     Ok(())
 }
@@ -703,6 +925,39 @@ fn run_channels_list(dir: Option<&PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// Runs the `db list` subcommand.
+///
+/// Loads titles, programs, and channels from local DB and launches the TUI viewer.
+///
+/// # Errors
+///
+/// Returns an error if DB operations or TUI fails.
+#[instrument(skip_all)]
+fn run_db_list(dir: Option<&PathBuf>) -> Result<()> {
+    let conn = open_db(dir).context("failed to open database")?;
+
+    let titles = load_titles(&conn).context("failed to load titles")?;
+    let programs = load_programs(&conn).context("failed to load programs")?;
+    let channels = load_channels(&conn).context("failed to load channels")?;
+
+    if titles.is_empty() {
+        tracing::info!("No titles in database. Run `db sync` first.");
+        return Ok(());
+    }
+
+    tracing::info!(
+        "Loaded {} titles, {} programs, {} channels. Launching TUI...",
+        titles.len(),
+        programs.len(),
+        channels.len()
+    );
+
+    crate::tui::title_viewer::run_title_viewer(&titles, &programs, channels)
+        .context("title viewer TUI failed")?;
+
+    Ok(())
+}
+
 /// Entry point.
 ///
 /// # Errors
@@ -770,162 +1025,9 @@ async fn main() -> Result<()> {
             TmdbSubcommands::TvDetails(args) => run_tmdb_tv_details(&args).await,
             TmdbSubcommands::TvSeason(args) => run_tmdb_tv_season(&args).await,
         },
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used)]
-
-    use super::*;
-
-    #[test]
-    fn test_to_naive_datetime_since_iso_format() {
-        // Arrange & Act
-        let dt = to_naive_datetime_since("2024-01-15T09:30:00").unwrap();
-
-        // Assert
-        assert_eq!(dt.to_string(), "2024-01-15 09:30:00");
-    }
-
-    #[test]
-    fn test_to_naive_datetime_until_iso_format() {
-        // Arrange & Act
-        let dt = to_naive_datetime_until("2024-01-15T09:30:00").unwrap();
-
-        // Assert
-        assert_eq!(dt.to_string(), "2024-01-15 09:30:00");
-    }
-
-    #[test]
-    fn test_to_naive_datetime_since_space_format() {
-        // Arrange & Act
-        let dt = to_naive_datetime_since("2024-01-15 09:30:00").unwrap();
-
-        // Assert
-        assert_eq!(dt.to_string(), "2024-01-15 09:30:00");
-    }
-
-    #[test]
-    fn test_to_naive_datetime_until_space_format() {
-        // Arrange & Act
-        let dt = to_naive_datetime_until("2024-01-15 09:30:00").unwrap();
-
-        // Assert
-        assert_eq!(dt.to_string(), "2024-01-15 09:30:00");
-    }
-
-    #[test]
-    fn test_to_naive_datetime_since_date_only() {
-        // Arrange & Act
-        let dt = to_naive_datetime_since("2024-01-15").unwrap();
-
-        // Assert
-        assert_eq!(dt.to_string(), "2024-01-15 00:00:00");
-    }
-
-    #[test]
-    fn test_to_naive_datetime_until_date_only() {
-        // Arrange & Act
-        let dt = to_naive_datetime_until("2024-01-15").unwrap();
-
-        // Assert
-        assert_eq!(dt.to_string(), "2024-01-15 23:59:59");
-    }
-
-    #[test]
-    fn test_to_naive_datetime_since_invalid() {
-        // Arrange & Act
-        let result = to_naive_datetime_since("not-a-date");
-
-        // Assert
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_to_naive_datetime_until_invalid() {
-        // Arrange & Act
-        let result = to_naive_datetime_until("not-a-date");
-
-        // Assert
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_resolve_time_range_both_none() {
-        // Arrange
-        let args = ProgArgs {
-            time_since: None,
-            time_until: None,
-            ch_ids: None,
-        };
-
-        // Act
-        let range = resolve_time_range(&args).unwrap();
-
-        // Assert: range should span roughly 2 days
-        let diff = range.end - range.start;
-        assert_eq!(diff.num_days(), 2);
-    }
-
-    #[test]
-    fn test_resolve_time_range_both_some() {
-        // Arrange
-        let args = ProgArgs {
-            time_since: Some(String::from("2024-01-01")),
-            time_until: Some(String::from("2024-01-31")),
-            ch_ids: None,
-        };
-
-        // Act
-        let range = resolve_time_range(&args).unwrap();
-
-        // Assert
-        assert_eq!(range.start.to_string(), "2024-01-01 00:00:00");
-        assert_eq!(range.end.to_string(), "2024-01-31 23:59:59");
-    }
-
-    #[test]
-    fn test_resolve_time_range_only_since() {
-        // Arrange
-        let args = ProgArgs {
-            time_since: Some(String::from("2024-01-01")),
-            time_until: None,
-            ch_ids: None,
-        };
-
-        // Act
-        let result = resolve_time_range(&args);
-
-        // Assert
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("both --time-since and --time-until must be specified together")
-        );
-    }
-
-    #[test]
-    fn test_resolve_time_range_only_until() {
-        // Arrange
-        let args = ProgArgs {
-            time_since: None,
-            time_until: Some(String::from("2024-01-31")),
-            ch_ids: None,
-        };
-
-        // Act
-        let result = resolve_time_range(&args);
-
-        // Assert
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("both --time-since and --time-until must be specified together")
-        );
+        Commands::Db(db) => match db.command {
+            DbSubcommands::Sync(args) => run_db_sync(&args, cli.dir.as_ref()).await,
+            DbSubcommands::List => run_db_list(cli.dir.as_ref()),
+        },
     }
 }

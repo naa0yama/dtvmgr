@@ -13,6 +13,7 @@ anyhow = "1.0"
 chrono = "0.4"
 clap = { version = "4.5.45", features = ["derive"] }
 crossterm = "0.28"
+open = "5"
 quick-xml = { version = "0.37", features = ["serialize"] }
 ratatui = "0.29"
 regex = "1"

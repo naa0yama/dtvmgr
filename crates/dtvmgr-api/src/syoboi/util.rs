@@ -202,7 +202,11 @@ mod tests {
     }
 
     impl LocalSyoboiApi for MockSyoboiApi {
-        async fn lookup_titles(&self, _tids: &[u32]) -> Result<Vec<SyoboiTitle>> {
+        async fn lookup_titles(
+            &self,
+            _tids: &[u32],
+            _fields: Option<&[&str]>,
+        ) -> Result<Vec<SyoboiTitle>> {
             Ok(vec![])
         }
 

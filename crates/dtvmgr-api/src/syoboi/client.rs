@@ -14,11 +14,20 @@ use super::params::ProgLookupParams;
 use super::rate_limiter::SyoboiRateLimiter;
 use super::types::{SyoboiChannel, SyoboiChannelGroup, SyoboiProgram, SyoboiTitle};
 use super::xml::{
-    ChGroupLookupResponse, ChLookupResponse, ProgLookupResponse, TitleLookupResponse,
+    ApiResult, ChGroupLookupResponse, ChLookupResponse, ProgLookupResponse, TitleLookupResponse,
 };
 
+/// Base URL for the Syoboi Calendar website.
+pub const SYOBOI_BASE_URL: &str = "https://cal.syoboi.jp";
+
 /// Default base URL.
-const DEFAULT_BASE_URL: &str = "https://cal.syoboi.jp/db.php";
+const DEFAULT_BASE_URL: &str = concat!("https://cal.syoboi.jp", "/db.php");
+
+/// Maximum number of retries for API requests.
+const MAX_RETRIES: u32 = 3;
+
+/// Delay between retries.
+const RETRY_DELAY: Duration = Duration::from_secs(2);
 
 /// Syoboi Calendar API client.
 #[derive(Debug)]
@@ -137,74 +146,296 @@ impl SyoboiClient {
         SyoboiClientBuilder::new()
     }
 
+    /// Checks API result code. Returns an error if code is not 200.
+    fn check_api_result(result: Option<&ApiResult>, command: &str) -> Result<()> {
+        if let Some(r) = result
+            && r.code != 200
+        {
+            bail!(
+                "{} API error: code={}, message={:?}",
+                command,
+                r.code,
+                r.message
+            );
+        }
+        Ok(())
+    }
+
+    /// Builds an XML decode error with a preview of the response body.
+    fn xml_decode_error(command: &str, xml: &str) -> String {
+        let preview_len = xml.len().min(500);
+        format!(
+            "{} XML decoding failed (len={}): {}",
+            command,
+            xml.len(),
+            &xml[..preview_len]
+        )
+    }
+
     /// Parses a `TitleLookup` XML response.
     pub(crate) fn parse_title_response(xml: &str) -> Result<Vec<SyoboiTitle>> {
         let raw_result: std::result::Result<TitleLookupResponse, _> = quick_xml::de::from_str(xml);
-        let response = raw_result.context("TitleLookup XML decoding failed")?;
-
-        if response.result.code != 200 {
-            bail!(
-                "TitleLookup API error: code={}, message={:?}",
-                response.result.code,
-                response.result.message
-            );
-        }
-
-        Ok(response.title_items.items)
+        let response = raw_result.with_context(|| Self::xml_decode_error("TitleLookup", xml))?;
+        Self::check_api_result(response.result.as_ref(), "TitleLookup")?;
+        Ok(response
+            .title_items
+            .map_or_else(Vec::new, |items| items.items))
     }
 
     /// Parses a `ProgLookup` XML response.
     pub(crate) fn parse_prog_response(xml: &str) -> Result<Vec<SyoboiProgram>> {
         let raw_result: std::result::Result<ProgLookupResponse, _> = quick_xml::de::from_str(xml);
-        let response = raw_result.context("ProgLookup XML decoding failed")?;
-        Ok(response.prog_items.items)
+        let response = raw_result.with_context(|| Self::xml_decode_error("ProgLookup", xml))?;
+        Self::check_api_result(response.result.as_ref(), "ProgLookup")?;
+        Ok(response
+            .prog_items
+            .map_or_else(Vec::new, |items| items.items))
     }
 
     /// Parses a `ChLookup` XML response.
     pub(crate) fn parse_ch_response(xml: &str) -> Result<Vec<SyoboiChannel>> {
         let raw_result: std::result::Result<ChLookupResponse, _> = quick_xml::de::from_str(xml);
-        let response = raw_result.context("ChLookup XML decoding failed")?;
-        Ok(response.ch_items.items)
+        let response = raw_result.with_context(|| Self::xml_decode_error("ChLookup", xml))?;
+        Self::check_api_result(response.result.as_ref(), "ChLookup")?;
+        Ok(response.ch_items.map_or_else(Vec::new, |items| items.items))
     }
 
     /// Parses a `ChGroupLookup` XML response.
     pub(crate) fn parse_ch_group_response(xml: &str) -> Result<Vec<SyoboiChannelGroup>> {
         let raw_result: std::result::Result<ChGroupLookupResponse, _> =
             quick_xml::de::from_str(xml);
-        let response = raw_result.context("ChGroupLookup XML decoding failed")?;
-        Ok(response.ch_group_items.items)
+        let response = raw_result.with_context(|| Self::xml_decode_error("ChGroupLookup", xml))?;
+        Self::check_api_result(response.result.as_ref(), "ChGroupLookup")?;
+        Ok(response
+            .ch_group_items
+            .map_or_else(Vec::new, |items| items.items))
     }
 }
 
-impl LocalSyoboiApi for SyoboiClient {
-    #[instrument(skip_all)]
-    async fn lookup_titles(&self, tids: &[u32]) -> Result<Vec<SyoboiTitle>> {
-        self.rate_limiter.lock().await.wait().await;
+impl SyoboiClient {
+    /// Sends a GET request with retry logic.
+    ///
+    /// Retries up to `MAX_RETRIES` times on failure, waiting the rate limiter
+    /// interval before each attempt. Logs warnings on each retry.
+    /// Returns the HTTP status code alongside the parsed result.
+    async fn request_with_retry<T, F>(
+        &self,
+        command: &str,
+        build_request: impl Fn() -> reqwest::RequestBuilder,
+        parse: F,
+    ) -> Result<(u16, T)>
+    where
+        F: Fn(&str) -> Result<T>,
+    {
+        let mut last_err = None;
 
+        for attempt in 0..=MAX_RETRIES {
+            self.rate_limiter.lock().await.wait().await;
+
+            let send_result = build_request().send().await;
+            let response = match send_result {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(
+                        %command,
+                        attempt,
+                        error = %e,
+                        "Request failed, will retry"
+                    );
+                    last_err =
+                        Some(anyhow::Error::new(e).context(format!("{command} request failed")));
+                    tokio::time::sleep(RETRY_DELAY).await;
+                    continue;
+                }
+            };
+
+            let status = response.status();
+            let headers = response.headers().clone();
+            tracing::trace!(
+                %command,
+                %status,
+                ?headers,
+                "Response headers"
+            );
+
+            // Cloudflare rate-limit: respect Retry-After header.
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                let retry_after = headers
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .map_or(RETRY_DELAY, |secs| {
+                        Duration::from_secs(secs.saturating_add(1))
+                    });
+
+                tracing::warn!(
+                    %command,
+                    attempt,
+                    code = status.as_u16(),
+                    retry_after_secs = retry_after.as_secs(),
+                    "Rate limited, waiting before retry"
+                );
+                last_err = Some(anyhow::anyhow!("{command} rate limited (HTTP {status})"));
+                tokio::time::sleep(retry_after).await;
+                continue;
+            }
+
+            let xml = match response.text().await {
+                Ok(xml) => xml,
+                Err(e) => {
+                    tracing::warn!(
+                        %command,
+                        attempt,
+                        error = %e,
+                        "Failed to read response body, will retry"
+                    );
+                    last_err = Some(
+                        anyhow::Error::new(e).context(format!("failed to read {command} response")),
+                    );
+                    tokio::time::sleep(RETRY_DELAY).await;
+                    continue;
+                }
+            };
+
+            tracing::debug!(%command, body_len = xml.len(), "Response body received");
+            tracing::trace!(%command, body_preview = &xml[..xml.floor_char_boundary(500)], "Response body preview");
+
+            match parse(&xml) {
+                Ok(result) => return Ok((status.as_u16(), result)),
+                Err(e) => {
+                    tracing::warn!(
+                        %command,
+                        attempt,
+                        error = %e,
+                        "Parse/API error, will retry"
+                    );
+                    last_err = Some(e);
+                    tokio::time::sleep(RETRY_DELAY).await;
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("{command} failed after retries")))
+    }
+}
+
+impl SyoboiClient {
+    /// Looks up titles, returning HTTP status code alongside results.
+    ///
+    /// Use this when the caller needs the HTTP status code (e.g. for
+    /// chunk-level logging). The trait method `lookup_titles` discards
+    /// the status code.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request or XML parsing fails.
+    pub async fn lookup_titles_with_status(
+        &self,
+        tids: &[u32],
+        fields: Option<&[&str]>,
+    ) -> Result<(u16, Vec<SyoboiTitle>)> {
         let tid_str = tids
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join(",");
 
-        let result = self
-            .http_client
-            .get(self.base_url.clone())
-            .query(&[("Command", "TitleLookup"), ("TID", &tid_str)])
-            .send()
-            .await;
-        let response = result.context("TitleLookup request failed")?;
+        let fields_str = fields.map(|f| f.join(","));
 
-        let result = response.text().await;
-        let xml = result.context("failed to read TitleLookup response")?;
+        self.request_with_retry(
+            "TitleLookup",
+            || {
+                let mut req = self
+                    .http_client
+                    .get(self.base_url.clone())
+                    .query(&[("Command", "TitleLookup"), ("TID", &*tid_str)]);
+                if let Some(ref f) = fields_str {
+                    req = req.query(&[("Fields", f.as_str())]);
+                }
+                req
+            },
+            Self::parse_title_response,
+        )
+        .await
+    }
+}
 
-        Self::parse_title_response(&xml)
+impl LocalSyoboiApi for SyoboiClient {
+    #[instrument(skip_all)]
+    async fn lookup_titles(
+        &self,
+        tids: &[u32],
+        fields: Option<&[&str]>,
+    ) -> Result<Vec<SyoboiTitle>> {
+        self.lookup_titles_with_status(tids, fields)
+            .await
+            .map(|(_, titles)| titles)
     }
 
     #[instrument(skip_all)]
     async fn lookup_programs(&self, params: &ProgLookupParams) -> Result<Vec<SyoboiProgram>> {
-        self.rate_limiter.lock().await.wait().await;
+        let query = Self::build_prog_query(params);
 
+        self.request_with_retry(
+            "ProgLookup",
+            || self.http_client.get(self.base_url.clone()).query(&query),
+            Self::parse_prog_response,
+        )
+        .await
+        .map(|(_, data)| data)
+    }
+
+    #[instrument(skip_all)]
+    async fn lookup_channels(&self, ch_ids: Option<&[u32]>) -> Result<Vec<SyoboiChannel>> {
+        let mut query: Vec<(&str, String)> = vec![("Command", String::from("ChLookup"))];
+        if let Some(ch_ids) = ch_ids {
+            let ch_id_str = ch_ids
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            query.push(("ChID", ch_id_str));
+        }
+
+        self.request_with_retry(
+            "ChLookup",
+            || self.http_client.get(self.base_url.clone()).query(&query),
+            Self::parse_ch_response,
+        )
+        .await
+        .map(|(_, data)| data)
+    }
+
+    #[instrument(skip_all)]
+    async fn lookup_channel_groups(
+        &self,
+        ch_gids: Option<&[u32]>,
+    ) -> Result<Vec<SyoboiChannelGroup>> {
+        let mut query: Vec<(&str, String)> = vec![("Command", String::from("ChGroupLookup"))];
+        let ch_gid_str = ch_gids.map_or_else(
+            || String::from("*"),
+            |gids| {
+                gids.iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            },
+        );
+        query.push(("ChGID", ch_gid_str));
+
+        self.request_with_retry(
+            "ChGroupLookup",
+            || self.http_client.get(self.base_url.clone()).query(&query),
+            Self::parse_ch_group_response,
+        )
+        .await
+        .map(|(_, data)| data)
+    }
+}
+
+impl SyoboiClient {
+    /// Builds query parameters for `ProgLookup`.
+    fn build_prog_query(params: &ProgLookupParams) -> Vec<(&'static str, String)> {
         let mut query: Vec<(&str, String)> = vec![("Command", String::from("ProgLookup"))];
 
         if let Some(ref tids) = params.tids {
@@ -245,85 +476,7 @@ impl LocalSyoboiApi for SyoboiClient {
             query.push(("Fields", fields.join(",")));
         }
 
-        let request = self
-            .http_client
-            .get(self.base_url.clone())
-            .query(&query)
-            .build()
-            .context("failed to build ProgLookup request")?;
-
-        tracing::debug!(url = %request.url(), "ProgLookup request URL");
-
-        let result = self.http_client.execute(request).await;
-        let response = result.context("ProgLookup request failed")?;
-
-        let result = response.text().await;
-        let xml = result.context("failed to read ProgLookup response")?;
-
-        Self::parse_prog_response(&xml)
-    }
-
-    #[instrument(skip_all)]
-    async fn lookup_channels(&self, ch_ids: Option<&[u32]>) -> Result<Vec<SyoboiChannel>> {
-        self.rate_limiter.lock().await.wait().await;
-
-        let mut query: Vec<(&str, String)> = vec![("Command", String::from("ChLookup"))];
-
-        if let Some(ch_ids) = ch_ids {
-            let ch_id_str = ch_ids
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(",");
-            query.push(("ChID", ch_id_str));
-        }
-
-        let result = self
-            .http_client
-            .get(self.base_url.clone())
-            .query(&query)
-            .send()
-            .await;
-        let response = result.context("ChLookup request failed")?;
-
-        let result = response.text().await;
-        let xml = result.context("failed to read ChLookup response")?;
-
-        Self::parse_ch_response(&xml)
-    }
-
-    #[instrument(skip_all)]
-    async fn lookup_channel_groups(
-        &self,
-        ch_gids: Option<&[u32]>,
-    ) -> Result<Vec<SyoboiChannelGroup>> {
-        self.rate_limiter.lock().await.wait().await;
-
-        let mut query: Vec<(&str, String)> = vec![("Command", String::from("ChGroupLookup"))];
-
-        let ch_gid_str = ch_gids.map_or_else(
-            || String::from("*"),
-            |gids| {
-                gids.iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            },
-        );
-        query.push(("ChGID", ch_gid_str));
-
-        let result = self
-            .http_client
-            .get(self.base_url.clone())
-            .query(&query)
-            .send()
-            .await;
-        let response = result.context("ChGroupLookup request failed")?;
-
-        let result = response.text().await;
-        let xml = result.context("failed to read ChGroupLookup response")?;
-
-        Self::parse_ch_group_response(&xml)
+        query
     }
 }
 
@@ -450,6 +603,43 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_title_response_without_result() {
+        // Arrange: API sometimes omits <Result> element
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<TitleLookupResponse>
+    <TitleItems>
+        <TitleItem id="100">
+            <TID>100</TID>
+            <LastUpdate>2024-01-01 00:00:00</LastUpdate>
+            <Title>No Result Element</Title>
+            <ShortTitle></ShortTitle>
+            <TitleYomi></TitleYomi>
+            <TitleEN></TitleEN>
+            <Comment></Comment>
+            <Cat>1</Cat>
+            <TitleFlag>0</TitleFlag>
+            <FirstYear>2024</FirstYear>
+            <FirstMonth>1</FirstMonth>
+            <FirstEndYear></FirstEndYear>
+            <FirstEndMonth></FirstEndMonth>
+            <FirstCh></FirstCh>
+            <Keywords></Keywords>
+            <UserPoint></UserPoint>
+            <UserPointRank></UserPointRank>
+            <SubTitles></SubTitles>
+        </TitleItem>
+    </TitleItems>
+</TitleLookupResponse>"#;
+
+        // Act
+        let titles = SyoboiClient::parse_title_response(xml).unwrap();
+
+        // Assert
+        assert_eq!(titles.len(), 1);
+        assert_eq!(titles[0].title, "No Result Element");
+    }
+
+    #[test]
     fn test_parse_empty_sub_title_as_none() {
         // Arrange
         let xml = r#"
@@ -503,7 +693,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let titles = client.lookup_titles(&[6309]).await.unwrap();
+        let titles = client.lookup_titles(&[6309], None).await.unwrap();
 
         // Assert
         assert_eq!(titles.len(), 1);
@@ -646,8 +836,8 @@ mod tests {
 
         // Act
         let start = std::time::Instant::now();
-        client.lookup_titles(&[1]).await.unwrap();
-        client.lookup_titles(&[2]).await.unwrap();
+        client.lookup_titles(&[1], None).await.unwrap();
+        client.lookup_titles(&[2], None).await.unwrap();
         let elapsed = start.elapsed();
 
         // Assert: at least 100ms interval between two requests
@@ -678,6 +868,69 @@ mod tests {
             .unwrap();
 
         // Act & Assert (mock expect(1) verifies User-Agent header)
-        client.lookup_titles(&[1]).await.unwrap();
+        client.lookup_titles(&[1], None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_title_lookup_with_fields() {
+        // Arrange
+        let mock_server = wiremock::MockServer::start().await;
+        let xml_body = include_str!("../../../../fixtures/syoboi/title_lookup_6309.xml");
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/db.php"))
+            .and(wiremock::matchers::query_param("Command", "TitleLookup"))
+            .and(wiremock::matchers::query_param("TID", "6309"))
+            .and(wiremock::matchers::query_param("Fields", "TID,Title,Cat"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(xml_body))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/db.php", mock_server.uri());
+        let client = SyoboiClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        // Act
+        let titles = client
+            .lookup_titles(&[6309], Some(&["TID", "Title", "Cat"]))
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(titles.len(), 1);
+        assert_eq!(titles[0].tid, 6309);
+    }
+
+    #[tokio::test]
+    async fn test_title_lookup_without_fields_omits_query_param() {
+        // Arrange
+        let mock_server = wiremock::MockServer::start().await;
+        let xml_body = "<TitleLookupResponse><Result><Code>200</Code></Result><TitleItems></TitleItems></TitleLookupResponse>";
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/db.php"))
+            .and(wiremock::matchers::query_param("Command", "TitleLookup"))
+            .and(wiremock::matchers::query_param("TID", "1"))
+            .and(wiremock::matchers::query_param_is_missing("Fields"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(xml_body))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/db.php", mock_server.uri());
+        let client = SyoboiClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        // Act & Assert (mock expect(1) + query_param_is_missing verifies no Fields param)
+        client.lookup_titles(&[1], None).await.unwrap();
     }
 }

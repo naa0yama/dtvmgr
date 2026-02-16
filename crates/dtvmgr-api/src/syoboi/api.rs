@@ -15,10 +15,18 @@ use super::types::{SyoboiChannel, SyoboiChannelGroup, SyoboiProgram, SyoboiTitle
 pub trait LocalSyoboiApi {
     /// Looks up title information.
     ///
+    /// When `fields` is `Some`, only the specified fields are returned
+    /// via the `Fields` query parameter (reduces response size and avoids
+    /// XML parse issues with fields like `Comment`).
+    ///
     /// # Errors
     ///
     /// Returns an error if the HTTP request or XML parsing fails.
-    async fn lookup_titles(&self, tids: &[u32]) -> Result<Vec<SyoboiTitle>>;
+    async fn lookup_titles(
+        &self,
+        tids: &[u32],
+        fields: Option<&[&str]>,
+    ) -> Result<Vec<SyoboiTitle>>;
 
     /// Looks up program data (5,000-item limit per request).
     ///

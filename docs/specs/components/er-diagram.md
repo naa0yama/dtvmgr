@@ -213,14 +213,19 @@ erDiagram
         string st_sub_title "SubTitles JOIN サブタイトル (nullable)"
     }
 
-    channels {
-        u32 ch_id PK "SyoboiChannel.ch_id"
-        u32 ch_gid "チャンネルグループ ID (nullable)"
-        string ch_name "チャンネル名"
-        string ch_comment "チャンネルコメント (nullable)"
-        string last_update "最終更新日時 (nullable)"
+    channel_groups {
+        u32 ch_gid PK "SyoboiChannelGroup.ch_gid"
+        string ch_group_name "グループ名"
+        u32 ch_group_order "表示順"
     }
 
+    channels {
+        u32 ch_id PK "SyoboiChannel.ch_id"
+        u32 ch_gid FK "channel_groups.ch_gid (nullable)"
+        string ch_name "チャンネル名"
+    }
+
+    channel_groups ||--o{ channels : "has channels"
     titles ||--o{ programs : "has programs"
     channels ||--o{ programs : "broadcasts"
 ```

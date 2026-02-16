@@ -24,6 +24,7 @@ clap = { workspace = true }
 crossterm = { workspace = true }
 dtvmgr-api = { workspace = true }
 dtvmgr-db = { workspace = true }
+open = { workspace = true }
 ratatui = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }
