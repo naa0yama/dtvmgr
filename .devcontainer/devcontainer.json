@@ -6,7 +6,9 @@
 		"dockerfile": "../Dockerfile",
 		"target": "development",
 		"args": {
-			"TZ": "${localEnv:TZ:Asia/Tokyo}"
+			"TZ": "${localEnv:TZ:Asia/Tokyo}",
+			"USER_GID": "1100",
+			"USER_UID": "1100"
 		}
 	},
 	"initializeCommand": "./.devcontainer/initializeCommand.sh",
