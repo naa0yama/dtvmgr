@@ -152,3 +152,11 @@ mise run pre-commit       # fmt:check + clippy:strict + ast-grep
 - [The Rust Programming Language 日本語版](https://doc.rust-jp.rs/book-ja/)
 - [Developing inside a Container](https://code.visualstudio.com/docs/devcontainers/containers)
 - [Cargo Documentation](https://doc.rust-lang.org/cargo/)
+
+## Troubleshooting
+
+### Rust debug
+
+```bash
+RUST_LOG=trace RUST_BACKTRACE=1 cargo run -- help
+```
