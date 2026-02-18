@@ -12,8 +12,8 @@ use url::Url;
 use super::api::LocalTmdbApi;
 use super::rate_limiter::TmdbRateLimiter;
 use super::types::{
-    SearchMovieParams, SearchTvParams, TmdbErrorResponse, TmdbSearchMovieResponse,
-    TmdbSearchTvResponse, TmdbTvDetails, TmdbTvSeason,
+    SearchMultiParams, TmdbAlternativeTitlesResponse, TmdbErrorResponse, TmdbGenreListResponse,
+    TmdbMediaType, TmdbSearchMultiResponse, TmdbTvDetails, TmdbTvSeason,
 };
 
 /// Default base URL for TMDB API v3.
@@ -209,45 +209,6 @@ impl TmdbClient {
 
 impl LocalTmdbApi for TmdbClient {
     #[instrument(skip_all)]
-    async fn search_tv(&self, params: &SearchTvParams) -> Result<TmdbSearchTvResponse> {
-        let mut query: Vec<(&str, String)> = vec![
-            ("query", params.query.clone()),
-            ("language", params.language.clone()),
-            ("page", params.page.to_string()),
-            ("include_adult", params.include_adult.to_string()),
-        ];
-        if let Some(year) = params.first_air_date_year {
-            query.push(("first_air_date_year", year.to_string()));
-        }
-        if let Some(year) = params.year {
-            query.push(("year", year.to_string()));
-        }
-
-        self.get_json("search/tv", &query).await
-    }
-
-    #[instrument(skip_all)]
-    async fn search_movie(&self, params: &SearchMovieParams) -> Result<TmdbSearchMovieResponse> {
-        let mut query: Vec<(&str, String)> = vec![
-            ("query", params.query.clone()),
-            ("language", params.language.clone()),
-            ("page", params.page.to_string()),
-            ("include_adult", params.include_adult.to_string()),
-        ];
-        if let Some(year) = params.primary_release_year {
-            query.push(("primary_release_year", year.to_string()));
-        }
-        if let Some(year) = params.year {
-            query.push(("year", year.to_string()));
-        }
-        if let Some(ref region) = params.region {
-            query.push(("region", region.clone()));
-        }
-
-        self.get_json("search/movie", &query).await
-    }
-
-    #[instrument(skip_all)]
     async fn tv_details(&self, series_id: u64, language: &str) -> Result<TmdbTvDetails> {
         let path = format!("tv/{series_id}");
         let query = [("language", String::from(language))];
@@ -265,13 +226,48 @@ impl LocalTmdbApi for TmdbClient {
         let query = [("language", String::from(language))];
         self.get_json(&path, &query).await
     }
+
+    #[instrument(skip_all)]
+    async fn genre_tv_list(&self, language: &str) -> Result<TmdbGenreListResponse> {
+        self.get_json("genre/tv/list", &[("language", String::from(language))])
+            .await
+    }
+
+    #[instrument(skip_all)]
+    async fn genre_movie_list(&self, language: &str) -> Result<TmdbGenreListResponse> {
+        self.get_json("genre/movie/list", &[("language", String::from(language))])
+            .await
+    }
+
+    #[instrument(skip_all)]
+    async fn search_multi(&self, params: &SearchMultiParams) -> Result<TmdbSearchMultiResponse> {
+        let query: Vec<(&str, String)> = vec![
+            ("query", params.query.clone()),
+            ("language", params.language.clone()),
+            ("page", params.page.to_string()),
+            ("include_adult", params.include_adult.to_string()),
+        ];
+        self.get_json("search/multi", &query).await
+    }
+
+    #[instrument(skip_all)]
+    async fn alternative_titles(
+        &self,
+        media_type: TmdbMediaType,
+        id: u64,
+    ) -> Result<TmdbAlternativeTitlesResponse> {
+        let path = format!("{}/{id}/alternative_titles", media_type.as_str());
+        self.get_json(&path, &[]).await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
     #![allow(clippy::indexing_slicing)]
+    #![allow(clippy::panic)]
 
+    use super::super::types::TmdbMultiSearchResult;
     use super::*;
 
     #[test]
@@ -334,53 +330,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_search_tv_fixture() {
-        // Arrange
-        let json = include_str!("../../../../fixtures/tmdb/search_tv_spy_family.json");
-
-        // Act
-        let response: TmdbSearchTvResponse = serde_json::from_str(json).unwrap();
-
-        // Assert
-        assert_eq!(response.page, 1);
-        assert!(!response.results.is_empty());
-        let first = &response.results[0];
-        assert_eq!(first.id, 120_089);
-        assert_eq!(first.name, "SPY×FAMILY");
-        assert_eq!(first.original_language, "ja");
-        assert!(first.origin_country.contains(&String::from("JP")));
-    }
-
-    #[test]
-    fn test_parse_search_tv_empty_fixture() {
-        // Arrange
-        let json = include_str!("../../../../fixtures/tmdb/search_tv_empty.json");
-
-        // Act
-        let response: TmdbSearchTvResponse = serde_json::from_str(json).unwrap();
-
-        // Assert
-        assert_eq!(response.total_results, 0);
-        assert!(response.results.is_empty());
-    }
-
-    #[test]
-    fn test_parse_search_movie_fixture() {
-        // Arrange
-        let json = include_str!("../../../../fixtures/tmdb/search_movie_suzume.json");
-
-        // Act
-        let response: TmdbSearchMovieResponse = serde_json::from_str(json).unwrap();
-
-        // Assert
-        assert_eq!(response.page, 1);
-        assert!(!response.results.is_empty());
-        let first = &response.results[0];
-        assert_eq!(first.id, 916_224);
-        assert_eq!(first.original_language, "ja");
-    }
-
-    #[test]
     fn test_parse_tv_details_fixture() {
         // Arrange
         let json = include_str!("../../../../fixtures/tmdb/tv_details_120089.json");
@@ -424,68 +373,6 @@ mod tests {
         assert_eq!(error.status_code, 7);
         assert!(!error.success);
         assert!(error.status_message.contains("Invalid API key"));
-    }
-
-    #[tokio::test]
-    async fn test_search_tv_via_http() {
-        // Arrange
-        let mock_server = wiremock::MockServer::start().await;
-        let json_body = include_str!("../../../../fixtures/tmdb/search_tv_spy_family.json");
-
-        wiremock::Mock::given(wiremock::matchers::method("GET"))
-            .and(wiremock::matchers::path("/3/search/tv"))
-            .and(wiremock::matchers::header_exists("Authorization"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(json_body))
-            .mount(&mock_server)
-            .await;
-
-        let base_url = format!("{}/3/", mock_server.uri());
-        let client = TmdbClient::builder()
-            .base_url(base_url.parse().unwrap())
-            .api_token("test-token")
-            .user_agent("test/0.0.0")
-            .min_interval(Duration::from_millis(0))
-            .build()
-            .unwrap();
-
-        let params = SearchTvParams::new("SPY×FAMILY").language("ja-JP");
-
-        // Act
-        let response = client.search_tv(&params).await.unwrap();
-
-        // Assert
-        assert!(!response.results.is_empty());
-        assert_eq!(response.results[0].name, "SPY×FAMILY");
-    }
-
-    #[tokio::test]
-    async fn test_search_movie_via_http() {
-        // Arrange
-        let mock_server = wiremock::MockServer::start().await;
-        let json_body = include_str!("../../../../fixtures/tmdb/search_movie_suzume.json");
-
-        wiremock::Mock::given(wiremock::matchers::method("GET"))
-            .and(wiremock::matchers::path("/3/search/movie"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(json_body))
-            .mount(&mock_server)
-            .await;
-
-        let base_url = format!("{}/3/", mock_server.uri());
-        let client = TmdbClient::builder()
-            .base_url(base_url.parse().unwrap())
-            .api_token("test-token")
-            .user_agent("test/0.0.0")
-            .min_interval(Duration::from_millis(0))
-            .build()
-            .unwrap();
-
-        let params = SearchMovieParams::new("すずめの戸締まり").language("ja-JP");
-
-        // Act
-        let response = client.search_movie(&params).await.unwrap();
-
-        // Assert
-        assert!(!response.results.is_empty());
     }
 
     #[tokio::test]
@@ -550,9 +437,10 @@ mod tests {
     async fn test_bearer_token_is_sent() {
         // Arrange
         let mock_server = wiremock::MockServer::start().await;
-        let json_body = include_str!("../../../../fixtures/tmdb/search_tv_empty.json");
+        let json_body = include_str!("../../../../fixtures/tmdb/search_multi_empty.json");
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/3/search/multi"))
             .and(wiremock::matchers::header(
                 "Authorization",
                 "Bearer my-secret-token",
@@ -571,10 +459,10 @@ mod tests {
             .build()
             .unwrap();
 
-        let params = SearchTvParams::new("test");
+        let params = SearchMultiParams::new("test");
 
         // Act & Assert (mock expect(1) verifies Authorization header)
-        client.search_tv(&params).await.unwrap();
+        client.search_multi(&params).await.unwrap();
     }
 
     #[tokio::test]
@@ -584,6 +472,7 @@ mod tests {
         let error_body = r#"{"status_code":7,"status_message":"Invalid API key: You must be granted a valid key.","success":false}"#;
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/3/search/multi"))
             .respond_with(wiremock::ResponseTemplate::new(401).set_body_string(error_body))
             .mount(&mock_server)
             .await;
@@ -597,10 +486,10 @@ mod tests {
             .build()
             .unwrap();
 
-        let params = SearchTvParams::new("test");
+        let params = SearchMultiParams::new("test");
 
         // Act
-        let result = client.search_tv(&params).await;
+        let result = client.search_multi(&params).await;
 
         // Assert
         assert!(result.is_err());
@@ -617,6 +506,7 @@ mod tests {
 
         // Return 429 for all requests — expect retries + initial = MAX_RETRIES + 1
         wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/3/search/multi"))
             .respond_with(wiremock::ResponseTemplate::new(429).set_body_string(error_body))
             .expect(u64::from(MAX_RETRIES) + 1)
             .mount(&mock_server)
@@ -631,23 +521,277 @@ mod tests {
             .build()
             .unwrap();
 
-        let params = SearchTvParams::new("test");
+        let params = SearchMultiParams::new("test");
 
         // Act
-        let result = client.search_tv(&params).await;
+        let result = client.search_multi(&params).await;
 
         // Assert
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("rate limit"));
     }
 
+    #[test]
+    fn test_parse_genre_tv_list_fixture() {
+        // Arrange
+        let json = include_str!("../../../../fixtures/tmdb/genre_tv_list.json");
+
+        // Act
+        let response: TmdbGenreListResponse = serde_json::from_str(json).unwrap();
+
+        // Assert
+        assert!(!response.genres.is_empty());
+        let animation = response.genres.iter().find(|g| g.id == 16);
+        assert!(animation.is_some());
+        assert_eq!(animation.unwrap().name, "アニメーション");
+    }
+
+    #[test]
+    fn test_parse_tv_alternative_titles_fixture() {
+        // Arrange
+        let json = include_str!("../../../../fixtures/tmdb/tv_alternative_titles_31572.json");
+
+        // Act
+        let response: TmdbAlternativeTitlesResponse = serde_json::from_str(json).unwrap();
+
+        // Assert
+        assert_eq!(response.id, 31572);
+        assert_eq!(response.results.len(), 2);
+        assert_eq!(response.results[0].title, "Lupin III");
+        assert_eq!(response.results[0].iso_3166_1, "JP");
+        assert_eq!(response.results[0].title_type, "romaji");
+        assert_eq!(response.results[1].title, "Rupan Sansei");
+    }
+
+    #[test]
+    fn test_alternative_title_serializes() {
+        // Arrange
+        let json = include_str!("../../../../fixtures/tmdb/tv_alternative_titles_31572.json");
+        let response: TmdbAlternativeTitlesResponse = serde_json::from_str(json).unwrap();
+
+        // Act
+        let serialized = serde_json::to_string(&response.results).unwrap();
+
+        // Assert
+        assert!(serialized.contains("Lupin III"));
+        assert!(serialized.contains("romaji"));
+    }
+
+    #[tokio::test]
+    async fn test_genre_tv_list_via_http() {
+        // Arrange
+        let mock_server = wiremock::MockServer::start().await;
+        let json_body = include_str!("../../../../fixtures/tmdb/genre_tv_list.json");
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/3/genre/tv/list"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(json_body))
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/3/", mock_server.uri());
+        let client = TmdbClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .api_token("test-token")
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        // Act
+        let response = client.genre_tv_list("ja").await.unwrap();
+
+        // Assert
+        assert!(!response.genres.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_alternative_titles_tv_via_http() {
+        // Arrange
+        let mock_server = wiremock::MockServer::start().await;
+        let json_body = include_str!("../../../../fixtures/tmdb/tv_alternative_titles_31572.json");
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/3/tv/31572/alternative_titles"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(json_body))
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/3/", mock_server.uri());
+        let client = TmdbClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .api_token("test-token")
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        // Act
+        let response = client
+            .alternative_titles(TmdbMediaType::Tv, 31572)
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(response.id, 31572);
+        assert_eq!(response.results.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_alternative_titles_movie_via_http() {
+        // Arrange
+        let mock_server = wiremock::MockServer::start().await;
+        let json_body =
+            include_str!("../../../../fixtures/tmdb/movie_alternative_titles_916224.json");
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(
+                "/3/movie/916224/alternative_titles",
+            ))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(json_body))
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/3/", mock_server.uri());
+        let client = TmdbClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .api_token("test-token")
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        // Act
+        let response = client
+            .alternative_titles(TmdbMediaType::Movie, 916_224)
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(response.id, 916_224);
+        assert_eq!(response.results.len(), 2);
+        assert_eq!(response.results[0].title, "すずめの戸締まり");
+    }
+
+    #[test]
+    fn test_parse_search_multi_fixture() {
+        // Arrange
+        let json = include_str!("../../../../fixtures/tmdb/search_multi_lupin.json");
+
+        // Act
+        let response: TmdbSearchMultiResponse = serde_json::from_str(json).unwrap();
+
+        // Assert
+        assert_eq!(response.page, 1);
+        assert_eq!(response.total_results, 2);
+        assert_eq!(response.results.len(), 2);
+
+        match &response.results[0] {
+            TmdbMultiSearchResult::Tv(tv) => {
+                assert_eq!(tv.id, 31572);
+                assert_eq!(tv.original_name, "ルパン三世");
+            }
+            _ => panic!("expected Tv variant"),
+        }
+
+        match &response.results[1] {
+            TmdbMultiSearchResult::Movie(movie) => {
+                assert_eq!(movie.id, 916_224);
+                assert_eq!(movie.original_title, "ルパン三世 THE FIRST");
+            }
+            _ => panic!("expected Movie variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_search_multi_empty_fixture() {
+        // Arrange
+        let json = include_str!("../../../../fixtures/tmdb/search_multi_empty.json");
+
+        // Act
+        let response: TmdbSearchMultiResponse = serde_json::from_str(json).unwrap();
+
+        // Assert
+        assert_eq!(response.total_results, 0);
+        assert!(response.results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_search_multi_with_person() {
+        // Arrange
+        let json = include_str!("../../../../fixtures/tmdb/search_multi_with_person.json");
+
+        // Act
+        let response: TmdbSearchMultiResponse = serde_json::from_str(json).unwrap();
+
+        // Assert
+        assert_eq!(response.results.len(), 2);
+
+        match &response.results[0] {
+            TmdbMultiSearchResult::Tv(tv) => assert_eq!(tv.id, 31572),
+            _ => panic!("expected Tv variant"),
+        }
+
+        match &response.results[1] {
+            TmdbMultiSearchResult::Person(person) => assert_eq!(person.id, 12345),
+            _ => panic!("expected Person variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_movie_alternative_titles_fixture() {
+        // Arrange
+        let json = include_str!("../../../../fixtures/tmdb/movie_alternative_titles_916224.json");
+
+        // Act
+        let response: TmdbAlternativeTitlesResponse = serde_json::from_str(json).unwrap();
+
+        // Assert
+        assert_eq!(response.id, 916_224);
+        assert_eq!(response.results.len(), 2);
+        assert_eq!(response.results[0].title, "すずめの戸締まり");
+        assert_eq!(response.results[1].title, "Suzume no Tojimari");
+    }
+
+    #[tokio::test]
+    async fn test_search_multi_via_http() {
+        // Arrange
+        let mock_server = wiremock::MockServer::start().await;
+        let json_body = include_str!("../../../../fixtures/tmdb/search_multi_lupin.json");
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/3/search/multi"))
+            .and(wiremock::matchers::header_exists("Authorization"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(json_body))
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/3/", mock_server.uri());
+        let client = TmdbClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .api_token("test-token")
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        let params = SearchMultiParams::new("ルパン三世").language("ja-JP");
+
+        // Act
+        let response = client.search_multi(&params).await.unwrap();
+
+        // Assert
+        assert_eq!(response.results.len(), 2);
+    }
+
     #[tokio::test]
     async fn test_rate_limiter_enforces_interval() {
         // Arrange
         let mock_server = wiremock::MockServer::start().await;
-        let json_body = include_str!("../../../../fixtures/tmdb/search_tv_empty.json");
+        let json_body = include_str!("../../../../fixtures/tmdb/search_multi_empty.json");
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/3/search/multi"))
             .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(json_body))
             .expect(2)
             .mount(&mock_server)
@@ -662,12 +806,12 @@ mod tests {
             .build()
             .unwrap();
 
-        let params = SearchTvParams::new("test");
+        let params = SearchMultiParams::new("test");
 
         // Act
         let start = std::time::Instant::now();
-        client.search_tv(&params).await.unwrap();
-        client.search_tv(&params).await.unwrap();
+        client.search_multi(&params).await.unwrap();
+        client.search_multi(&params).await.unwrap();
         let elapsed = start.elapsed();
 
         // Assert: at least 100ms interval between two requests

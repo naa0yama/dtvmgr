@@ -1,6 +1,6 @@
 //! Title viewer TUI state management.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ratatui::widgets::TableState;
 
@@ -11,6 +11,8 @@ pub struct TitleRow {
     pub tid: u32,
     /// Title name.
     pub title: String,
+    /// Syoboi category code.
+    pub cat: Option<u32>,
     /// First broadcast year.
     pub first_year: Option<u32>,
     /// TMDB series ID (if mapped).
@@ -19,6 +21,10 @@ pub struct TitleRow {
     pub tmdb_season_number: Option<u32>,
     /// Number of programs for this title.
     pub program_count: usize,
+    /// Keywords from Syoboi (nullable).
+    pub keywords: Option<String>,
+    /// Normalized query string for TMDB search.
+    pub tmdb_query: String,
 }
 
 /// A program row for display.
@@ -58,6 +64,18 @@ pub enum InputMode {
     Filter,
 }
 
+/// TMDB filter mode for the title list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TmdbFilter {
+    /// Show all titles (no TMDB filter).
+    #[default]
+    All,
+    /// Show only titles without TMDB mapping.
+    Unmapped,
+    /// Show only titles with TMDB mapping.
+    Mapped,
+}
+
 /// Summary statistics for the DB viewer header.
 #[derive(Debug, Clone)]
 pub struct ViewerStats {
@@ -71,6 +89,8 @@ pub struct ViewerStats {
     pub oldest_st_time: Option<String>,
     /// Latest program start time (if any).
     pub newest_st_time: Option<String>,
+    /// Number of titles with a TMDB series mapping.
+    pub tmdb_matched: usize,
 }
 
 /// State for the title viewer TUI.
@@ -92,6 +112,14 @@ pub struct TitleViewerState {
     pub input_mode: InputMode,
     /// Filter text.
     pub filter: String,
+    /// TMDB filter mode.
+    pub tmdb_filter: TmdbFilter,
+    /// Whether the programs pane is visible.
+    pub show_programs: bool,
+    /// TIDs selected for exclusion in the current session.
+    pub selected_tids: HashSet<u32>,
+    /// TIDs excluded from display (loaded from config).
+    excluded_tids: HashSet<u32>,
     /// Cached filtered title indices.
     filtered_indices: Vec<usize>,
 }
@@ -103,10 +131,16 @@ impl TitleViewerState {
         titles: Vec<TitleRow>,
         programs_by_tid: HashMap<u32, Vec<ProgramRow>>,
         stats: ViewerStats,
+        excluded_tids: HashSet<u32>,
     ) -> Self {
-        let filtered_indices: Vec<usize> = (0..titles.len()).collect();
+        let filtered_indices: Vec<usize> = titles
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| !excluded_tids.contains(&t.tid))
+            .map(|(i, _)| i)
+            .collect();
         let mut title_table_state = TableState::default();
-        if !titles.is_empty() {
+        if !filtered_indices.is_empty() {
             title_table_state.select(Some(0));
         }
         Self {
@@ -118,6 +152,10 @@ impl TitleViewerState {
             program_table_state: TableState::default(),
             input_mode: InputMode::Normal,
             filter: String::new(),
+            tmdb_filter: TmdbFilter::default(),
+            show_programs: true,
+            selected_tids: HashSet::new(),
+            excluded_tids,
             filtered_indices,
         }
     }
@@ -241,6 +279,44 @@ impl TitleViewerState {
         self.active_pane = ActivePane::Titles;
     }
 
+    /// Cycles the TMDB filter: All -> Unmapped -> Mapped -> All.
+    pub fn toggle_tmdb_filter(&mut self) {
+        self.tmdb_filter = match self.tmdb_filter {
+            TmdbFilter::All => TmdbFilter::Unmapped,
+            TmdbFilter::Unmapped => TmdbFilter::Mapped,
+            TmdbFilter::Mapped => TmdbFilter::All,
+        };
+        self.rebuild_filter_cache();
+        self.select_first_title();
+    }
+
+    /// Toggles visibility of the programs pane.
+    pub fn toggle_programs(&mut self) {
+        self.show_programs = !self.show_programs;
+        if !self.show_programs && self.active_pane == ActivePane::Programs {
+            self.active_pane = ActivePane::Titles;
+        }
+    }
+
+    /// Toggles selection of the current title for exclusion.
+    pub fn toggle_select(&mut self) {
+        if let Some(t) = self.current_title() {
+            let tid = t.tid;
+            if !self.selected_tids.remove(&tid) {
+                self.selected_tids.insert(tid);
+            }
+        }
+    }
+
+    /// Returns new TIDs to add to the exclude list (selected minus already excluded).
+    #[must_use]
+    pub fn new_excludes(&self) -> Vec<u32> {
+        self.selected_tids
+            .difference(&self.excluded_tids)
+            .copied()
+            .collect()
+    }
+
     /// Updates the filter and rebuilds the cache.
     pub fn set_filter(&mut self, filter: String) {
         self.filter = filter;
@@ -271,10 +347,27 @@ impl TitleViewerState {
         }
     }
 
+    /// Returns whether a title passes the TMDB filter.
+    const fn matches_tmdb_filter(&self, title: &TitleRow) -> bool {
+        match self.tmdb_filter {
+            TmdbFilter::All => true,
+            TmdbFilter::Unmapped => title.tmdb_series_id.is_none(),
+            TmdbFilter::Mapped => title.tmdb_series_id.is_some(),
+        }
+    }
+
     /// Rebuilds the filtered title indices cache.
     fn rebuild_filter_cache(&mut self) {
         if self.filter.is_empty() {
-            self.filtered_indices = (0..self.titles.len()).collect();
+            self.filtered_indices = self
+                .titles
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| {
+                    !self.excluded_tids.contains(&t.tid) && self.matches_tmdb_filter(t)
+                })
+                .map(|(i, _)| i)
+                .collect();
         } else {
             let filter_lower = self.filter.to_lowercase();
             self.filtered_indices = self
@@ -282,6 +375,9 @@ impl TitleViewerState {
                 .iter()
                 .enumerate()
                 .filter(|(_, t)| {
+                    if self.excluded_tids.contains(&t.tid) || !self.matches_tmdb_filter(t) {
+                        return false;
+                    }
                     // Match title name
                     if t.title.to_lowercase().contains(&filter_lower) {
                         return true;
@@ -313,18 +409,24 @@ mod tests {
             TitleRow {
                 tid: 1,
                 title: String::from("SPY×FAMILY"),
+                cat: Some(1),
                 first_year: Some(2022),
                 tmdb_series_id: Some(12345),
                 tmdb_season_number: Some(1),
                 program_count: 2,
+                keywords: Some(String::from("spy,family")),
+                tmdb_query: String::from("SPYxFAMILY"),
             },
             TitleRow {
                 tid: 2,
                 title: String::from("Bocchi the Rock!"),
+                cat: Some(1),
                 first_year: Some(2022),
                 tmdb_series_id: None,
                 tmdb_season_number: None,
                 program_count: 1,
+                keywords: None,
+                tmdb_query: String::from("Bocchi the Rock!"),
             },
         ];
 
@@ -371,9 +473,10 @@ mod tests {
             unique_channels: 2,
             oldest_st_time: Some(String::from("2022-04-09 23:00:00")),
             newest_st_time: Some(String::from("2022-10-08 23:30:00")),
+            tmdb_matched: 1,
         };
 
-        TitleViewerState::new(titles, programs_by_tid, stats)
+        TitleViewerState::new(titles, programs_by_tid, stats, HashSet::new())
     }
 
     #[test]

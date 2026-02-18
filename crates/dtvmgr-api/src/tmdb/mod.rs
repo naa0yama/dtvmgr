@@ -14,6 +14,6 @@ pub use api::{LocalTmdbApi, TmdbApi};
 pub use client::{TmdbClient, TmdbClientBuilder};
 #[allow(clippy::module_name_repetitions)]
 pub use types::{
-    SearchMovieParams, SearchTvParams, TmdbMovieSearchResult, TmdbSearchMovieResponse,
-    TmdbSearchTvResponse, TmdbTvDetails, TmdbTvSearchResult, TmdbTvSeason,
+    SearchMultiParams, TmdbAlternativeTitle, TmdbAlternativeTitlesResponse, TmdbGenreListResponse,
+    TmdbMediaType, TmdbMultiSearchResult, TmdbSearchMultiResponse, TmdbTvDetails, TmdbTvSeason,
 };

@@ -34,6 +34,12 @@ pub struct CachedTitle {
     pub sub_titles: Option<String>,
     /// Last update timestamp.
     pub last_update: String,
+    /// TMDB original name from search result (nullable).
+    pub tmdb_original_name: Option<String>,
+    /// TMDB localized name from search result (nullable).
+    pub tmdb_name: Option<String>,
+    /// TMDB alternative titles as JSON array (nullable).
+    pub tmdb_alt_titles: Option<String>,
 }
 
 /// Upserts titles into the cache. Returns the number of rows changed.
@@ -58,8 +64,9 @@ pub fn upsert_titles(conn: &Connection, titles: &[CachedTitle]) -> Result<usize>
                 tid, tmdb_series_id, tmdb_season_number,
                 title, short_title, title_yomi, title_en,
                 cat, title_flag, first_year, first_month,
-                keywords, sub_titles, last_update
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                keywords, sub_titles, last_update,
+                tmdb_original_name, tmdb_name, tmdb_alt_titles
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
             ON CONFLICT(tid) DO UPDATE SET
                 title = excluded.title,
                 short_title = excluded.short_title,
@@ -94,6 +101,9 @@ pub fn upsert_titles(conn: &Connection, titles: &[CachedTitle]) -> Result<usize>
                 t.keywords,
                 t.sub_titles,
                 t.last_update,
+                t.tmdb_original_name,
+                t.tmdb_name,
+                t.tmdb_alt_titles,
             ])
             .with_context(|| format!("failed to upsert title {}", t.tid))?;
         changed = changed.saturating_add(rows);
@@ -116,7 +126,8 @@ pub fn load_titles(conn: &Connection) -> Result<Vec<CachedTitle>> {
             "SELECT tid, tmdb_series_id, tmdb_season_number,
                     title, short_title, title_yomi, title_en,
                     cat, title_flag, first_year, first_month,
-                    keywords, sub_titles, last_update
+                    keywords, sub_titles, last_update,
+                    tmdb_original_name, tmdb_name, tmdb_alt_titles
              FROM titles
              ORDER BY tid",
         )
@@ -139,6 +150,9 @@ pub fn load_titles(conn: &Connection) -> Result<Vec<CachedTitle>> {
                 keywords: row.get(11)?,
                 sub_titles: row.get(12)?,
                 last_update: row.get(13)?,
+                tmdb_original_name: row.get(14)?,
+                tmdb_name: row.get(15)?,
+                tmdb_alt_titles: row.get(16)?,
             })
         })
         .context("failed to query titles")?;
@@ -163,7 +177,8 @@ pub fn load_titles_by_tids(conn: &Connection, tids: &[u32]) -> Result<Vec<Cached
         "SELECT tid, tmdb_series_id, tmdb_season_number,
                 title, short_title, title_yomi, title_en,
                 cat, title_flag, first_year, first_month,
-                keywords, sub_titles, last_update
+                keywords, sub_titles, last_update,
+                tmdb_original_name, tmdb_name, tmdb_alt_titles
          FROM titles
          WHERE tid IN ({})
          ORDER BY tid",
@@ -197,6 +212,9 @@ pub fn load_titles_by_tids(conn: &Connection, tids: &[u32]) -> Result<Vec<Cached
                 keywords: row.get(11)?,
                 sub_titles: row.get(12)?,
                 last_update: row.get(13)?,
+                tmdb_original_name: row.get(14)?,
+                tmdb_name: row.get(15)?,
+                tmdb_alt_titles: row.get(16)?,
             })
         })
         .context("failed to query titles by tids")?;
@@ -222,6 +240,74 @@ pub fn update_tmdb_mapping(
     )
     .with_context(|| format!("failed to update TMDB mapping for title {tid}"))?;
     Ok(())
+}
+
+/// Updates TMDB search result fields for a title.
+///
+/// Sets `tmdb_series_id`, `tmdb_original_name`, `tmdb_name`, and
+/// `tmdb_alt_titles` in a single UPDATE.
+///
+/// # Errors
+///
+/// Returns an error if the database operation fails.
+pub fn update_tmdb_search_result(
+    conn: &Connection,
+    tid: u32,
+    tmdb_series_id: u64,
+    tmdb_original_name: &str,
+    tmdb_name: &str,
+    tmdb_alt_titles: &str,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE titles
+         SET tmdb_series_id = ?1,
+             tmdb_original_name = ?2,
+             tmdb_name = ?3,
+             tmdb_alt_titles = ?4
+         WHERE tid = ?5",
+        rusqlite::params![
+            tmdb_series_id,
+            tmdb_original_name,
+            tmdb_name,
+            tmdb_alt_titles,
+            tid
+        ],
+    )
+    .with_context(|| format!("failed to update TMDB search result for title {tid}"))?;
+    Ok(())
+}
+
+/// Deletes titles whose `cat` is not in the allowed set. Returns the number of rows deleted.
+///
+/// Titles with `cat IS NULL` are also deleted.
+///
+/// # Errors
+///
+/// Returns an error if the database operation fails.
+pub fn delete_titles_by_cat_not_in(conn: &Connection, allowed_cats: &[u32]) -> Result<usize> {
+    if allowed_cats.is_empty() {
+        let deleted = conn
+            .execute("DELETE FROM titles", [])
+            .context("failed to delete all titles")?;
+        return Ok(deleted);
+    }
+
+    let placeholders: Vec<String> = allowed_cats.iter().map(|_| String::from("?")).collect();
+    let sql = format!(
+        "DELETE FROM titles WHERE cat IS NULL OR cat NOT IN ({})",
+        placeholders.join(", ")
+    );
+
+    let params: Vec<Box<dyn rusqlite::types::ToSql>> = allowed_cats
+        .iter()
+        .map(|c| -> Box<dyn rusqlite::types::ToSql> { Box::new(*c) })
+        .collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(AsRef::as_ref).collect();
+
+    let deleted = conn
+        .execute(&sql, param_refs.as_slice())
+        .context("failed to delete titles by cat filter")?;
+    Ok(deleted)
 }
 
 #[cfg(test)]
@@ -254,6 +340,9 @@ mod tests {
             keywords: None,
             sub_titles: None,
             last_update: String::from(last_update),
+            tmdb_original_name: None,
+            tmdb_name: None,
+            tmdb_alt_titles: None,
         }
     }
 
@@ -381,5 +470,105 @@ mod tests {
         // Assert
         assert_eq!(loaded[0].tmdb_series_id, Some(99999));
         assert_eq!(loaded[0].tmdb_season_number, Some(2));
+    }
+
+    #[test]
+    fn test_update_tmdb_search_result() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let titles = vec![make_title(100, "ルパン三世", "2024-01-01 00:00:00")];
+        upsert_titles(&conn, &titles).unwrap();
+
+        let alt_titles_json = r#"[{"iso_3166_1":"JP","title":"Lupin III","type":"romaji"}]"#;
+
+        // Act
+        update_tmdb_search_result(
+            &conn,
+            100,
+            31572,
+            "ルパン三世",
+            "ルパン三世",
+            alt_titles_json,
+        )
+        .unwrap();
+        let loaded = load_titles(&conn).unwrap();
+
+        // Assert
+        assert_eq!(loaded[0].tmdb_series_id, Some(31572));
+        assert_eq!(loaded[0].tmdb_original_name.as_deref(), Some("ルパン三世"));
+        assert_eq!(loaded[0].tmdb_name.as_deref(), Some("ルパン三世"));
+        assert_eq!(loaded[0].tmdb_alt_titles.as_deref(), Some(alt_titles_json));
+    }
+
+    #[test]
+    fn test_upsert_preserves_tmdb_search_result() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let titles = vec![make_title(100, "Test", "2024-01-01 00:00:00")];
+        upsert_titles(&conn, &titles).unwrap();
+
+        // Set TMDB search result
+        update_tmdb_search_result(&conn, 100, 31572, "Original", "Name", "[]").unwrap();
+
+        // Act: upsert with new last_update (TMDB fields should be preserved)
+        let updated = vec![make_title(100, "Updated", "2024-02-01 00:00:00")];
+        upsert_titles(&conn, &updated).unwrap();
+        let loaded = load_titles(&conn).unwrap();
+
+        // Assert: TMDB search result preserved
+        assert_eq!(loaded[0].title, "Updated");
+        assert_eq!(loaded[0].tmdb_series_id, Some(31572));
+        assert_eq!(loaded[0].tmdb_original_name.as_deref(), Some("Original"));
+        assert_eq!(loaded[0].tmdb_name.as_deref(), Some("Name"));
+        assert_eq!(loaded[0].tmdb_alt_titles.as_deref(), Some("[]"));
+    }
+
+    fn make_title_with_cat(tid: u32, title: &str, cat: Option<u32>) -> CachedTitle {
+        CachedTitle {
+            cat,
+            ..make_title(tid, title, "2024-01-01 00:00:00")
+        }
+    }
+
+    #[test]
+    fn test_delete_titles_by_cat_not_in() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let titles = vec![
+            make_title_with_cat(1, "Anime", Some(1)),
+            make_title_with_cat(2, "OVA", Some(7)),
+            make_title_with_cat(3, "Radio", Some(2)),
+            make_title_with_cat(4, "NoCat", None),
+        ];
+        upsert_titles(&conn, &titles).unwrap();
+
+        // Act
+        let deleted = delete_titles_by_cat_not_in(&conn, &[1, 7]).unwrap();
+        let remaining = load_titles(&conn).unwrap();
+
+        // Assert
+        assert_eq!(deleted, 2);
+        assert_eq!(remaining.len(), 2);
+        assert_eq!(remaining[0].tid, 1);
+        assert_eq!(remaining[1].tid, 2);
+    }
+
+    #[test]
+    fn test_delete_titles_by_cat_not_in_empty_allowed() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let titles = vec![
+            make_title_with_cat(1, "Anime", Some(1)),
+            make_title_with_cat(2, "OVA", Some(7)),
+        ];
+        upsert_titles(&conn, &titles).unwrap();
+
+        // Act
+        let deleted = delete_titles_by_cat_not_in(&conn, &[]).unwrap();
+        let remaining = load_titles(&conn).unwrap();
+
+        // Assert
+        assert_eq!(deleted, 2);
+        assert!(remaining.is_empty());
     }
 }

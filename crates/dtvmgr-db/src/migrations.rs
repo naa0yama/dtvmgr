@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 3;
+const CURRENT_VERSION: u32 = 4;
 
 /// Runs database migrations up to `CURRENT_VERSION`.
 ///
@@ -24,6 +24,9 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
     }
     if version < 3 {
         migrate_v3(conn).context("migration to v3 failed")?;
+    }
+    if version < 4 {
+        migrate_v4(conn).context("migration to v4 failed")?;
     }
 
     conn.pragma_update(None, "user_version", CURRENT_VERSION)
@@ -111,6 +114,18 @@ fn migrate_v3(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migration to v4: add TMDB search result columns to `titles`.
+fn migrate_v4(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE titles ADD COLUMN tmdb_original_name TEXT;
+         ALTER TABLE titles ADD COLUMN tmdb_name TEXT;
+         ALTER TABLE titles ADD COLUMN tmdb_alt_titles TEXT;",
+    )
+    .context("failed to add TMDB search result columns")?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -192,14 +207,14 @@ mod tests {
         migrate_v2(&conn).unwrap();
         conn.pragma_update(None, "user_version", 2u32).unwrap();
 
-        // Act: run full migrations (should apply v3)
+        // Act: run full migrations (should apply v3+v4)
         run_migrations(&conn).unwrap();
 
         // Assert
         let version: u32 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, CURRENT_VERSION);
 
         // Verify duration_min column exists
         let stmt = conn
@@ -207,5 +222,30 @@ mod tests {
             .unwrap();
         let col_count = stmt.column_count();
         assert_eq!(col_count, 1);
+    }
+
+    #[test]
+    fn test_v3_to_v4_migration() {
+        // Arrange: start from v3
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_v1(&conn).unwrap();
+        migrate_v2(&conn).unwrap();
+        migrate_v3(&conn).unwrap();
+        conn.pragma_update(None, "user_version", 3u32).unwrap();
+
+        // Act: run full migrations (should apply v4)
+        run_migrations(&conn).unwrap();
+
+        // Assert
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 4);
+
+        // Verify new columns exist
+        let stmt = conn
+            .prepare("SELECT tmdb_original_name, tmdb_name, tmdb_alt_titles FROM titles LIMIT 0")
+            .unwrap();
+        assert_eq!(stmt.column_count(), 3);
     }
 }

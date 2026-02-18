@@ -42,34 +42,43 @@ TMDB はアニメのシーズン構成に独自のルールを持っており、
 
 ### API エンドポイント一覧
 
-| エンドポイント                              | 用途                                 |
-| ------------------------------------------- | ------------------------------------ |
-| `GET /search/tv?query={Title}`              | タイトル検索 → series_id 取得        |
-| `GET /tv/{id}?language=ja-JP`               | シリーズ詳細 (シーズン一覧)          |
-| `GET /tv/{id}/season/{num}?language=ja-JP`  | シーズン詳細 (エピソード一覧)        |
-| `GET /tv/{id}/external_ids`                 | IMDB, TVDB 等の外部 ID               |
-| `GET /tv/{id}/episode_groups`               | 代替エピソードグルーピング一覧       |
-| `GET /tv/episode_group/{group_id}`          | グループ詳細                         |
-| `GET /find/{external_id}?external_source=X` | 外部 ID (IMDB/TVDB) から TMDB 逆引き |
+| エンドポイント                              | 用途                                                         |
+| ------------------------------------------- | ------------------------------------------------------------ |
+| `GET /search/multi?query={Title}`           | TV/映画/人物の一括検索 → `media_type` でフィルタして ID 取得 |
+| `GET /search/tv?query={Title}`              | TV 限定のタイトル検索 (CLI `tmdb search-tv` で使用)          |
+| `GET /search/movie?query={Title}`           | 映画限定のタイトル検索 (CLI `tmdb search-movie` で使用)      |
+| `GET /tv/{id}?language=ja-JP`               | シリーズ詳細 (シーズン一覧)                                  |
+| `GET /tv/{id}/season/{num}?language=ja-JP`  | シーズン詳細 (エピソード一覧)                                |
+| `GET /{media_type}/{id}/alternative_titles` | TV/映画の代替タイトル取得                                    |
+| `GET /tv/{id}/external_ids`                 | IMDB, TVDB 等の外部 ID                                       |
+| `GET /tv/{id}/episode_groups`               | 代替エピソードグルーピング一覧                               |
+| `GET /tv/episode_group/{group_id}`          | グループ詳細                                                 |
+| `GET /find/{external_id}?external_source=X` | 外部 ID (IMDB/TVDB) から TMDB 逆引き                         |
 
 ### 検索フロー (実データ: api-spec.md 参照)
 
-**Step 1: TV 検索**
+**Step 1: マルチ検索 (`search/multi`)**
+
+`db tmdb-lookup` では `search/multi` を使用し、TV と映画の両方を一括検索する。
+config の `cat_movie` (デフォルト: `[8]`) からタイトルの期待 `media_type` を決定し、
+レスポンスの `TmdbMultiSearchResult` を `media_type` でフィルタする。
+マッチしなければ `total_pages` まで全ページを巡回する。
 
 ```
-GET https://api.themoviedb.org/3/search/tv
+GET https://api.themoviedb.org/3/search/multi
   ?query=勇者パーティーにかわいい子がいたので、告白してみた。
   &include_adult=false
   &language=ja-JP
   &page=1
 ```
 
-レスポンス:
+レスポンス (TV 結果の例):
 
 ```json
 {
 	"results": [
 		{
+			"media_type": "tv",
 			"id": 295366,
 			"origin_country": ["JP"],
 			"original_language": "ja",
@@ -133,15 +142,10 @@ GET https://api.themoviedb.org/3/tv/295366/season/1?language=ja-JP
 > サブタイトルが `"第5話"` のような仮名になっていることがある。
 > エピソード照合でサブタイトル一致に依存してはならない。
 
-### Rust Crate
+### Rust 実装
 
-**`tmdb-api` (v1.0.0-alpha.5, MIT License)** を採用。
-
-```toml
-[dependencies]
-tmdb-api = "1.0.0-alpha.5"
-# 内部依存: chrono, reqwest (rustls-tls), serde, thiserror
-```
+自前の `TmdbClient` (`dtvmgr-api` クレート) を使用。
+詳細は [TmdbClient 仕様](./recmgr-api/tmdbClient.md) を参照。
 
 ---
 
@@ -235,17 +239,22 @@ static SEASON_SUFFIXES: &[&str] = &[
 
 ### 検索ロジック (段階的フォールバック)
 
+`search/multi` を使用し、config の `cat_movie` に基づく `media_type` フィルタで TV/Movie を区別する。
+各ステップでページネーション (`total_pages` まで巡回) を行い、マッチ発見で early return する。
+
 ```rust
-/// TMDB Series ID の特定
-async fn resolve_tmdb_series(
+/// TMDB ID の特定 (search/multi ベース)
+async fn resolve_tmdb_id(
     tmdb: &TmdbClient,
     syoboi_title: &str,
     syoboi_title_en: Option<&str>,
     first_year: u32,
-) -> Result<Option<TmdbSeries>> {
+    expected_type: TmdbMediaType,  // cat_movie 判定結果
+) -> Result<Option<TmdbMatch>> {
     // Step 1: しょぼかるタイトルそのままで検索
-    let results = tmdb.search_tv(syoboi_title, "ja-JP").await?;
-    if let Some(found) = filter_results(&results, syoboi_title, first_year) {
+    if let Some(found) = search_multi_all_pages(
+        tmdb, syoboi_title, expected_type, first_year,
+    ).await? {
         return Ok(Some(found));
     }
 
@@ -254,8 +263,9 @@ async fn resolve_tmdb_series(
     //   実データ: "SPY×FAMILY(第2クール)" → 0件, "SPY×FAMILY" → ヒット
     let base_title = strip_season_suffix(syoboi_title);
     if base_title != syoboi_title {
-        let results = tmdb.search_tv(&base_title, "ja-JP").await?;
-        if let Some(found) = filter_results(&results, &base_title, first_year) {
+        if let Some(found) = search_multi_all_pages(
+            tmdb, &base_title, expected_type, first_year,
+        ).await? {
             return Ok(Some(found));
         }
     }
@@ -263,10 +273,11 @@ async fn resolve_tmdb_series(
     // Step 3: TitleEN (英語タイトル) で検索
     //   日本語タイトルで見つからない場合のフォールバック
     //   実データ: TitleEN="SPY FAMILY" → id=120089 (正解) + 非日本作品2件
-    //   → filter_results の origin_country="JP" フィルタで偽陽性を除外
+    //   → media_type フィルタ + origin_country="JP" チェックで偽陽性を除外
     if let Some(title_en) = syoboi_title_en.filter(|s| !s.is_empty()) {
-        let results = tmdb.search_tv(title_en, "ja-JP").await?;
-        if let Some(found) = filter_results(&results, title_en, first_year) {
+        if let Some(found) = search_multi_all_pages(
+            tmdb, title_en, expected_type, first_year,
+        ).await? {
             return Ok(Some(found));
         }
     }
@@ -274,39 +285,66 @@ async fn resolve_tmdb_series(
     Ok(None)
 }
 
-/// 検索結果のフィルタリング (優先順位付き)
-fn filter_results(
-    results: &[TmdbSearchResult],
+/// search/multi で全ページ巡回し、条件に合う結果を返す
+async fn search_multi_all_pages(
+    tmdb: &TmdbClient,
     query: &str,
+    expected_type: TmdbMediaType,
     first_year: u32,
-) -> Option<TmdbSeries> {
-    let normalized_query = normalize_for_search(query);
+) -> Result<Option<TmdbMatch>> {
+    let mut page = 1;
+    loop {
+        let params = SearchMultiParams::new(query)
+            .language("ja-JP")
+            .page(page);
+        let response = tmdb.search_multi(&params).await?;
 
-    results.iter()
-        // 1. original_name 正規化一致 + 日本作品
-        .find(|r| normalize_for_search(&r.original_name) == normalized_query
-            && r.origin_country.contains(&"JP".to_string()))
-        // 2. original_name が query を含む + 日本作品
-        .or_else(|| results.iter().find(|r|
-            normalize_for_search(&r.original_name)
-                .contains(&normalized_query)
-            && r.origin_country.contains(&"JP".to_string())))
-        // 3. 検索結果の先頭 (TMDB のスコア順) + 日本作品
-        .or_else(|| results.iter().find(|r|
-            r.origin_country.contains(&"JP".to_string())))
-        .cloned()
+        for result in &response.results {
+            match (result, expected_type) {
+                // TV 結果 (期待が TV の場合のみ)
+                (TmdbMultiSearchResult::Tv(tv), TmdbMediaType::Tv) => {
+                    if is_japanese_animation_tv(tv) {
+                        return Ok(Some(TmdbMatch::tv(tv)));
+                    }
+                }
+                // Movie 結果 (期待が Movie の場合のみ)
+                (TmdbMultiSearchResult::Movie(movie), TmdbMediaType::Movie) => {
+                    if is_japanese_animation_movie(movie) {
+                        return Ok(Some(TmdbMatch::movie(movie)));
+                    }
+                }
+                // Person 結果、media_type 不一致 → スキップ
+                _ => {}
+            }
+        }
+
+        if page >= response.total_pages {
+            break;
+        }
+        page += 1;
+    }
+    Ok(None)
+}
+
+/// config の cat_movie から期待メディアタイプを決定
+fn resolve_media_type(cat: Option<u32>, cat_movie: &HashSet<u32>) -> TmdbMediaType {
+    match cat {
+        Some(c) if cat_movie.contains(&c) => TmdbMediaType::Movie,
+        _ => TmdbMediaType::Tv,
+    }
 }
 ```
 
 ### ごちうさでの検索ウォークスルー (api-spec.md 実データ検証済み)
 
 ```
-しょぼかる S2: Title="ご注文はうさぎですか??" (TID=3893)
+しょぼかる S2: Title="ご注文はうさぎですか??" (TID=3893), cat=7 (TV)
 
-Step 1: TMDB search query="ご注文はうさぎですか??"
-        → results: [{ id: 60843, original_name: "ご注文はうさぎですか？", origin_country: ["JP"] }]
+Step 1: search/multi query="ご注文はうさぎですか??"
+        期待 media_type: Tv (cat=7 は cat_movie に含まれない)
+        → results: [{ media_type: "tv", id: 60843, original_name: "ご注文はうさぎですか？", ... }]
         → TMDB の検索エンジンがファジーマッチで正しいシリーズを返す
-        → filter_results: 正規化比較で一致 → series_id=60843 確定
+        → media_type=tv + animation + ja チェック通過 → series_id=60843 確定
 
 ※ TMDB search API は十分にファジーで、2期タイトル "??" でも
   1期タイトル "？" のシリーズ (id=60843) を返すことを実データで確認。
@@ -316,18 +354,20 @@ Step 1: TMDB search query="ご注文はうさぎですか??"
 ### SPY×FAMILY での検索ウォークスルー (api-spec.md 実データ検証済み)
 
 ```
-しょぼかる Part 2: Title="SPY×FAMILY(第2クール)" (TID=6451), TitleEN="SPY FAMILY"
+しょぼかる Part 2: Title="SPY×FAMILY(第2クール)" (TID=6451), TitleEN="SPY FAMILY", cat=7 (TV)
 
-Step 1: TMDB search query="SPY×FAMILY(第2クール)"
+Step 1: search/multi query="SPY×FAMILY(第2クール)"
+        期待 media_type: Tv (cat=7 は cat_movie に含まれない)
         → results: [] (0件)
         → "(第2クール)" サフィックスが検索を阻害
 
 Step 2: ベースタイトル strip_season_suffix → "SPY×FAMILY"
-        TMDB search query="SPY×FAMILY"
-        → results: [{ id: 120089, original_name: "SPY×FAMILY", origin_country: ["JP"] },
-                     { id: 6929, original_name: "My Spy Family", origin_country: ["GB"] },
-                     { id: 40224, original_name: "Family of Spies", origin_country: ["US"] }]
-        → filter_results: origin_country="JP" + original_name 一致 → series_id=120089 確定
+        search/multi query="SPY×FAMILY"
+        → results: [{ media_type: "tv", id: 120089, original_name: "SPY×FAMILY", ... },
+                     { media_type: "tv", id: 6929, original_name: "My Spy Family", ... },
+                     { media_type: "movie", id: 777, ... }]
+        → media_type=tv フィルタで Movie 結果は除外
+        → animation + ja チェック → series_id=120089 確定
 
 ※ Step 2 で見つかるため Step 3 (TitleEN) は不要だが、
   ベースタイトル抽出が不完全な場合のセーフティネットとして Step 3 が機能する:
@@ -787,17 +827,18 @@ flowchart TD
     DUP_CHECK -- No --> ID_RESOLVE
     RERUN -- No --> ID_RESOLVE
 
-    subgraph "Phase 1: TMDB Series ID 特定 (3段階検索)"
-        ID_RESOLVE["ローカルキャッシュ確認<br/>TID → TMDB series_id"]
+    subgraph "Phase 1: TMDB ID 特定 (search/multi 3段階検索)"
+        ID_RESOLVE["ローカルキャッシュ確認<br/>TID → TMDB ID"]
         ID_RESOLVE --> CACHE_HIT{キャッシュ<br/>あり?}
-        CACHE_HIT -- Yes --> SERIES_ID["TMDB series_id 確定"]
-        CACHE_HIT -- No --> STEP1["Step 1: Title そのまま検索"]
+        CACHE_HIT -- Yes --> SERIES_ID["TMDB ID 確定"]
+        CACHE_HIT -- No --> MEDIA_TYPE["cat_movie 判定<br/>→ 期待 media_type (Tv/Movie)"]
+        MEDIA_TYPE --> STEP1["Step 1: search/multi<br/>Title そのまま検索<br/>+ media_type フィルタ<br/>+ 全ページ巡回"]
         STEP1 --> S1_OK{ヒット?}
         S1_OK -- Yes --> SERIES_ID
-        S1_OK -- No --> STEP2["Step 2: ベースタイトル検索<br/>strip_season_suffix(Title)"]
+        S1_OK -- No --> STEP2["Step 2: search/multi<br/>ベースタイトル検索<br/>strip_season_suffix(Title)"]
         STEP2 --> S2_OK{ヒット?}
         S2_OK -- Yes --> SERIES_ID
-        S2_OK -- No --> STEP3["Step 3: TitleEN 検索<br/>(origin_country=JP フィルタ)"]
+        S2_OK -- No --> STEP3["Step 3: search/multi<br/>TitleEN 検索"]
         STEP3 --> S3_OK{ヒット?}
         S3_OK -- Yes --> SERIES_ID
         S3_OK -- No --> PENDING(["暫定ファイル名で保存<br/>rename サブコマンドで<br/>後から修正可能"])
@@ -846,8 +887,9 @@ flowchart TD
       FirstYear=2026, FirstMonth=1
 
 Phase 1: キャッシュなし
-         TMDB search/tv query="勇者パーティーにかわいい子がいたので、告白してみた。"
-         → original_name 完全一致, first_air_date year=2026 → TMDB 295366
+         期待 media_type: Tv (cat は cat_movie に含まれない)
+         search/multi query="勇者パーティーにかわいい子がいたので、告白してみた。"
+         → media_type=tv, animation + ja チェック通過 → TMDB 295366
          → キャッシュ保存: TID 7667 → TMDB 295366
 Phase 2: シーズン数=1 → season_number=1
 Phase 3: Count=5, episode_count=12, 5≤12 → episode_number=5
@@ -864,8 +906,9 @@ Phase 3: Count=5, episode_count=12, 5≤12 → episode_number=5
       FirstYear=2015, FirstMonth=10
 
 Phase 1: キャッシュなし
-         TMDB search/tv query="ご注文はうさぎですか??"
-         → results: [{ id: 60843, original_name: "ご注文はうさぎですか？" }]
+         期待 media_type: Tv
+         search/multi query="ご注文はうさぎですか??"
+         → results: [{ media_type: "tv", id: 60843, original_name: "ご注文はうさぎですか？" }]
          → TMDB のファジー検索で正しく series_id=60843 を返す
          → キャッシュ保存: TID 3893 → TMDB 60843
 Phase 2: TMDB tv/60843 → seasons:
@@ -905,12 +948,12 @@ Phase 2, 3: 通常処理
       Flag=2 (新番組, 再放送ではない)
 
 Phase 1: キャッシュなし
-         Step 1: TMDB search query="SPY×FAMILY(第2クール)"
+         期待 media_type: Tv (cat=7 は cat_movie に含まれない)
+         Step 1: search/multi query="SPY×FAMILY(第2クール)"
                  → results: [] (0件) ← "(第2クール)" が検索を阻害
          Step 2: strip_season_suffix → "SPY×FAMILY"
-                 TMDB search query="SPY×FAMILY"
-                 → results: [{ id: 120089, origin_country: ["JP"] }, ...]
-                 → filter_results: origin_country="JP" + original_name 一致
+                 search/multi query="SPY×FAMILY"
+                 → media_type=tv フィルタ + animation + ja チェック
                  → series_id=120089 確定
          → キャッシュ保存: TID 6451 → TMDB 120089
 
@@ -954,7 +997,7 @@ Phase 0: 再放送検出: Flag & 8 != 0 → 再放送
       FirstYear=2026, FirstMonth=4
 
 Phase 1: キャッシュなし
-         TMDB search/tv → 検索結果 0件
+         search/multi → 全ページ巡回しても条件合致なし
          → 暫定ファイル名で出力
 
 暫定出力:

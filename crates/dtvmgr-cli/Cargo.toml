@@ -26,11 +26,14 @@ dtvmgr-api = { workspace = true }
 dtvmgr-db = { workspace = true }
 open = { workspace = true }
 ratatui = { workspace = true }
+regex = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+unicode-normalization = { workspace = true }
 
 # OpenTelemetry (optional, behind `otel` feature)
 opentelemetry = { workspace = true, optional = true }

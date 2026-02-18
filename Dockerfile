@@ -72,6 +72,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	jq \
 	musl-tools \
 	nano \
+	sqlite3 \
 	sudo \
 	wget
 

@@ -9,4 +9,4 @@ mod paths;
 
 #[allow(clippy::module_name_repetitions)]
 pub use config::AppConfig;
-pub use paths::resolve_config_path;
+pub use paths::{resolve_config_path, resolve_data_dir};

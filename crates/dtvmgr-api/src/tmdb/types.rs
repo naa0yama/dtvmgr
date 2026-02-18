@@ -1,21 +1,8 @@
 //! TMDB API response types and search parameters.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-// --- Search TV ---
-
-/// Response from `search/tv` endpoint.
-#[derive(Debug, Clone, Deserialize)]
-pub struct TmdbSearchTvResponse {
-    /// Current page number.
-    pub page: u32,
-    /// Search results.
-    pub results: Vec<TmdbTvSearchResult>,
-    /// Total number of pages.
-    pub total_pages: u32,
-    /// Total number of results.
-    pub total_results: u32,
-}
+// --- Search TV Result ---
 
 /// A single TV series search result.
 #[derive(Debug, Clone, Deserialize)]
@@ -50,20 +37,7 @@ pub struct TmdbTvSearchResult {
     pub backdrop_path: Option<String>,
 }
 
-// --- Search Movie ---
-
-/// Response from `search/movie` endpoint.
-#[derive(Debug, Clone, Deserialize)]
-pub struct TmdbSearchMovieResponse {
-    /// Current page number.
-    pub page: u32,
-    /// Search results.
-    pub results: Vec<TmdbMovieSearchResult>,
-    /// Total number of pages.
-    pub total_pages: u32,
-    /// Total number of results.
-    pub total_results: u32,
-}
+// --- Search Movie Result ---
 
 /// A single movie search result.
 #[derive(Debug, Clone, Deserialize)]
@@ -167,6 +141,136 @@ pub struct TmdbGenre {
     pub name: String,
 }
 
+// --- Genre List ---
+
+/// Response from `genre/tv/list` or `genre/movie/list` endpoint.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TmdbGenreListResponse {
+    /// Genre entries.
+    pub genres: Vec<TmdbGenre>,
+}
+
+// --- Search Multi ---
+
+/// TMDB media type for multi-search and alternative titles endpoints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TmdbMediaType {
+    /// TV series.
+    Tv,
+    /// Movie.
+    Movie,
+}
+
+impl TmdbMediaType {
+    /// Returns the API path segment (e.g. "tv", "movie").
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Tv => "tv",
+            Self::Movie => "movie",
+        }
+    }
+}
+
+/// Parameters for `search/multi` endpoint.
+#[derive(Debug, Clone)]
+pub struct SearchMultiParams {
+    /// Search query (required).
+    pub query: String,
+    /// Response language (default: "en-US").
+    pub language: String,
+    /// Result page (1-500, default: 1).
+    pub page: u32,
+    /// Include adult content.
+    pub include_adult: bool,
+}
+
+impl SearchMultiParams {
+    /// Creates new search params with the given query.
+    pub fn new(query: impl Into<String>) -> Self {
+        Self {
+            query: query.into(),
+            language: String::from("en-US"),
+            page: 1,
+            include_adult: false,
+        }
+    }
+
+    /// Sets the response language.
+    #[must_use]
+    pub fn language(mut self, language: impl Into<String>) -> Self {
+        self.language = language.into();
+        self
+    }
+
+    /// Sets the result page.
+    #[must_use]
+    pub const fn page(mut self, page: u32) -> Self {
+        self.page = page;
+        self
+    }
+}
+
+/// Response from `search/multi` endpoint.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TmdbSearchMultiResponse {
+    /// Current page number.
+    pub page: u32,
+    /// Search results (mixed TV, movie, person).
+    pub results: Vec<TmdbMultiSearchResult>,
+    /// Total number of pages.
+    pub total_pages: u32,
+    /// Total number of results.
+    pub total_results: u32,
+}
+
+/// A single multi-search result, tagged by `media_type`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "media_type")]
+pub enum TmdbMultiSearchResult {
+    /// TV series result.
+    #[serde(rename = "tv")]
+    Tv(TmdbTvSearchResult),
+    /// Movie result.
+    #[serde(rename = "movie")]
+    Movie(TmdbMovieSearchResult),
+    /// Person result (ignored in lookup).
+    #[serde(rename = "person")]
+    Person(TmdbPersonSearchResult),
+}
+
+/// A person search result (only `id` is needed).
+#[derive(Debug, Clone, Deserialize)]
+pub struct TmdbPersonSearchResult {
+    /// TMDB person ID.
+    pub id: u64,
+}
+
+// --- Alternative Titles ---
+
+/// Response from `{media_type}/{id}/alternative_titles` endpoint.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TmdbAlternativeTitlesResponse {
+    /// TMDB ID.
+    pub id: u64,
+    /// Alternative title entries.
+    /// TV uses "results" key, movie uses "titles" key.
+    #[serde(alias = "titles")]
+    pub results: Vec<TmdbAlternativeTitle>,
+}
+
+/// A single alternative title entry.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TmdbAlternativeTitle {
+    /// Country code (ISO 3166-1).
+    pub iso_3166_1: String,
+    /// Alternative title.
+    pub title: String,
+    /// Title type (e.g., "romaji").
+    #[serde(rename = "type")]
+    pub title_type: String,
+}
+
 // --- TV Season Details ---
 
 /// Response from `tv/{series_id}/season/{season_number}` endpoint.
@@ -228,106 +332,4 @@ pub struct TmdbErrorResponse {
     /// Success flag (always false for errors).
     #[allow(dead_code)]
     pub success: bool,
-}
-
-// --- Search Parameters ---
-
-/// Parameters for `search/tv` endpoint.
-#[derive(Debug, Clone)]
-pub struct SearchTvParams {
-    /// Search query (required).
-    pub query: String,
-    /// Response language (default: "en-US").
-    pub language: String,
-    /// Result page (1-500, default: 1).
-    pub page: u32,
-    /// Filter by first air date year.
-    pub first_air_date_year: Option<u32>,
-    /// Filter by year (searches first air date and episode air dates).
-    pub year: Option<u32>,
-    /// Include adult content.
-    pub include_adult: bool,
-}
-
-impl SearchTvParams {
-    /// Creates new search params with the given query.
-    pub fn new(query: impl Into<String>) -> Self {
-        Self {
-            query: query.into(),
-            language: String::from("en-US"),
-            page: 1,
-            first_air_date_year: None,
-            year: None,
-            include_adult: false,
-        }
-    }
-
-    /// Sets the response language.
-    #[must_use]
-    pub fn language(mut self, language: impl Into<String>) -> Self {
-        self.language = language.into();
-        self
-    }
-
-    /// Sets the first air date year filter.
-    #[must_use]
-    pub const fn first_air_date_year(mut self, year: u32) -> Self {
-        self.first_air_date_year = Some(year);
-        self
-    }
-
-    /// Sets the year filter.
-    #[must_use]
-    pub const fn year(mut self, year: u32) -> Self {
-        self.year = Some(year);
-        self
-    }
-}
-
-/// Parameters for `search/movie` endpoint.
-#[derive(Debug, Clone)]
-pub struct SearchMovieParams {
-    /// Search query (required).
-    pub query: String,
-    /// Response language (default: "en-US").
-    pub language: String,
-    /// Result page (1-500, default: 1).
-    pub page: u32,
-    /// Filter by primary release year.
-    pub primary_release_year: Option<u32>,
-    /// Filter by year.
-    pub year: Option<u32>,
-    /// Region filter (ISO 3166-1).
-    pub region: Option<String>,
-    /// Include adult content.
-    pub include_adult: bool,
-}
-
-impl SearchMovieParams {
-    /// Creates new search params with the given query.
-    pub fn new(query: impl Into<String>) -> Self {
-        Self {
-            query: query.into(),
-            language: String::from("en-US"),
-            page: 1,
-            primary_release_year: None,
-            year: None,
-            region: None,
-            include_adult: false,
-        }
-    }
-
-    /// Sets the response language.
-    #[must_use]
-    pub fn language(mut self, language: impl Into<String>) -> Self {
-        self.language = language.into();
-        self
-    }
-
-    /// Sets the year filter.
-    #[must_use]
-    pub const fn year(mut self, year: u32) -> Self {
-        self.year = Some(year);
-        self
-    }
 }

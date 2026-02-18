@@ -1,5 +1,6 @@
 //! `AppConfig` struct and TOML read/write.
 
+use std::fmt::Write as _;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -8,9 +9,60 @@ use serde::{Deserialize, Serialize};
 /// Top-level application configuration.
 #[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct AppConfig {
+    /// Syoboi Calendar settings.
+    #[serde(default)]
+    pub syoboi: SyoboiConfig,
+    /// TMDB settings.
+    #[serde(default)]
+    pub tmdb: TmdbConfig,
+    /// Normalize viewer settings.
+    #[serde(default)]
+    pub normalize: NormalizeConfig,
+}
+
+/// Syoboi Calendar settings.
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct SyoboiConfig {
     /// Channel selection settings.
     #[serde(default)]
     pub channels: ChannelsConfig,
+    /// Title settings.
+    #[serde(default)]
+    pub titles: TitlesConfig,
+}
+
+/// Default category codes to include.
+fn default_cat() -> Vec<u32> {
+    vec![1, 7, 8, 10]
+}
+
+/// Default movie category codes.
+fn default_cat_movie() -> Vec<u32> {
+    vec![8]
+}
+
+/// Title configuration.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TitlesConfig {
+    /// Syoboi category codes to include during sync.
+    #[serde(default = "default_cat")]
+    pub cat: Vec<u32>,
+    /// Category codes that map to TMDB "movie" media type.
+    #[serde(default = "default_cat_movie")]
+    pub cat_movie: Vec<u32>,
+    /// TIDs excluded from display in the title viewer.
+    #[serde(default)]
+    pub excludes: Vec<u32>,
+}
+
+impl Default for TitlesConfig {
+    fn default() -> Self {
+        Self {
+            cat: default_cat(),
+            cat_movie: default_cat_movie(),
+            excludes: Vec::new(),
+        }
+    }
 }
 
 /// Channel selection configuration.
@@ -19,6 +71,33 @@ pub struct ChannelsConfig {
     /// Selected channel IDs (Syoboi `ChID`).
     #[serde(default)]
     pub selected: Vec<u32>,
+}
+
+/// TMDB settings.
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct TmdbConfig {
+    /// Default language (e.g. "ja-JP"). Used when `--language` is not specified.
+    #[serde(default)]
+    pub language: Option<String>,
+    /// API credentials.
+    #[serde(default)]
+    pub api: TmdbApiConfig,
+}
+
+/// TMDB API credentials.
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct TmdbApiConfig {
+    /// API bearer token. Falls back when `TMDB_API_TOKEN` env var is not set.
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
+
+/// Normalize viewer settings.
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct NormalizeConfig {
+    /// Regex pattern history for the normalize viewer.
+    #[serde(default)]
+    pub regex_history: Vec<String>,
 }
 
 impl AppConfig {
@@ -38,6 +117,9 @@ impl AppConfig {
 
     /// Saves config to a TOML file, creating parent directories if needed.
     ///
+    /// Unset optional values are written as commented-out lines so users can
+    /// see all available options.
+    ///
     /// # Errors
     ///
     /// Returns an error if directory creation or file write fails.
@@ -46,8 +128,108 @@ impl AppConfig {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create directory {}", parent.display()))?;
         }
-        let content = toml::to_string_pretty(self).context("failed to serialize config to TOML")?;
+        let content = self.to_commented_toml();
         std::fs::write(path, content).with_context(|| format!("failed to write {}", path.display()))
+    }
+
+    /// Renders config as TOML with commented-out hints for unset options.
+    fn to_commented_toml(&self) -> String {
+        let mut out = String::new();
+
+        // [syoboi.channels]
+        out.push_str("[syoboi.channels]\n");
+        out.push_str("# Selected channel IDs (Syoboi ChID).\n");
+        if self.syoboi.channels.selected.is_empty() {
+            out.push_str("# selected = []\n");
+        } else {
+            let ids: Vec<String> = self
+                .syoboi
+                .channels
+                .selected
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            let _ = writeln!(out, "selected = [{}]", ids.join(", "));
+        }
+
+        // [syoboi.titles]
+        out.push_str("\n[syoboi.titles]\n");
+        out.push_str("# Syoboi category codes to include.\n");
+        out.push_str(
+            "# 0: その他, 1: アニメ, 2: ラジオ, 3: テレビ, 4: 特撮,\n\
+             # 5: アニメ関連, 6: メモ, 7: OVA, 8: 映画, 10: アニメ(終了/再放送)\n",
+        );
+        if self.syoboi.titles.cat.is_empty() {
+            out.push_str("# cat = []\n");
+        } else {
+            let ids: Vec<String> = self
+                .syoboi
+                .titles
+                .cat
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            let _ = writeln!(out, "cat = [{}]", ids.join(", "));
+        }
+        out.push_str("# Category codes that map to TMDB \"movie\" media type.\n");
+        if self.syoboi.titles.cat_movie.is_empty() {
+            out.push_str("# cat_movie = []\n");
+        } else {
+            let ids: Vec<String> = self
+                .syoboi
+                .titles
+                .cat_movie
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            let _ = writeln!(out, "cat_movie = [{}]", ids.join(", "));
+        }
+        out.push_str("# TIDs excluded from display in the title viewer.\n");
+        if self.syoboi.titles.excludes.is_empty() {
+            out.push_str("# excludes = []\n");
+        } else {
+            let mut sorted: Vec<u32> = self.syoboi.titles.excludes.clone();
+            sorted.sort_unstable();
+            let ids: Vec<String> = sorted.iter().map(ToString::to_string).collect();
+            let _ = writeln!(out, "excludes = [{}]", ids.join(", "));
+        }
+
+        // [tmdb]
+        out.push_str("\n[tmdb]\n");
+        out.push_str(
+            "# Default language (e.g. \"ja-JP\"). Used when --language is not specified.\n",
+        );
+        let lang = self.tmdb.language.as_deref().unwrap_or("ja-JP");
+        let _ = writeln!(out, "language = \"{lang}\"");
+
+        // [tmdb.api]
+        out.push_str("\n[tmdb.api]\n");
+        out.push_str("# API bearer token. Falls back when TMDB_API_TOKEN env var is not set.\n");
+        match &self.tmdb.api.api_key {
+            Some(key) => {
+                let _ = writeln!(out, "api_key = \"{key}\"");
+            }
+            None => out.push_str("# api_key = \"\"\n"),
+        }
+
+        // [normalize]
+        out.push_str("\n[normalize]\n");
+        out.push_str("# Regex pattern history for the normalize viewer.\n");
+        if self.normalize.regex_history.is_empty() {
+            out.push_str("# regex_history = []\n");
+        } else {
+            // Use TOML literal strings (single quotes) to avoid backslash escaping
+            // issues with regex patterns like `\d+` and `\s+`.
+            let patterns: Vec<String> = self
+                .normalize
+                .regex_history
+                .iter()
+                .map(|p| format!("'{p}'"))
+                .collect();
+            let _ = writeln!(out, "regex_history = [{}]", patterns.join(", "));
+        }
+
+        out
     }
 }
 
@@ -63,24 +245,100 @@ mod tests {
         let config = AppConfig::default();
 
         // Assert
-        assert!(config.channels.selected.is_empty());
+        assert!(config.syoboi.channels.selected.is_empty());
+        assert!(config.tmdb.language.is_none());
+        assert!(config.tmdb.api.api_key.is_none());
+        assert!(config.normalize.regex_history.is_empty());
     }
 
     #[test]
     fn test_serialize_deserialize_roundtrip() {
         // Arrange
         let config = AppConfig {
-            channels: ChannelsConfig {
-                selected: vec![1, 2, 3, 7, 19],
+            syoboi: SyoboiConfig {
+                channels: ChannelsConfig {
+                    selected: vec![1, 2, 3, 7, 19],
+                },
+                ..SyoboiConfig::default()
+            },
+            tmdb: TmdbConfig {
+                language: Some(String::from("ja-JP")),
+                api: TmdbApiConfig {
+                    api_key: Some(String::from("test-key")),
+                },
+            },
+            normalize: NormalizeConfig {
+                regex_history: vec![
+                    String::from(r"第(?P<SeasonNum>\d+)期"),
+                    String::from(r"Season\s+(?P<SeasonNum>\d+)"),
+                ],
             },
         };
 
         // Act
-        let toml_str = toml::to_string_pretty(&config).unwrap();
+        let toml_str = config.to_commented_toml();
         let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
 
         // Assert
         assert_eq!(parsed, config);
+    }
+
+    #[test]
+    fn test_commented_toml_default() {
+        // Arrange
+        let config = AppConfig::default();
+
+        // Act
+        let output = config.to_commented_toml();
+
+        // Assert — unset options are commented out, language defaults to "ja-JP"
+        assert!(output.contains("# selected = []"));
+        assert!(output.contains("cat = [1, 7, 8, 10]"));
+        assert!(output.contains("cat_movie = [8]"));
+        assert!(output.contains("# excludes = []"));
+        assert!(output.contains("language = \"ja-JP\""));
+        assert!(!output.contains("# language"));
+        assert!(output.contains("# api_key = \"\""));
+        assert!(output.contains("# regex_history = []"));
+        // Parsed config gets "ja-JP" from the active line
+        let parsed: AppConfig = toml::from_str(&output).unwrap();
+        assert_eq!(parsed.tmdb.language, Some(String::from("ja-JP")));
+        assert_eq!(parsed.syoboi.titles.cat, vec![1, 7, 8, 10]);
+        assert_eq!(parsed.syoboi.titles.cat_movie, vec![8]);
+    }
+
+    #[test]
+    fn test_commented_toml_with_values() {
+        // Arrange
+        let config = AppConfig {
+            syoboi: SyoboiConfig {
+                channels: ChannelsConfig {
+                    selected: vec![1, 7],
+                },
+                ..SyoboiConfig::default()
+            },
+            tmdb: TmdbConfig {
+                language: Some(String::from("en-US")),
+                api: TmdbApiConfig {
+                    api_key: Some(String::from("my-token")),
+                },
+            },
+            normalize: NormalizeConfig {
+                regex_history: vec![String::from(r"第(?P<SeasonNum>\d+)期")],
+            },
+        };
+
+        // Act
+        let output = config.to_commented_toml();
+
+        // Assert — active values are not commented
+        assert!(output.contains("selected = [1, 7]"));
+        assert!(!output.contains("# selected"));
+        assert!(output.contains("cat = [1, 7, 8, 10]"));
+        assert!(output.contains("cat_movie = [8]"));
+        assert!(output.contains("language = \"en-US\""));
+        assert!(output.contains("api_key = \"my-token\""));
+        assert!(output.contains(r"regex_history = ['第(?P<SeasonNum>\d+)期']"));
     }
 
     #[test]
@@ -99,19 +357,25 @@ mod tests {
     fn test_save_and_load() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
+        let path = dir.path().join("dtvmgr.toml");
         let config = AppConfig {
-            channels: ChannelsConfig {
-                selected: vec![1, 3, 7],
+            syoboi: SyoboiConfig {
+                channels: ChannelsConfig {
+                    selected: vec![1, 3, 7],
+                },
+                ..SyoboiConfig::default()
             },
+            ..AppConfig::default()
         };
 
         // Act
         config.save(&path).unwrap();
         let loaded = AppConfig::load(&path).unwrap();
 
-        // Assert
-        assert_eq!(loaded, config);
+        // Assert — channels preserved, language gets "ja-JP" from default output
+        assert_eq!(loaded.syoboi.channels.selected, vec![1, 3, 7]);
+        assert_eq!(loaded.tmdb.language, Some(String::from("ja-JP")));
+        assert!(loaded.tmdb.api.api_key.is_none());
     }
 
     #[test]

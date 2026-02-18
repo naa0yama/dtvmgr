@@ -13,8 +13,14 @@ pub mod programs;
 pub mod titles;
 
 #[allow(clippy::module_name_repetitions)]
-pub use channels::{load_channel_groups, load_channels, save_channel_groups, save_channels};
+pub use channels::{load_channel_groups, load_channels, upsert_channel_groups, upsert_channels};
 #[allow(clippy::module_name_repetitions)]
 pub use connection::open_db;
-pub use programs::{load_programs, load_programs_by_tids, upsert_programs};
-pub use titles::{load_titles, load_titles_by_tids, update_tmdb_mapping, upsert_titles};
+pub use programs::{
+    delete_programs_by_tids_not_in, load_programs, load_programs_by_tids, upsert_programs,
+};
+pub use rusqlite::Connection;
+pub use titles::{
+    delete_titles_by_cat_not_in, load_titles, load_titles_by_tids, update_tmdb_mapping,
+    update_tmdb_search_result, upsert_titles,
+};

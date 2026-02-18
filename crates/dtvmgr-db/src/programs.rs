@@ -202,6 +202,37 @@ fn map_program_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CachedProgram> {
     })
 }
 
+/// Deletes programs whose `tid` is not in the given set. Returns the number of rows deleted.
+///
+/// # Errors
+///
+/// Returns an error if the database operation fails.
+pub fn delete_programs_by_tids_not_in(conn: &Connection, valid_tids: &[u32]) -> Result<usize> {
+    if valid_tids.is_empty() {
+        let deleted = conn
+            .execute("DELETE FROM programs", [])
+            .context("failed to delete all programs")?;
+        return Ok(deleted);
+    }
+
+    let placeholders: Vec<String> = valid_tids.iter().map(|_| String::from("?")).collect();
+    let sql = format!(
+        "DELETE FROM programs WHERE tid NOT IN ({})",
+        placeholders.join(", ")
+    );
+
+    let params: Vec<Box<dyn rusqlite::types::ToSql>> = valid_tids
+        .iter()
+        .map(|t| -> Box<dyn rusqlite::types::ToSql> { Box::new(*t) })
+        .collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(AsRef::as_ref).collect();
+
+    let deleted = conn
+        .execute(&sql, param_refs.as_slice())
+        .context("failed to delete programs by tid filter")?;
+    Ok(deleted)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -242,6 +273,9 @@ mod tests {
             keywords: None,
             sub_titles: None,
             last_update: String::from("2024-01-01 00:00:00"),
+            tmdb_original_name: None,
+            tmdb_name: None,
+            tmdb_alt_titles: None,
         }];
         upsert_titles(&conn, &titles).unwrap();
 
@@ -372,6 +406,9 @@ mod tests {
             keywords: None,
             sub_titles: None,
             last_update: String::from("2024-01-01 00:00:00"),
+            tmdb_original_name: None,
+            tmdb_name: None,
+            tmdb_alt_titles: None,
         };
         upsert_titles(&conn, &[title2]).unwrap();
 
@@ -436,5 +473,66 @@ mod tests {
         assert_eq!(loaded[0].pid, 1);
         assert_eq!(loaded[1].pid, 2);
         assert_eq!(loaded[2].pid, 3);
+    }
+
+    #[test]
+    fn test_delete_programs_by_tids_not_in() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+
+        // Add a second title
+        let title2 = CachedTitle {
+            tid: 200,
+            tmdb_series_id: None,
+            tmdb_season_number: None,
+            title: String::from("Title 2"),
+            short_title: None,
+            title_yomi: None,
+            title_en: None,
+            cat: None,
+            title_flag: None,
+            first_year: None,
+            first_month: None,
+            keywords: None,
+            sub_titles: None,
+            last_update: String::from("2024-01-01 00:00:00"),
+            tmdb_original_name: None,
+            tmdb_name: None,
+            tmdb_alt_titles: None,
+        };
+        upsert_titles(&conn, &[title2]).unwrap();
+
+        let mut prog1 = make_program(1, "2024-01-01 00:00:00");
+        prog1.tid = 100;
+        let mut prog2 = make_program(2, "2024-01-01 01:00:00");
+        prog2.tid = 200;
+        let mut prog3 = make_program(3, "2024-01-01 02:00:00");
+        prog3.tid = 100;
+        upsert_programs(&conn, &[prog1, prog2, prog3]).unwrap();
+
+        // Act: keep only programs with tid=100
+        let deleted = delete_programs_by_tids_not_in(&conn, &[100]).unwrap();
+        let remaining = load_programs(&conn).unwrap();
+
+        // Assert
+        assert_eq!(deleted, 1);
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.iter().all(|p| p.tid == 100));
+    }
+
+    #[test]
+    fn test_delete_programs_by_tids_not_in_empty() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let programs = vec![make_program(1, "2024-01-01 00:00:00")];
+        upsert_programs(&conn, &programs).unwrap();
+
+        // Act: empty valid_tids deletes all
+        let deleted = delete_programs_by_tids_not_in(&conn, &[]).unwrap();
+        let remaining = load_programs(&conn).unwrap();
+
+        // Assert
+        assert_eq!(deleted, 1);
+        assert!(remaining.is_empty());
     }
 }

@@ -36,4 +36,12 @@ tmp/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# .claude
+.claude/skills/lib-*/SKILL.md
+.claude/skills/tool-*/SKILL.md
+
+# DTVMGR
+dtvmgr.toml*
+dtvmgr.db*
+
 # Under the unknown

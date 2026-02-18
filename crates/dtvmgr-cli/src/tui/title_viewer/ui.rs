@@ -6,7 +6,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Row, Table};
 
-use super::state::{ActivePane, InputMode, TitleViewerState};
+use super::state::{ActivePane, InputMode, TitleViewerState, TmdbFilter};
 
 /// Formats a number with thousands separators (e.g. 169940 -> "169,940").
 #[allow(clippy::arithmetic_side_effects)]
@@ -37,13 +37,16 @@ pub fn draw(frame: &mut Frame, state: &mut TitleViewerState) -> u16 {
     draw_header(frame, chunks[0], state);
 
     let main_area = chunks[1];
-    let pane_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(main_area);
-
-    draw_title_list(frame, pane_chunks[0], state);
-    draw_program_detail(frame, pane_chunks[1], state);
+    if state.show_programs {
+        let pane_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(main_area);
+        draw_title_list(frame, pane_chunks[0], state);
+        draw_program_detail(frame, pane_chunks[1], state);
+    } else {
+        draw_title_list(frame, main_area, state);
+    }
 
     draw_footer(frame, chunks[2], state);
 
@@ -86,8 +89,30 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &TitleViewerState) {
         (Some(oldest), Some(newest)) => format!("{oldest} ~ {newest}"),
         _ => String::new(),
     };
+    let matched = state.stats.tmdb_matched;
+    let total_t = state.stats.total_titles;
+    #[allow(clippy::as_conversions, clippy::cast_precision_loss)]
+    let pct = if total_t == 0 {
+        0.0
+    } else {
+        (matched as f64 / total_t as f64) * 100.0
+    };
+    #[allow(clippy::as_conversions)]
+    let width = total_t
+        .checked_ilog10()
+        .map_or(1, |n| (n as usize).saturating_add(1));
+    let miss = total_t.saturating_sub(matched);
+    let filter_tag = match state.tmdb_filter {
+        TmdbFilter::All => "",
+        TmdbFilter::Unmapped => " [unmapped]",
+        TmdbFilter::Mapped => " [mapped]",
+    };
+    let tmdb_label = format!(
+        " DB Viewer  TMDB {matched:0>width$}/{total_t:0>width$} ({pct:06.2}%), miss: {miss}{filter_tag} ",
+    );
+
     let count = Paragraph::new(vec![Line::from(line1), Line::from(line2)])
-        .block(Block::default().borders(Borders::ALL).title(" DB Viewer "));
+        .block(Block::default().borders(Borders::ALL).title(tmdb_label));
     frame.render_widget(count, header_chunks[1]);
 }
 
@@ -99,13 +124,24 @@ fn draw_title_list(frame: &mut Frame, area: Rect, state: &mut TitleViewerState) 
         Style::default()
     };
 
-    let header = Row::new(vec!["TID", "Title", "Year", "TMDB", "Season", "Progs"])
-        .style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )
-        .bottom_margin(1);
+    let header = Row::new(vec![
+        " ",
+        "TID",
+        "Cat",
+        "Title",
+        "Year",
+        "TMDB",
+        "Season",
+        "Progs",
+        "Keywords",
+        "TmdbQuery",
+    ])
+    .style(
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    )
+    .bottom_margin(1);
 
     let filtered = state.filtered_titles();
     let rows: Vec<Row> = filtered
@@ -119,6 +155,13 @@ fn draw_title_list(frame: &mut Frame, area: Rect, state: &mut TitleViewerState) 
                 Style::default()
             };
 
+            let check = if state.selected_tids.contains(&t.tid) {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+
+            let cat_str = t.cat.map_or_else(|| String::from("--"), |c| c.to_string());
             let tmdb_str = t
                 .tmdb_series_id
                 .map_or_else(|| String::from("--"), |id| id.to_string());
@@ -128,13 +171,17 @@ fn draw_title_list(frame: &mut Frame, area: Rect, state: &mut TitleViewerState) 
 
             Some(
                 Row::new(vec![
+                    String::from(check),
                     t.tid.to_string(),
+                    cat_str,
                     t.title.clone(),
                     t.first_year
                         .map_or_else(|| String::from("--"), |y| y.to_string()),
                     tmdb_str,
                     season_str,
                     fmt_num(t.program_count),
+                    t.keywords.clone().unwrap_or_default(),
+                    t.tmdb_query.clone(),
                 ])
                 .style(style),
             )
@@ -142,12 +189,16 @@ fn draw_title_list(frame: &mut Frame, area: Rect, state: &mut TitleViewerState) 
         .collect();
 
     let widths = [
+        Constraint::Length(3),
         Constraint::Length(7),
+        Constraint::Length(4),
         Constraint::Min(20),
         Constraint::Length(6),
         Constraint::Length(10),
         Constraint::Length(8),
         Constraint::Length(6),
+        Constraint::Length(20),
+        Constraint::Min(20),
     ];
 
     let table = Table::new(rows, widths)
@@ -260,10 +311,10 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &TitleViewerState) {
     let help_text = match (&state.input_mode, &state.active_pane) {
         (InputMode::Filter, _) => Line::from("Type to filter | Esc: cancel | Enter: apply"),
         (InputMode::Normal, ActivePane::Titles) => Line::from(vec![Span::raw(
-            "\u{2190}\u{2192}: pane  \u{2191}\u{2193}/j/k: move  PgUp/PgDn: page  /: filter  o: open  q: quit",
+            "\u{2190}\u{2192}: pane  \u{2191}\u{2193}/j/k: move  PgUp/PgDn: page  /: filter  t: tmdb  p: programs  Space: select  o: open  q: quit",
         )]),
         (InputMode::Normal, ActivePane::Programs) => Line::from(vec![Span::raw(
-            "\u{2190}\u{2192}: pane  \u{2191}\u{2193}/j/k: move  PgUp/PgDn: page  o: open  q: quit",
+            "\u{2190}\u{2192}: pane  \u{2191}\u{2193}/j/k: move  PgUp/PgDn: page  t: tmdb  p: programs  o: open  q: quit",
         )]),
     };
 

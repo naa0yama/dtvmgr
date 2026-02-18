@@ -20,19 +20,23 @@ use tracing_subscriber::layer::SubscriberExt;
 #[cfg(feature = "otel")]
 use tracing_subscriber::util::SubscriberInitExt;
 
-use crate::config::{AppConfig, resolve_config_path};
+use crate::config::{AppConfig, resolve_config_path, resolve_data_dir};
 use crate::tui::run_channel_selector;
 use crate::tui::state::{ChannelEntry, ChannelGroup};
 use dtvmgr_api::syoboi::{
     LocalSyoboiApi, ProgLookupParams, SyoboiClient, SyoboiProgram, SyoboiTitle,
     lookup_all_programs, resolve_time_range,
 };
-use dtvmgr_api::tmdb::{LocalTmdbApi, SearchMovieParams, SearchTvParams, TmdbClient};
+use dtvmgr_api::tmdb::{
+    LocalTmdbApi, SearchMultiParams, TmdbClient, TmdbMediaType, TmdbMultiSearchResult,
+};
 use dtvmgr_db::channels::{CachedChannel, CachedChannelGroup};
 use dtvmgr_db::programs::CachedProgram;
 use dtvmgr_db::titles::CachedTitle;
+use dtvmgr_db::update_tmdb_search_result;
 use dtvmgr_db::{
-    load_channels, load_programs, load_titles, open_db, save_channel_groups, save_channels,
+    delete_programs_by_tids_not_in, delete_titles_by_cat_not_in, load_channels, load_programs,
+    load_titles, load_titles_by_tids, open_db, upsert_channel_groups, upsert_channels,
     upsert_programs, upsert_titles,
 };
 
@@ -75,6 +79,10 @@ enum DbSubcommands {
     Sync(DbSyncArgs),
     /// Browse cached titles and programs via TUI.
     List,
+    /// Preview title normalization results via TUI.
+    Normalize,
+    /// Search TMDB for cached titles and store results.
+    TmdbLookup(DbTmdbLookupArgs),
 }
 
 /// Arguments for the `db sync` subcommand.
@@ -92,6 +100,17 @@ struct DbSyncArgs {
     /// Comma-separated channel IDs. Falls back to config selected channels if omitted.
     #[arg(long, value_delimiter = ',')]
     ch_ids: Option<Vec<u32>>,
+}
+
+/// Arguments for the `db tmdb-lookup` subcommand.
+#[derive(clap::Args)]
+struct DbTmdbLookupArgs {
+    /// Comma-separated title IDs. If omitted, searches all titles without TMDB mapping.
+    #[arg(long, value_delimiter = ',')]
+    tids: Option<Vec<u32>>,
+    /// Response language (e.g. "ja-JP"). Falls back to config, then "en-US".
+    #[arg(long)]
+    language: Option<String>,
 }
 
 /// Arguments for the `channels` subcommand.
@@ -182,12 +201,9 @@ struct TmdbSearchTvArgs {
     /// Search query (e.g. "SPY×FAMILY").
     #[arg(long, required = true)]
     query: String,
-    /// Response language (default: "en-US").
-    #[arg(long, default_value = "en-US")]
-    language: String,
-    /// Filter by year.
+    /// Response language (e.g. "ja-JP"). Falls back to config, then "en-US".
     #[arg(long)]
-    year: Option<u32>,
+    language: Option<String>,
 }
 
 /// Arguments for the `tmdb search-movie` subcommand.
@@ -196,12 +212,9 @@ struct TmdbSearchMovieArgs {
     /// Search query (e.g. "すずめの戸締まり").
     #[arg(long, required = true)]
     query: String,
-    /// Response language (default: "en-US").
-    #[arg(long, default_value = "en-US")]
-    language: String,
-    /// Filter by year.
+    /// Response language (e.g. "ja-JP"). Falls back to config, then "en-US".
     #[arg(long)]
-    year: Option<u32>,
+    language: Option<String>,
 }
 
 /// Arguments for the `tmdb tv-details` subcommand.
@@ -210,9 +223,9 @@ struct TmdbTvDetailsArgs {
     /// TMDB series ID.
     #[arg(long, required = true)]
     id: u64,
-    /// Response language (default: "en-US").
-    #[arg(long, default_value = "en-US")]
-    language: String,
+    /// Response language (e.g. "ja-JP"). Falls back to config, then "en-US".
+    #[arg(long)]
+    language: Option<String>,
 }
 
 /// Arguments for the `tmdb tv-season` subcommand.
@@ -224,14 +237,14 @@ struct TmdbTvSeasonArgs {
     /// Season number.
     #[arg(long, required = true)]
     season: u32,
-    /// Response language (default: "en-US").
-    #[arg(long, default_value = "en-US")]
-    language: String,
+    /// Response language (e.g. "ja-JP"). Falls back to config, then "en-US".
+    #[arg(long)]
+    language: Option<String>,
 }
 
 /// Runs the `syoboi prog` subcommand.
 ///
-/// Falls back to `config.toml` selected channels when `--ch-ids` is not specified.
+/// Falls back to config selected channels when `--ch-ids` is not specified.
 ///
 /// # Errors
 ///
@@ -258,7 +271,7 @@ async fn run_syoboi_prog(args: &ProgArgs, dir: Option<&PathBuf>) -> Result<()> {
     let ch_ids = resolve_ch_ids(args.ch_ids.clone(), dir)?;
 
     let params = ProgLookupParams {
-        ch_ids,
+        ch_ids: Some(ch_ids),
         range: Some(range),
         ..ProgLookupParams::default()
     };
@@ -332,24 +345,26 @@ async fn run_syoboi_titles(args: &TitlesArgs) -> Result<()> {
 
 /// Resolves channel IDs from CLI args or config fallback.
 ///
-/// Returns `None` if no channels are specified.
-fn resolve_ch_ids(ch_ids: Option<Vec<u32>>, dir: Option<&PathBuf>) -> Result<Option<Vec<u32>>> {
-    if ch_ids.is_some() {
-        return Ok(ch_ids);
+/// Returns an error if no channels are specified via `--ch-ids` or config.
+fn resolve_ch_ids(ch_ids: Option<Vec<u32>>, dir: Option<&PathBuf>) -> Result<Vec<u32>> {
+    if let Some(ids) = ch_ids {
+        return Ok(ids);
     }
 
     let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
     let config = AppConfig::load(&config_path).context("failed to load config")?;
-    if config.channels.selected.is_empty() {
-        Ok(None)
-    } else {
-        tracing::info!(
-            "Using {} channel(s) from config: {:?}",
-            config.channels.selected.len(),
-            config.channels.selected
+    if config.syoboi.channels.selected.is_empty() {
+        anyhow::bail!(
+            "No channels selected. Run `dtvmgr syoboi channels select` first, \
+             or pass --ch-ids explicitly."
         );
-        Ok(Some(config.channels.selected))
     }
+    tracing::info!(
+        "Using {} channel(s) from config: {:?}",
+        config.syoboi.channels.selected.len(),
+        config.syoboi.channels.selected
+    );
+    Ok(config.syoboi.channels.selected)
 }
 
 /// Title lookup chunk size for Syoboi API.
@@ -409,6 +424,9 @@ fn to_cached_title(t: &SyoboiTitle) -> CachedTitle {
         keywords: t.keywords.clone(),
         sub_titles: t.sub_titles.clone(),
         last_update: t.last_update.clone(),
+        tmdb_original_name: None,
+        tmdb_name: None,
+        tmdb_alt_titles: None,
     }
 }
 
@@ -514,8 +532,89 @@ async fn fetch_titles_chunked(
     Ok(all_titles)
 }
 
+/// Filters and upserts programs, skipping those with missing FK references.
+///
+/// `all_fetched_tids` contains TIDs from all API-fetched titles (before cat
+/// filtering) and is used to distinguish cat-filtered skips from genuine
+/// FK misses.
+fn upsert_filtered_programs(
+    conn: &dtvmgr_db::Connection,
+    programs: &[SyoboiProgram],
+    valid_tids: &HashSet<u32>,
+    valid_ch_ids: &HashSet<u32>,
+    all_fetched_tids: &HashSet<u32>,
+) -> Result<(usize, usize)> {
+    let mut cat_filtered: usize = 0;
+    let mut fk_missing: usize = 0;
+    let cached: Vec<CachedProgram> = programs
+        .iter()
+        .filter(|p| {
+            if valid_tids.contains(&p.tid) && valid_ch_ids.contains(&p.ch_id) {
+                return true;
+            }
+            if all_fetched_tids.contains(&p.tid) && !valid_tids.contains(&p.tid) {
+                cat_filtered = cat_filtered.saturating_add(1);
+            } else {
+                fk_missing = fk_missing.saturating_add(1);
+            }
+            false
+        })
+        .map(to_cached_program)
+        .collect();
+    if cat_filtered > 0 {
+        tracing::info!(
+            skipped = cat_filtered,
+            "Skipped programs (title excluded by cat filter)"
+        );
+    }
+    if fk_missing > 0 {
+        tracing::warn!(
+            skipped = fk_missing,
+            "Skipped programs with missing FK references"
+        );
+    }
+    let changed = upsert_programs(conn, &cached).context("failed to upsert programs")?;
+    tracing::info!(
+        changed,
+        unchanged = cached.len().saturating_sub(changed),
+        "Programs upsert complete"
+    );
+    Ok((cached.len(), changed))
+}
+
+/// Deletes titles and programs whose categories are not in the allowed set.
+fn cleanup_disallowed_cats(
+    conn: &dtvmgr_db::Connection,
+    allowed_cats: &HashSet<u32>,
+) -> Result<()> {
+    let allowed_cats_vec: Vec<u32> = allowed_cats.iter().copied().collect();
+    let titles_deleted = delete_titles_by_cat_not_in(conn, &allowed_cats_vec)
+        .context("failed to delete titles by cat filter")?;
+    if titles_deleted > 0 {
+        tracing::info!(
+            deleted = titles_deleted,
+            "Deleted titles with non-allowed categories"
+        );
+    }
+
+    let remaining_titles = load_titles(conn).context("failed to load titles after cleanup")?;
+    let remaining_tids: Vec<u32> = remaining_titles.iter().map(|t| t.tid).collect();
+    let programs_deleted = delete_programs_by_tids_not_in(conn, &remaining_tids)
+        .context("failed to delete programs by tid filter")?;
+    if programs_deleted > 0 {
+        tracing::info!(deleted = programs_deleted, "Deleted orphaned programs");
+    }
+
+    Ok(())
+}
+
 async fn run_db_sync(args: &DbSyncArgs, dir: Option<&PathBuf>) -> Result<()> {
     let client = build_syoboi_client()?;
+
+    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+    let config = AppConfig::load(&config_path).context("failed to load config")?;
+    let allowed_cats: HashSet<u32> = config.syoboi.titles.cat.iter().copied().collect();
+    tracing::info!(?allowed_cats, "Category filter loaded from config");
 
     let range = resolve_time_range(args.time_since.as_deref(), args.time_until.as_deref())?;
     tracing::info!(
@@ -527,7 +626,7 @@ async fn run_db_sync(args: &DbSyncArgs, dir: Option<&PathBuf>) -> Result<()> {
     let ch_ids = resolve_ch_ids(args.ch_ids.clone(), dir)?;
 
     let params = ProgLookupParams {
-        ch_ids,
+        ch_ids: Some(ch_ids),
         range: Some(range),
         ..ProgLookupParams::default()
     };
@@ -539,21 +638,33 @@ async fn run_db_sync(args: &DbSyncArgs, dir: Option<&PathBuf>) -> Result<()> {
     tracing::info!("Fetched {} programs", programs.len());
 
     // Extract unique TIDs and fetch titles in chunks
-    let unique_tids: Vec<u32> = programs
-        .iter()
-        .map(|p| p.tid)
-        .collect::<HashSet<u32>>()
-        .into_iter()
-        .collect();
+    let all_fetched_tids: HashSet<u32> = programs.iter().map(|p| p.tid).collect();
+    let unique_tids: Vec<u32> = all_fetched_tids.iter().copied().collect();
     tracing::info!("Fetching titles for {} unique TIDs...", unique_tids.len());
 
     let all_titles = fetch_titles_chunked(&client, &unique_tids).await?;
     tracing::info!("Fetched {} titles total", all_titles.len());
 
-    // Open DB and upsert
-    let conn = open_db(dir).context("failed to open database")?;
+    // Filter titles by allowed categories
+    let filtered_titles: Vec<&SyoboiTitle> = all_titles
+        .iter()
+        .filter(|t| t.cat.is_some_and(|c| allowed_cats.contains(&c)))
+        .collect();
+    let cat_filtered = all_titles.len().saturating_sub(filtered_titles.len());
+    if cat_filtered > 0 {
+        tracing::info!(
+            filtered = cat_filtered,
+            remaining = filtered_titles.len(),
+            "Filtered titles by category"
+        );
+    }
 
-    let cached_titles: Vec<CachedTitle> = all_titles.iter().map(to_cached_title).collect();
+    // Open DB and upsert
+    let data_dir = resolve_data_dir(dir).context("failed to resolve data directory")?;
+    let conn = open_db(data_dir.as_ref()).context("failed to open database")?;
+
+    let cached_titles: Vec<CachedTitle> =
+        filtered_titles.iter().map(|t| to_cached_title(t)).collect();
     let titles_changed = upsert_titles(&conn, &cached_titles).context("failed to upsert titles")?;
     tracing::info!(
         changed = titles_changed,
@@ -561,44 +672,355 @@ async fn run_db_sync(args: &DbSyncArgs, dir: Option<&PathBuf>) -> Result<()> {
         "Titles upsert complete"
     );
 
-    let valid_tids: HashSet<u32> = cached_titles.iter().map(|t| t.tid).collect();
-    let cached_programs: Vec<CachedProgram> = programs
+    // Ensure channels referenced by programs exist in DB
+    let unique_ch_ids: Vec<u32> = programs
         .iter()
-        .filter(|p| valid_tids.contains(&p.tid))
-        .map(to_cached_program)
+        .map(|p| p.ch_id)
+        .collect::<HashSet<u32>>()
+        .into_iter()
         .collect();
-    let skipped = programs.len().saturating_sub(cached_programs.len());
-    if skipped > 0 {
-        tracing::warn!(skipped, "Skipped programs with missing title references");
-    }
-    let programs_changed =
-        upsert_programs(&conn, &cached_programs).context("failed to upsert programs")?;
     tracing::info!(
-        changed = programs_changed,
-        unchanged = cached_programs.len().saturating_sub(programs_changed),
-        "Programs upsert complete"
+        "Fetching channels for {} unique ch_ids...",
+        unique_ch_ids.len()
     );
+    let api_channels = client
+        .lookup_channels(Some(&unique_ch_ids))
+        .await
+        .context("failed to fetch channels")?;
+    let cached_channels: Vec<CachedChannel> = api_channels
+        .iter()
+        .map(|ch| CachedChannel {
+            ch_id: ch.ch_id,
+            ch_gid: None,
+            ch_name: ch.ch_name.clone(),
+        })
+        .collect();
+    let ch_changed =
+        upsert_channels(&conn, &cached_channels).context("failed to upsert channels")?;
+    tracing::info!(
+        fetched = cached_channels.len(),
+        changed = ch_changed,
+        "Channels upsert complete"
+    );
+
+    let valid_tids: HashSet<u32> = cached_titles.iter().map(|t| t.tid).collect();
+    let valid_ch_ids: HashSet<u32> = cached_channels.iter().map(|ch| ch.ch_id).collect();
+    let (total_programs, programs_changed) = upsert_filtered_programs(
+        &conn,
+        &programs,
+        &valid_tids,
+        &valid_ch_ids,
+        &all_fetched_tids,
+    )?;
+
+    cleanup_disallowed_cats(&conn, &allowed_cats)?;
 
     tracing::info!(
         "Sync complete: {} titles ({} changed), {} programs ({} changed)",
         cached_titles.len(),
         titles_changed,
-        cached_programs.len(),
+        total_programs,
         programs_changed,
     );
 
     Ok(())
 }
 
-/// Builds a `TmdbClient` from the `TMDB_API_TOKEN` environment variable.
+/// TMDB Animation genre ID.
+const TMDB_GENRE_ANIMATION: u32 = 16;
+
+/// Returns `true` if the Syoboi category requires Animation genre filtering.
+const fn requires_animation_filter(cat: Option<u32>) -> bool {
+    matches!(cat, Some(1 | 7 | 8 | 10))
+}
+
+/// Extracts a base search query from a title using normalization and regex.
+fn extract_base_query(title: &str, compiled_regex: Option<&regex::Regex>) -> String {
+    let normalized = crate::tui::normalize_viewer::state::normalize_chars(title);
+
+    if let Some(re) = compiled_regex
+        && let Some(m) = re.find(&normalized)
+    {
+        let mut result = String::with_capacity(normalized.len());
+        result.push_str(&normalized[..m.start()]);
+        result.push_str(&normalized[m.end()..]);
+        let trimmed = result.trim().to_owned();
+        if trimmed.is_empty() {
+            normalized
+        } else {
+            trimmed
+        }
+    } else {
+        normalized
+    }
+}
+
+/// Result of a single TMDB lookup attempt.
+enum LookupOutcome {
+    /// Successfully matched with TMDB result data.
+    Success(u64, String, String, String),
+    /// No match found (empty results or filter miss).
+    Skipped,
+    /// API error occurred.
+    Error,
+}
+
+/// Resolves expected TMDB media type based on Syoboi category code.
+fn resolve_media_type(cat: Option<u32>, cat_movie: &HashSet<u32>) -> TmdbMediaType {
+    match cat {
+        Some(c) if cat_movie.contains(&c) => TmdbMediaType::Movie,
+        _ => TmdbMediaType::Tv,
+    }
+}
+
+/// Fetches alternative titles and builds a `LookupOutcome::Success`.
+async fn fetch_alt_and_build_outcome(
+    tmdb_client: &TmdbClient,
+    tid: u32,
+    media_type: TmdbMediaType,
+    tmdb_id: u64,
+    original_name: &str,
+    name: &str,
+) -> Result<LookupOutcome> {
+    let alt_titles = match tmdb_client.alternative_titles(media_type, tmdb_id).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(
+                tid, tmdb_id, error = %e, "Failed to fetch alternative titles"
+            );
+            return Ok(LookupOutcome::Error);
+        }
+    };
+    let alt_json =
+        serde_json::to_string(&alt_titles.results).context("failed to serialize alt titles")?;
+    tracing::info!(
+        tid,
+        tmdb_id,
+        original_name,
+        name,
+        alt_titles_count = alt_titles.results.len(),
+        "TMDB result matched ({media_type:?})"
+    );
+    Ok(LookupOutcome::Success(
+        tmdb_id,
+        original_name.to_owned(),
+        name.to_owned(),
+        alt_json,
+    ))
+}
+
+/// Performs TMDB search and filtering for a single title.
+#[instrument(skip_all)]
+async fn lookup_single_title(
+    title: &CachedTitle,
+    tmdb_client: &TmdbClient,
+    language: &str,
+    compiled_regex: Option<&regex::Regex>,
+    cat_movie: &HashSet<u32>,
+) -> Result<LookupOutcome> {
+    let base_query = extract_base_query(&title.title, compiled_regex);
+    let expected_type = resolve_media_type(title.cat, cat_movie);
+
+    tracing::info!(
+        tid = title.tid, title = %title.title, base_query = %base_query,
+        media_type = ?expected_type, "Searching TMDB"
+    );
+
+    let check_animation = requires_animation_filter(title.cat);
+    let mut page = 1u32;
+
+    loop {
+        let params = SearchMultiParams::new(&base_query)
+            .language(language)
+            .page(page);
+        let search_result = match tmdb_client.search_multi(&params).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(tid = title.tid, error = %e, "TMDB search failed");
+                return Ok(LookupOutcome::Error);
+            }
+        };
+
+        if search_result.results.is_empty() {
+            tracing::info!(tid = title.tid, "No TMDB results found");
+            return Ok(LookupOutcome::Skipped);
+        }
+
+        for result in &search_result.results {
+            match result {
+                TmdbMultiSearchResult::Tv(tv) if expected_type == TmdbMediaType::Tv => {
+                    let animation =
+                        !check_animation || tv.genre_ids.contains(&TMDB_GENRE_ANIMATION);
+                    let lang_ja = tv.original_language == "ja";
+                    tracing::info!(
+                        tid = title.tid, tmdb_id = tv.id, name = %tv.name,
+                        animation, lang_ja,
+                        matched = animation && lang_ja, "Filter check (TV)"
+                    );
+                    if animation && lang_ja {
+                        return fetch_alt_and_build_outcome(
+                            tmdb_client,
+                            title.tid,
+                            TmdbMediaType::Tv,
+                            tv.id,
+                            &tv.original_name,
+                            &tv.name,
+                        )
+                        .await;
+                    }
+                }
+                TmdbMultiSearchResult::Movie(movie) if expected_type == TmdbMediaType::Movie => {
+                    let animation =
+                        !check_animation || movie.genre_ids.contains(&TMDB_GENRE_ANIMATION);
+                    let lang_ja = movie.original_language == "ja";
+                    tracing::info!(
+                        tid = title.tid, tmdb_id = movie.id, title = %movie.title,
+                        animation, lang_ja,
+                        matched = animation && lang_ja, "Filter check (Movie)"
+                    );
+                    if animation && lang_ja {
+                        return fetch_alt_and_build_outcome(
+                            tmdb_client,
+                            title.tid,
+                            TmdbMediaType::Movie,
+                            movie.id,
+                            &movie.original_title,
+                            &movie.title,
+                        )
+                        .await;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if page >= search_result.total_pages {
+            break;
+        }
+        page = page.saturating_add(1);
+    }
+
+    tracing::info!(tid = title.tid, "No matching result after filtering");
+    Ok(LookupOutcome::Skipped)
+}
+
+/// Runs the `db tmdb-lookup` subcommand.
+///
+/// Searches TMDB for cached titles and stores search results
+/// (`original_name`, `name`, `alternative_titles`) in the database.
 ///
 /// # Errors
 ///
-/// Returns an error if `TMDB_API_TOKEN` is not set or the client fails to build.
+/// Returns an error if API calls or DB operations fail.
 #[instrument(skip_all)]
-fn build_tmdb_client() -> Result<TmdbClient> {
-    let api_token = std::env::var("TMDB_API_TOKEN")
-        .context("TMDB_API_TOKEN environment variable is required")?;
+async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> Result<()> {
+    let data_dir = resolve_data_dir(dir).context("failed to resolve data directory")?;
+    let conn = open_db(data_dir.as_ref()).context("failed to open database")?;
+    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+    let config = AppConfig::load(&config_path).context("failed to load config")?;
+
+    let language = resolve_tmdb_language(args.language.as_deref(), dir);
+    let tmdb_client = build_tmdb_client(dir)?;
+
+    let titles = if let Some(ref tids) = args.tids {
+        load_titles_by_tids(&conn, tids).context("failed to load titles by tids")?
+    } else {
+        let all = load_titles(&conn).context("failed to load titles")?;
+        all.into_iter()
+            .filter(|t| t.tmdb_series_id.is_none())
+            .collect()
+    };
+
+    if titles.is_empty() {
+        tracing::info!("No titles to process");
+        return Ok(());
+    }
+
+    tracing::info!("Processing {} titles...", titles.len());
+
+    let compiled_regex = config
+        .normalize
+        .regex_history
+        .last()
+        .and_then(|p| regex::Regex::new(p).ok());
+
+    let cat_movie: HashSet<u32> = config.syoboi.titles.cat_movie.iter().copied().collect();
+
+    let mut success_count: usize = 0;
+    let mut skip_count: usize = 0;
+    let mut error_count: usize = 0;
+
+    let total = titles.len();
+    #[allow(clippy::as_conversions)]
+    let width = total
+        .checked_ilog10()
+        .map_or(1, |n| (n as usize).saturating_add(1));
+
+    for (i, title) in titles.iter().enumerate() {
+        match lookup_single_title(
+            title,
+            &tmdb_client,
+            &language,
+            compiled_regex.as_ref(),
+            &cat_movie,
+        )
+        .await?
+        {
+            LookupOutcome::Success(tmdb_id, original_name, name, alt_json) => {
+                update_tmdb_search_result(
+                    &conn,
+                    title.tid,
+                    tmdb_id,
+                    &original_name,
+                    &name,
+                    &alt_json,
+                )
+                .with_context(|| format!("failed to update TMDB result for tid {}", title.tid))?;
+                tracing::info!(tid = title.tid, tmdb_id, "TMDB result saved");
+                success_count = success_count.saturating_add(1);
+            }
+            LookupOutcome::Skipped => skip_count = skip_count.saturating_add(1),
+            LookupOutcome::Error => error_count = error_count.saturating_add(1),
+        }
+
+        let current = i.saturating_add(1);
+        #[allow(clippy::cast_precision_loss, clippy::as_conversions)]
+        let pct = (current as f64 / total as f64) * 100.0;
+        let miss = skip_count.saturating_add(error_count);
+        tracing::info!(
+            "{current:0>width$}/{total:0>width$} ({pct:06.2}%), match={success_count}, miss={miss}",
+        );
+    }
+
+    tracing::info!(
+        total = titles.len(),
+        success = success_count,
+        skipped = skip_count,
+        errors = error_count,
+        "TMDB lookup complete"
+    );
+
+    Ok(())
+}
+
+/// Builds a `TmdbClient` from `TMDB_API_TOKEN` env var with config file fallback.
+///
+/// # Errors
+///
+/// Returns an error if neither env var nor config `api_key` is set, or the client
+/// fails to build.
+#[instrument(skip_all)]
+fn build_tmdb_client(dir: Option<&PathBuf>) -> Result<TmdbClient> {
+    let api_token =
+        if let Ok(token) = std::env::var("TMDB_API_TOKEN") {
+            token
+        } else {
+            let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+            let config = AppConfig::load(&config_path).context("failed to load config")?;
+            config.tmdb.api.api_key.context(
+                "TMDB_API_TOKEN env var is not set and tmdb.api.api_key is not configured",
+            )?
+        };
 
     TmdbClient::builder()
         .api_token(api_token)
@@ -611,70 +1033,82 @@ fn build_tmdb_client() -> Result<TmdbClient> {
         .context("failed to build TMDB client")
 }
 
-/// Runs the `tmdb search-tv` subcommand.
+/// Resolves TMDB language: CLI arg > config > "en-US".
+fn resolve_tmdb_language(cli_lang: Option<&str>, dir: Option<&PathBuf>) -> String {
+    if let Some(lang) = cli_lang {
+        return lang.to_owned();
+    }
+    if let Ok(config_path) = resolve_config_path(dir)
+        && let Ok(config) = AppConfig::load(&config_path)
+        && let Some(lang) = config.tmdb.language
+    {
+        return lang;
+    }
+    String::from("en-US")
+}
+
+/// Runs the `tmdb search-tv` subcommand (internally uses `search/multi`).
 ///
 /// # Errors
 ///
 /// Returns an error if the TMDB client fails to build or the API request fails.
 #[instrument(skip_all)]
-async fn run_tmdb_search_tv(args: &TmdbSearchTvArgs) -> Result<()> {
-    let client = build_tmdb_client()?;
+async fn run_tmdb_search_tv(args: &TmdbSearchTvArgs, dir: Option<&PathBuf>) -> Result<()> {
+    let client = build_tmdb_client(dir)?;
+    let language = resolve_tmdb_language(args.language.as_deref(), dir);
 
-    let mut params = SearchTvParams::new(&args.query).language(&args.language);
-    if let Some(year) = args.year {
-        params = params.year(year);
-    }
-
+    let params = SearchMultiParams::new(&args.query).language(&language);
     let response = client
-        .search_tv(&params)
+        .search_multi(&params)
         .await
-        .context("TMDB search/tv request failed")?;
+        .context("TMDB search/multi request failed")?;
 
     tracing::info!("Total results: {}", response.total_results);
     tracing::info!("ID\tName\t\t\tOrigLang\tCountry\t\tFirstAirDate");
     for result in &response.results {
-        tracing::info!(
-            "{}\t\t{}\t{}\t\t{}\t\t{}",
-            result.id,
-            result.name,
-            result.original_language,
-            result.origin_country.join(","),
-            result.first_air_date.as_deref().unwrap_or("-"),
-        );
+        if let TmdbMultiSearchResult::Tv(tv) = result {
+            tracing::info!(
+                "{}\t\t{}\t{}\t\t{}\t\t{}",
+                tv.id,
+                tv.name,
+                tv.original_language,
+                tv.origin_country.join(","),
+                tv.first_air_date.as_deref().unwrap_or("-"),
+            );
+        }
     }
 
     Ok(())
 }
 
-/// Runs the `tmdb search-movie` subcommand.
+/// Runs the `tmdb search-movie` subcommand (internally uses `search/multi`).
 ///
 /// # Errors
 ///
 /// Returns an error if the TMDB client fails to build or the API request fails.
 #[instrument(skip_all)]
-async fn run_tmdb_search_movie(args: &TmdbSearchMovieArgs) -> Result<()> {
-    let client = build_tmdb_client()?;
+async fn run_tmdb_search_movie(args: &TmdbSearchMovieArgs, dir: Option<&PathBuf>) -> Result<()> {
+    let client = build_tmdb_client(dir)?;
+    let language = resolve_tmdb_language(args.language.as_deref(), dir);
 
-    let mut params = SearchMovieParams::new(&args.query).language(&args.language);
-    if let Some(year) = args.year {
-        params = params.year(year);
-    }
-
+    let params = SearchMultiParams::new(&args.query).language(&language);
     let response = client
-        .search_movie(&params)
+        .search_multi(&params)
         .await
-        .context("TMDB search/movie request failed")?;
+        .context("TMDB search/multi request failed")?;
 
     tracing::info!("Total results: {}", response.total_results);
     tracing::info!("ID\tTitle\t\t\tOrigLang\tReleaseDate");
     for result in &response.results {
-        tracing::info!(
-            "{}\t{}\t{}\t\t{}",
-            result.id,
-            result.title,
-            result.original_language,
-            result.release_date.as_deref().unwrap_or("-"),
-        );
+        if let TmdbMultiSearchResult::Movie(movie) = result {
+            tracing::info!(
+                "{}\t{}\t{}\t\t{}",
+                movie.id,
+                movie.title,
+                movie.original_language,
+                movie.release_date.as_deref().unwrap_or("-"),
+            );
+        }
     }
 
     Ok(())
@@ -686,11 +1120,12 @@ async fn run_tmdb_search_movie(args: &TmdbSearchMovieArgs) -> Result<()> {
 ///
 /// Returns an error if the TMDB client fails to build or the API request fails.
 #[instrument(skip_all)]
-async fn run_tmdb_tv_details(args: &TmdbTvDetailsArgs) -> Result<()> {
-    let client = build_tmdb_client()?;
+async fn run_tmdb_tv_details(args: &TmdbTvDetailsArgs, dir: Option<&PathBuf>) -> Result<()> {
+    let client = build_tmdb_client(dir)?;
+    let language = resolve_tmdb_language(args.language.as_deref(), dir);
 
     let details = client
-        .tv_details(args.id, &args.language)
+        .tv_details(args.id, &language)
         .await
         .context("TMDB tv details request failed")?;
 
@@ -723,11 +1158,12 @@ async fn run_tmdb_tv_details(args: &TmdbTvDetailsArgs) -> Result<()> {
 ///
 /// Returns an error if the TMDB client fails to build or the API request fails.
 #[instrument(skip_all)]
-async fn run_tmdb_tv_season(args: &TmdbTvSeasonArgs) -> Result<()> {
-    let client = build_tmdb_client()?;
+async fn run_tmdb_tv_season(args: &TmdbTvSeasonArgs, dir: Option<&PathBuf>) -> Result<()> {
+    let client = build_tmdb_client(dir)?;
+    let language = resolve_tmdb_language(args.language.as_deref(), dir);
 
     let season = client
-        .tv_season(args.id, args.season, &args.language)
+        .tv_season(args.id, args.season, &language)
         .await
         .context("TMDB tv season request failed")?;
 
@@ -771,7 +1207,7 @@ fn build_syoboi_client() -> Result<SyoboiClient> {
 /// Runs the `syoboi channels select` subcommand.
 ///
 /// Fetches channels/groups from API, caches in DB, launches TUI,
-/// and saves selection to config.toml.
+/// and saves selection to `dtvmgr.toml`.
 ///
 /// # Errors
 ///
@@ -793,7 +1229,8 @@ async fn run_channels_select(dir: Option<&PathBuf>) -> Result<()> {
         .context("failed to fetch channels")?;
 
     // Cache in DB
-    let conn = open_db(dir).context("failed to open database")?;
+    let data_dir = resolve_data_dir(dir).context("failed to resolve data directory")?;
+    let conn = open_db(data_dir.as_ref()).context("failed to open database")?;
 
     let cached_groups: Vec<CachedChannelGroup> = api_groups
         .iter()
@@ -803,22 +1240,27 @@ async fn run_channels_select(dir: Option<&PathBuf>) -> Result<()> {
             ch_group_order: g.ch_group_order,
         })
         .collect();
-    save_channel_groups(&conn, &cached_groups).context("failed to cache channel groups")?;
+    let groups_changed =
+        upsert_channel_groups(&conn, &cached_groups).context("failed to cache channel groups")?;
+    tracing::info!(changed = groups_changed, "Channel groups upsert complete");
 
+    let valid_ch_gids: HashSet<u32> = cached_groups.iter().map(|g| g.ch_gid).collect();
     let cached_channels: Vec<CachedChannel> = api_channels
         .iter()
         .map(|ch| CachedChannel {
             ch_id: ch.ch_id,
-            ch_gid: ch.ch_gid,
+            ch_gid: ch.ch_gid.filter(|gid| valid_ch_gids.contains(gid)),
             ch_name: ch.ch_name.clone(),
         })
         .collect();
-    save_channels(&conn, &cached_channels).context("failed to cache channels")?;
+    let channels_changed =
+        upsert_channels(&conn, &cached_channels).context("failed to cache channels")?;
+    tracing::info!(changed = channels_changed, "Channels upsert complete");
 
     // Load config
     let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
     let config = AppConfig::load(&config_path).context("failed to load config")?;
-    let initial_selected: BTreeSet<u32> = config.channels.selected.into_iter().collect();
+    let initial_selected: BTreeSet<u32> = config.syoboi.channels.selected.into_iter().collect();
 
     // Build TUI data model
     let groups = build_tui_groups(&cached_groups, &cached_channels);
@@ -835,11 +1277,11 @@ async fn run_channels_select(dir: Option<&PathBuf>) -> Result<()> {
 
     if let Some(selected) = result {
         let mut config = AppConfig::load(&config_path).unwrap_or_default();
-        config.channels.selected = selected;
+        config.syoboi.channels.selected = selected;
         config.save(&config_path).context("failed to save config")?;
         tracing::info!(
             "Saved {} selected channel(s) to {}",
-            config.channels.selected.len(),
+            config.syoboi.channels.selected.len(),
             config_path.display()
         );
     } else {
@@ -900,21 +1342,25 @@ fn run_channels_list(dir: Option<&PathBuf>) -> Result<()> {
     let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
     let config = AppConfig::load(&config_path).context("failed to load config")?;
 
-    if config.channels.selected.is_empty() {
+    if config.syoboi.channels.selected.is_empty() {
         tracing::info!("No channels selected. Run `syoboi channels select` to choose channels.");
         return Ok(());
     }
 
     // Try to load names from DB cache
-    let conn = open_db(dir);
+    let data_dir = resolve_data_dir(dir).ok().flatten();
+    let conn = open_db(data_dir.as_ref());
     let cached_channels = conn
         .as_ref()
         .ok()
         .and_then(|c| load_channels(c).ok())
         .unwrap_or_default();
 
-    tracing::info!("Selected channels ({}):", config.channels.selected.len());
-    for ch_id in &config.channels.selected {
+    tracing::info!(
+        "Selected channels ({}):",
+        config.syoboi.channels.selected.len()
+    );
+    for ch_id in &config.syoboi.channels.selected {
         let name = cached_channels
             .iter()
             .find(|c| c.ch_id == *ch_id)
@@ -934,7 +1380,13 @@ fn run_channels_list(dir: Option<&PathBuf>) -> Result<()> {
 /// Returns an error if DB operations or TUI fails.
 #[instrument(skip_all)]
 fn run_db_list(dir: Option<&PathBuf>) -> Result<()> {
-    let conn = open_db(dir).context("failed to open database")?;
+    let data_dir = resolve_data_dir(dir).context("failed to resolve data directory")?;
+    let conn = open_db(data_dir.as_ref()).context("failed to open database")?;
+    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+    let config = AppConfig::load(&config_path).context("failed to load config")?;
+
+    let excluded_tids: std::collections::HashSet<u32> =
+        config.syoboi.titles.excludes.iter().copied().collect();
 
     let titles = load_titles(&conn).context("failed to load titles")?;
     let programs = load_programs(&conn).context("failed to load programs")?;
@@ -945,6 +1397,12 @@ fn run_db_list(dir: Option<&PathBuf>) -> Result<()> {
         return Ok(());
     }
 
+    let compiled_regex = config
+        .normalize
+        .regex_history
+        .last()
+        .and_then(|p| regex::Regex::new(p).ok());
+
     tracing::info!(
         "Loaded {} titles, {} programs, {} channels. Launching TUI...",
         titles.len(),
@@ -952,8 +1410,78 @@ fn run_db_list(dir: Option<&PathBuf>) -> Result<()> {
         channels.len()
     );
 
-    crate::tui::title_viewer::run_title_viewer(&titles, &programs, channels)
-        .context("title viewer TUI failed")?;
+    let output = crate::tui::title_viewer::run_title_viewer(
+        &titles,
+        &programs,
+        channels,
+        excluded_tids,
+        compiled_regex.as_ref(),
+    )
+    .context("title viewer TUI failed")?;
+
+    if !output.new_excludes.is_empty() {
+        // Reload config to merge with any concurrent changes
+        let mut config = AppConfig::load(&config_path).context("failed to reload config")?;
+        let mut excludes: std::collections::HashSet<u32> =
+            config.syoboi.titles.excludes.drain(..).collect();
+        excludes.extend(&output.new_excludes);
+        config.syoboi.titles.excludes = excludes.into_iter().collect();
+        config.save(&config_path).context("failed to save config")?;
+        tracing::info!(
+            "Added {} TIDs to excludes (total: {})",
+            output.new_excludes.len(),
+            config.syoboi.titles.excludes.len(),
+        );
+    }
+
+    Ok(())
+}
+
+/// Runs the `db normalize` subcommand.
+///
+/// Loads titles from local DB and regex history from config, launches the
+/// normalize viewer TUI, saves updated history back to config, and prints
+/// selected rows as TSV on quit.
+///
+/// # Errors
+///
+/// Returns an error if DB operations, config I/O, or TUI fails.
+#[instrument(skip_all)]
+fn run_db_normalize(dir: Option<&PathBuf>) -> Result<()> {
+    let data_dir = resolve_data_dir(dir).context("failed to resolve data directory")?;
+    let conn = open_db(data_dir.as_ref()).context("failed to open database")?;
+    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+    let config = AppConfig::load(&config_path).context("failed to load config")?;
+
+    let titles = load_titles(&conn).context("failed to load titles")?;
+
+    if titles.is_empty() {
+        tracing::info!("No titles in database. Run `db sync` first.");
+        return Ok(());
+    }
+
+    tracing::info!(
+        "Loaded {} titles. Launching normalize viewer...",
+        titles.len(),
+    );
+
+    let (output, updated_history) = crate::tui::normalize_viewer::run_normalize_viewer(
+        &titles,
+        &config.normalize.regex_history,
+    )
+    .context("normalize viewer TUI failed")?;
+
+    // Save updated regex history back to config
+    let mut config = config;
+    config.normalize.regex_history = updated_history;
+    config.save(&config_path).context("failed to save config")?;
+
+    #[allow(clippy::print_stdout)]
+    if output.len() > 1 {
+        for line in &output {
+            println!("{line}");
+        }
+    }
 
     Ok(())
 }
@@ -1020,14 +1548,18 @@ async fn main() -> Result<()> {
             },
         },
         Commands::Tmdb(tmdb) => match tmdb.command {
-            TmdbSubcommands::SearchTv(args) => run_tmdb_search_tv(&args).await,
-            TmdbSubcommands::SearchMovie(args) => run_tmdb_search_movie(&args).await,
-            TmdbSubcommands::TvDetails(args) => run_tmdb_tv_details(&args).await,
-            TmdbSubcommands::TvSeason(args) => run_tmdb_tv_season(&args).await,
+            TmdbSubcommands::SearchTv(args) => run_tmdb_search_tv(&args, cli.dir.as_ref()).await,
+            TmdbSubcommands::SearchMovie(args) => {
+                run_tmdb_search_movie(&args, cli.dir.as_ref()).await
+            }
+            TmdbSubcommands::TvDetails(args) => run_tmdb_tv_details(&args, cli.dir.as_ref()).await,
+            TmdbSubcommands::TvSeason(args) => run_tmdb_tv_season(&args, cli.dir.as_ref()).await,
         },
         Commands::Db(db) => match db.command {
             DbSubcommands::Sync(args) => run_db_sync(&args, cli.dir.as_ref()).await,
             DbSubcommands::List => run_db_list(cli.dir.as_ref()),
+            DbSubcommands::Normalize => run_db_normalize(cli.dir.as_ref()),
+            DbSubcommands::TmdbLookup(args) => run_db_tmdb_lookup(&args, cli.dir.as_ref()).await,
         },
     }
 }

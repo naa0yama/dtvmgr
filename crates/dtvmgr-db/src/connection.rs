@@ -28,6 +28,9 @@ pub fn open_db(dir: Option<&PathBuf>) -> Result<Connection> {
 
     run_migrations(&conn).context("database migration failed")?;
 
+    conn.execute_batch("PRAGMA foreign_keys = ON")
+        .context("failed to enable foreign key constraints")?;
+
     Ok(conn)
 }
 
@@ -65,6 +68,22 @@ mod tests {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert!(version > 0);
+    }
+
+    #[test]
+    fn test_foreign_keys_enabled() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path().to_path_buf();
+
+        // Act
+        let conn = open_db(Some(&dir_path)).unwrap();
+        let fk: i32 = conn
+            .pragma_query_value(None, "foreign_keys", |row| row.get(0))
+            .unwrap();
+
+        // Assert
+        assert_eq!(fk, 1);
     }
 
     #[test]

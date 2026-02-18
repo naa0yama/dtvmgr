@@ -3,6 +3,8 @@
 //! Uses `ratatui` + `crossterm` for rendering.
 
 mod channel_selector;
+/// Normalize viewer TUI.
+pub mod normalize_viewer;
 /// Channel selector state types.
 pub mod state;
 /// Title/program viewer TUI.

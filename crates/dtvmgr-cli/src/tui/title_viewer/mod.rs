@@ -15,22 +15,55 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
+use regex::Regex;
+
 use self::state::{ActivePane, InputMode, ProgramRow, TitleRow, TitleViewerState, ViewerStats};
+use crate::tui::normalize_viewer::state::normalize_chars;
 use dtvmgr_db::channels::CachedChannel;
 use dtvmgr_db::programs::CachedProgram;
 use dtvmgr_db::titles::CachedTitle;
+
+/// Extracts a base search query from a title using normalization and regex.
+fn extract_base_query(title: &str, compiled_regex: Option<&Regex>) -> String {
+    let normalized = normalize_chars(title);
+
+    if let Some(re) = compiled_regex
+        && let Some(m) = re.find(&normalized)
+    {
+        let mut result = String::with_capacity(normalized.len());
+        result.push_str(&normalized[..m.start()]);
+        result.push_str(&normalized[m.end()..]);
+        let trimmed = result.trim().to_owned();
+        if trimmed.is_empty() {
+            normalized
+        } else {
+            trimmed
+        }
+    } else {
+        normalized
+    }
+}
 
 /// Runs the title viewer TUI.
 ///
 /// # Errors
 ///
 /// Returns an error if terminal setup or event handling fails.
+/// Result returned by the title viewer containing new TIDs to exclude.
+#[allow(clippy::module_name_repetitions)]
+pub struct TitleViewerOutput {
+    /// TIDs selected for exclusion during this session.
+    pub new_excludes: Vec<u32>,
+}
+
 #[allow(clippy::module_name_repetitions)]
 pub fn run_title_viewer(
     titles: &[CachedTitle],
     programs: &[CachedProgram],
     channels: Vec<CachedChannel>,
-) -> Result<()> {
+    excluded_tids: HashSet<u32>,
+    compiled_regex: Option<&regex::Regex>,
+) -> Result<TitleViewerOutput> {
     // Build channel name lookup
     let ch_names: HashMap<u32, String> = channels
         .into_iter()
@@ -73,28 +106,37 @@ pub fn run_title_viewer(
         .max()
         .map(String::from);
 
+    let tmdb_matched = titles.iter().filter(|t| t.tmdb_series_id.is_some()).count();
+
     let viewer_stats = ViewerStats {
         total_titles: titles.len(),
         total_programs: programs.len(),
         unique_channels,
         oldest_st_time,
         newest_st_time,
+        tmdb_matched,
     };
 
     // Build title rows
     let title_rows: Vec<TitleRow> = titles
         .iter()
-        .map(|t| TitleRow {
-            tid: t.tid,
-            title: t.title.clone(),
-            first_year: t.first_year,
-            tmdb_series_id: t.tmdb_series_id,
-            tmdb_season_number: t.tmdb_season_number,
-            program_count: programs_by_tid.get(&t.tid).map_or(0, Vec::len),
+        .map(|t| {
+            let tmdb_query = extract_base_query(&t.title, compiled_regex);
+            TitleRow {
+                tid: t.tid,
+                title: t.title.clone(),
+                cat: t.cat,
+                first_year: t.first_year,
+                tmdb_series_id: t.tmdb_series_id,
+                tmdb_season_number: t.tmdb_season_number,
+                program_count: programs_by_tid.get(&t.tid).map_or(0, Vec::len),
+                keywords: t.keywords.clone(),
+                tmdb_query,
+            }
         })
         .collect();
 
-    let mut state = TitleViewerState::new(title_rows, programs_by_tid, viewer_stats);
+    let mut state = TitleViewerState::new(title_rows, programs_by_tid, viewer_stats, excluded_tids);
 
     enable_raw_mode().context("failed to enable raw mode")?;
     let mut stdout = io::stdout();
@@ -111,7 +153,11 @@ pub fn run_title_viewer(
     crossterm::execute!(io::stdout(), LeaveAlternateScreen)
         .context("failed to leave alternate screen")?;
 
-    result
+    result?;
+
+    Ok(TitleViewerOutput {
+        new_excludes: state.new_excludes(),
+    })
 }
 
 /// Main event loop.
@@ -183,7 +229,7 @@ fn handle_normal_input(
         KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => return true,
         KeyCode::Up | KeyCode::Char('k') => state.move_up(),
         KeyCode::Down | KeyCode::Char('j') => state.move_down(),
-        KeyCode::Right => state.focus_programs(),
+        KeyCode::Right if state.show_programs => state.focus_programs(),
         KeyCode::Left => state.focus_titles(),
         KeyCode::PageUp => state.page_up(page_size),
         KeyCode::PageDown => state.page_down(page_size),
@@ -192,6 +238,9 @@ fn handle_normal_input(
                 state.input_mode = InputMode::Filter;
             }
         }
+        KeyCode::Char('t') => state.toggle_tmdb_filter(),
+        KeyCode::Char('p') => state.toggle_programs(),
+        KeyCode::Char(' ') => state.toggle_select(),
         KeyCode::Char('o') => open_syoboi_url(state),
         _ => {}
     }
