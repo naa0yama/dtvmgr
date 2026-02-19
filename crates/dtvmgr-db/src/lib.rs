@@ -21,6 +21,6 @@ pub use programs::{
 };
 pub use rusqlite::Connection;
 pub use titles::{
-    delete_titles_by_cat_not_in, load_titles, load_titles_by_tids, update_tmdb_mapping,
-    update_tmdb_search_result, upsert_titles,
+    delete_titles_by_cat_not_in, filter_keywords, load_titles, load_titles_by_tids, parse_keywords,
+    update_tmdb_last_updated, update_tmdb_mapping, update_tmdb_search_result, upsert_titles,
 };

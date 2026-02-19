@@ -98,6 +98,9 @@ pub struct NormalizeConfig {
     /// Regex pattern history for the normalize viewer.
     #[serde(default)]
     pub regex_history: Vec<String>,
+    /// Regex patterns for title normalization (combined with `|`).
+    #[serde(default)]
+    pub regex_titles: Vec<String>,
 }
 
 impl AppConfig {
@@ -228,6 +231,18 @@ impl AppConfig {
                 .collect();
             let _ = writeln!(out, "regex_history = [{}]", patterns.join(", "));
         }
+        out.push_str("# Regex patterns for title normalization (combined with `|`).\n");
+        if self.normalize.regex_titles.is_empty() {
+            out.push_str("# regex_titles = []\n");
+        } else {
+            let patterns: Vec<String> = self
+                .normalize
+                .regex_titles
+                .iter()
+                .map(|p| format!("'{p}'"))
+                .collect();
+            let _ = writeln!(out, "regex_titles = [{}]", patterns.join(", "));
+        }
 
         out
     }
@@ -249,6 +264,7 @@ mod tests {
         assert!(config.tmdb.language.is_none());
         assert!(config.tmdb.api.api_key.is_none());
         assert!(config.normalize.regex_history.is_empty());
+        assert!(config.normalize.regex_titles.is_empty());
     }
 
     #[test]
@@ -272,6 +288,7 @@ mod tests {
                     String::from(r"第(?P<SeasonNum>\d+)期"),
                     String::from(r"Season\s+(?P<SeasonNum>\d+)"),
                 ],
+                regex_titles: vec![String::from(r"第\d+期$"), String::from(r"\s*Season\s*\d+")],
             },
         };
 
@@ -300,6 +317,7 @@ mod tests {
         assert!(!output.contains("# language"));
         assert!(output.contains("# api_key = \"\""));
         assert!(output.contains("# regex_history = []"));
+        assert!(output.contains("# regex_titles = []"));
         // Parsed config gets "ja-JP" from the active line
         let parsed: AppConfig = toml::from_str(&output).unwrap();
         assert_eq!(parsed.tmdb.language, Some(String::from("ja-JP")));
@@ -325,6 +343,7 @@ mod tests {
             },
             normalize: NormalizeConfig {
                 regex_history: vec![String::from(r"第(?P<SeasonNum>\d+)期")],
+                regex_titles: vec![String::from(r"第\d+期$"), String::from(r"\s*Season\s*\d+")],
             },
         };
 
@@ -339,6 +358,7 @@ mod tests {
         assert!(output.contains("language = \"en-US\""));
         assert!(output.contains("api_key = \"my-token\""));
         assert!(output.contains(r"regex_history = ['第(?P<SeasonNum>\d+)期']"));
+        assert!(output.contains(r"regex_titles = ['第\d+期$', '\s*Season\s*\d+']"));
     }
 
     #[test]

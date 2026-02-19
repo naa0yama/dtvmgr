@@ -21,8 +21,8 @@ pub struct TitleRow {
     pub tmdb_season_number: Option<u32>,
     /// Number of programs for this title.
     pub program_count: usize,
-    /// Keywords from Syoboi (nullable).
-    pub keywords: Option<String>,
+    /// Keywords parsed from Syoboi.
+    pub keywords: Vec<String>,
     /// Normalized query string for TMDB search.
     pub tmdb_query: String,
 }
@@ -414,7 +414,7 @@ mod tests {
                 tmdb_series_id: Some(12345),
                 tmdb_season_number: Some(1),
                 program_count: 2,
-                keywords: Some(String::from("spy,family")),
+                keywords: vec![String::from("spy"), String::from("family")],
                 tmdb_query: String::from("SPYxFAMILY"),
             },
             TitleRow {
@@ -425,7 +425,7 @@ mod tests {
                 tmdb_series_id: None,
                 tmdb_season_number: None,
                 program_count: 1,
-                keywords: None,
+                keywords: Vec::new(),
                 tmdb_query: String::from("Bocchi the Rock!"),
             },
         ];

@@ -130,7 +130,11 @@ pub fn run_title_viewer(
                 tmdb_series_id: t.tmdb_series_id,
                 tmdb_season_number: t.tmdb_season_number,
                 program_count: programs_by_tid.get(&t.tid).map_or(0, Vec::len),
-                keywords: t.keywords.clone(),
+                keywords: dtvmgr_db::filter_keywords(
+                    &t.keywords,
+                    &t.title,
+                    t.short_title.as_deref(),
+                ),
                 tmdb_query,
             }
         })

@@ -6,7 +6,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Row, Table};
 
-use super::state::{InputMode, NormalizeViewerState};
+use super::state::{InputMode, NormalizeViewerState, RegexSource};
 
 /// Draws the normalize viewer UI. Returns the main content area height.
 #[allow(clippy::indexing_slicing)]
@@ -75,12 +75,31 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &NormalizeViewerState) {
             // Show cursor at end of filter text
             set_input_cursor(frame, input_area, state.filter.len());
         }
-        InputMode::Normal => {
-            let input = Paragraph::new(state.regex_input.as_str())
-                .style(Style::default().fg(Color::DarkGray))
-                .block(Block::default().borders(Borders::ALL).title(" Regex: r "));
-            frame.render_widget(input, input_area);
-        }
+        InputMode::Normal => match state.regex_source {
+            RegexSource::Manual => {
+                let input = Paragraph::new(state.regex_input.as_str())
+                    .style(Style::default().fg(Color::DarkGray))
+                    .block(Block::default().borders(Borders::ALL).title(" Regex: r "));
+                frame.render_widget(input, input_area);
+            }
+            RegexSource::Config => {
+                let title = format!(" Regex: R [config: {}] ", state.regex_titles_count());
+                let border_color = if state.regex_error.is_some() {
+                    Color::Red
+                } else {
+                    Color::Green
+                };
+                let input = Paragraph::new("regex_titles")
+                    .style(Style::default().fg(Color::Green))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(title)
+                            .border_style(Style::default().fg(border_color)),
+                    );
+                frame.render_widget(input, input_area);
+            }
+        },
     }
 
     // Right pane: counts
@@ -212,9 +231,15 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &NormalizeViewerState) {
             }
             Line::from(spans)
         }
-        InputMode::Normal => Line::from(vec![Span::raw(
-            "r: regex  Space: select  \u{2191}\u{2193}/j/k: move  Shift+\u{2191}\u{2193}/J/K: range  /: filter  q: quit",
-        )]),
+        InputMode::Normal => {
+            let source_hint = match state.regex_source {
+                RegexSource::Manual => "R: config regex",
+                RegexSource::Config => "R: manual regex",
+            };
+            Line::from(vec![Span::raw(format!(
+                "r: edit regex  {source_hint}  Space: select  \u{2191}\u{2193}/j/k: move  Shift+\u{2191}\u{2193}/J/K: range  /: filter  q: quit",
+            ))])
+        }
     };
 
     let footer = Paragraph::new(help_text).block(Block::default().borders(Borders::ALL));

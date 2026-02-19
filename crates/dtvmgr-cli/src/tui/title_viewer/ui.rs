@@ -180,7 +180,7 @@ fn draw_title_list(frame: &mut Frame, area: Rect, state: &mut TitleViewerState) 
                     tmdb_str,
                     season_str,
                     fmt_num(t.program_count),
-                    t.keywords.clone().unwrap_or_default(),
+                    t.keywords.join(","),
                     t.tmdb_query.clone(),
                 ])
                 .style(style),
@@ -197,7 +197,7 @@ fn draw_title_list(frame: &mut Frame, area: Rect, state: &mut TitleViewerState) 
         Constraint::Length(10),
         Constraint::Length(8),
         Constraint::Length(6),
-        Constraint::Length(20),
+        Constraint::Min(20),
         Constraint::Min(20),
     ];
 

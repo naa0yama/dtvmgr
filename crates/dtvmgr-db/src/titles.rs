@@ -28,8 +28,8 @@ pub struct CachedTitle {
     pub first_year: Option<u32>,
     /// First broadcast month (nullable).
     pub first_month: Option<u32>,
-    /// Keywords (nullable).
-    pub keywords: Option<String>,
+    /// Keywords parsed from comma-separated DB value.
+    pub keywords: Vec<String>,
     /// Raw subtitle text (nullable).
     pub sub_titles: Option<String>,
     /// Last update timestamp.
@@ -40,6 +40,67 @@ pub struct CachedTitle {
     pub tmdb_name: Option<String>,
     /// TMDB alternative titles as JSON array (nullable).
     pub tmdb_alt_titles: Option<String>,
+    /// UTC timestamp of last TMDB lookup attempt (nullable).
+    pub tmdb_last_updated: Option<String>,
+}
+
+/// Parses a comma-separated keyword string into a Vec, filtering empty entries.
+#[must_use]
+pub fn parse_keywords(raw: Option<String>) -> Vec<String> {
+    raw.map(|s| {
+        s.split(',')
+            .map(str::trim)
+            .filter(|k| !k.is_empty())
+            .map(String::from)
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// Serializes keywords into comma-separated string for DB storage.
+/// Returns None for empty Vec (stored as NULL).
+fn serialize_keywords(keywords: &[String]) -> Option<String> {
+    if keywords.is_empty() {
+        None
+    } else {
+        Some(keywords.join(","))
+    }
+}
+
+/// Prefixes indicating non-searchable keywords.
+const KEYWORD_EXCLUDE_PREFIXES: &[&str] = &["wikipedia:", "wikiedia:", "legwork:"];
+
+/// Filters keywords for TMDB search, removing:
+/// - Keywords with exclusion prefixes (wikipedia:, legwork:, etc.)
+/// - Empty / whitespace-only entries
+/// - Keywords exactly matching title or `short_title`
+#[must_use]
+pub fn filter_keywords(keywords: &[String], title: &str, short_title: Option<&str>) -> Vec<String> {
+    keywords
+        .iter()
+        .filter(|kw| {
+            let trimmed = kw.trim();
+            if trimmed.is_empty() {
+                return false;
+            }
+            let lower = trimmed.to_lowercase();
+            for prefix in KEYWORD_EXCLUDE_PREFIXES {
+                if lower.starts_with(prefix) {
+                    return false;
+                }
+            }
+            if trimmed == title {
+                return false;
+            }
+            if let Some(st) = short_title
+                && trimmed == st
+            {
+                return false;
+            }
+            true
+        })
+        .map(|kw| kw.trim().to_owned())
+        .collect()
 }
 
 /// Upserts titles into the cache. Returns the number of rows changed.
@@ -65,8 +126,9 @@ pub fn upsert_titles(conn: &Connection, titles: &[CachedTitle]) -> Result<usize>
                 title, short_title, title_yomi, title_en,
                 cat, title_flag, first_year, first_month,
                 keywords, sub_titles, last_update,
-                tmdb_original_name, tmdb_name, tmdb_alt_titles
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+                tmdb_original_name, tmdb_name, tmdb_alt_titles,
+                tmdb_last_updated
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
             ON CONFLICT(tid) DO UPDATE SET
                 title = excluded.title,
                 short_title = excluded.short_title,
@@ -98,12 +160,13 @@ pub fn upsert_titles(conn: &Connection, titles: &[CachedTitle]) -> Result<usize>
                 t.title_flag,
                 t.first_year,
                 t.first_month,
-                t.keywords,
+                serialize_keywords(&t.keywords),
                 t.sub_titles,
                 t.last_update,
                 t.tmdb_original_name,
                 t.tmdb_name,
                 t.tmdb_alt_titles,
+                t.tmdb_last_updated,
             ])
             .with_context(|| format!("failed to upsert title {}", t.tid))?;
         changed = changed.saturating_add(rows);
@@ -127,7 +190,8 @@ pub fn load_titles(conn: &Connection) -> Result<Vec<CachedTitle>> {
                     title, short_title, title_yomi, title_en,
                     cat, title_flag, first_year, first_month,
                     keywords, sub_titles, last_update,
-                    tmdb_original_name, tmdb_name, tmdb_alt_titles
+                    tmdb_original_name, tmdb_name, tmdb_alt_titles,
+                    tmdb_last_updated
              FROM titles
              ORDER BY tid",
         )
@@ -147,12 +211,13 @@ pub fn load_titles(conn: &Connection) -> Result<Vec<CachedTitle>> {
                 title_flag: row.get(8)?,
                 first_year: row.get(9)?,
                 first_month: row.get(10)?,
-                keywords: row.get(11)?,
+                keywords: parse_keywords(row.get(11)?),
                 sub_titles: row.get(12)?,
                 last_update: row.get(13)?,
                 tmdb_original_name: row.get(14)?,
                 tmdb_name: row.get(15)?,
                 tmdb_alt_titles: row.get(16)?,
+                tmdb_last_updated: row.get(17)?,
             })
         })
         .context("failed to query titles")?;
@@ -178,7 +243,8 @@ pub fn load_titles_by_tids(conn: &Connection, tids: &[u32]) -> Result<Vec<Cached
                 title, short_title, title_yomi, title_en,
                 cat, title_flag, first_year, first_month,
                 keywords, sub_titles, last_update,
-                tmdb_original_name, tmdb_name, tmdb_alt_titles
+                tmdb_original_name, tmdb_name, tmdb_alt_titles,
+                tmdb_last_updated
          FROM titles
          WHERE tid IN ({})
          ORDER BY tid",
@@ -209,12 +275,13 @@ pub fn load_titles_by_tids(conn: &Connection, tids: &[u32]) -> Result<Vec<Cached
                 title_flag: row.get(8)?,
                 first_year: row.get(9)?,
                 first_month: row.get(10)?,
-                keywords: row.get(11)?,
+                keywords: parse_keywords(row.get(11)?),
                 sub_titles: row.get(12)?,
                 last_update: row.get(13)?,
                 tmdb_original_name: row.get(14)?,
                 tmdb_name: row.get(15)?,
                 tmdb_alt_titles: row.get(16)?,
+                tmdb_last_updated: row.get(17)?,
             })
         })
         .context("failed to query titles by tids")?;
@@ -244,8 +311,8 @@ pub fn update_tmdb_mapping(
 
 /// Updates TMDB search result fields for a title.
 ///
-/// Sets `tmdb_series_id`, `tmdb_original_name`, `tmdb_name`, and
-/// `tmdb_alt_titles` in a single UPDATE.
+/// Sets `tmdb_series_id`, `tmdb_original_name`, `tmdb_name`,
+/// `tmdb_alt_titles`, and `tmdb_last_updated` in a single UPDATE.
 ///
 /// # Errors
 ///
@@ -257,23 +324,43 @@ pub fn update_tmdb_search_result(
     tmdb_original_name: &str,
     tmdb_name: &str,
     tmdb_alt_titles: &str,
+    tmdb_last_updated: &str,
 ) -> Result<()> {
     conn.execute(
         "UPDATE titles
          SET tmdb_series_id = ?1,
              tmdb_original_name = ?2,
              tmdb_name = ?3,
-             tmdb_alt_titles = ?4
-         WHERE tid = ?5",
+             tmdb_alt_titles = ?4,
+             tmdb_last_updated = ?5
+         WHERE tid = ?6",
         rusqlite::params![
             tmdb_series_id,
             tmdb_original_name,
             tmdb_name,
             tmdb_alt_titles,
+            tmdb_last_updated,
             tid
         ],
     )
     .with_context(|| format!("failed to update TMDB search result for title {tid}"))?;
+    Ok(())
+}
+
+/// Updates only the `tmdb_last_updated` timestamp for a title.
+///
+/// Used for Skipped/Error outcomes to record the lookup attempt time
+/// without modifying other TMDB fields.
+///
+/// # Errors
+///
+/// Returns an error if the database operation fails.
+pub fn update_tmdb_last_updated(conn: &Connection, tid: u32, timestamp: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE titles SET tmdb_last_updated = ?1 WHERE tid = ?2",
+        rusqlite::params![timestamp, tid],
+    )
+    .with_context(|| format!("failed to update tmdb_last_updated for title {tid}"))?;
     Ok(())
 }
 
@@ -337,12 +424,13 @@ mod tests {
             title_flag: None,
             first_year: None,
             first_month: None,
-            keywords: None,
+            keywords: Vec::new(),
             sub_titles: None,
             last_update: String::from(last_update),
             tmdb_original_name: None,
             tmdb_name: None,
             tmdb_alt_titles: None,
+            tmdb_last_updated: None,
         }
     }
 
@@ -489,6 +577,7 @@ mod tests {
             "ルパン三世",
             "ルパン三世",
             alt_titles_json,
+            "2026-02-19T10:30:00Z",
         )
         .unwrap();
         let loaded = load_titles(&conn).unwrap();
@@ -498,6 +587,10 @@ mod tests {
         assert_eq!(loaded[0].tmdb_original_name.as_deref(), Some("ルパン三世"));
         assert_eq!(loaded[0].tmdb_name.as_deref(), Some("ルパン三世"));
         assert_eq!(loaded[0].tmdb_alt_titles.as_deref(), Some(alt_titles_json));
+        assert_eq!(
+            loaded[0].tmdb_last_updated.as_deref(),
+            Some("2026-02-19T10:30:00Z")
+        );
     }
 
     #[test]
@@ -508,7 +601,16 @@ mod tests {
         upsert_titles(&conn, &titles).unwrap();
 
         // Set TMDB search result
-        update_tmdb_search_result(&conn, 100, 31572, "Original", "Name", "[]").unwrap();
+        update_tmdb_search_result(
+            &conn,
+            100,
+            31572,
+            "Original",
+            "Name",
+            "[]",
+            "2026-02-19T10:30:00Z",
+        )
+        .unwrap();
 
         // Act: upsert with new last_update (TMDB fields should be preserved)
         let updated = vec![make_title(100, "Updated", "2024-02-01 00:00:00")];
@@ -570,5 +672,172 @@ mod tests {
         // Assert
         assert_eq!(deleted, 2);
         assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn test_update_tmdb_last_updated() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let titles = vec![make_title(100, "Test", "2024-01-01 00:00:00")];
+        upsert_titles(&conn, &titles).unwrap();
+
+        // Act
+        update_tmdb_last_updated(&conn, 100, "2026-02-19T12:00:00Z").unwrap();
+        let loaded = load_titles(&conn).unwrap();
+
+        // Assert
+        assert_eq!(
+            loaded[0].tmdb_last_updated.as_deref(),
+            Some("2026-02-19T12:00:00Z")
+        );
+        // Other TMDB fields remain None
+        assert_eq!(loaded[0].tmdb_series_id, None);
+        assert_eq!(loaded[0].tmdb_original_name, None);
+    }
+
+    #[test]
+    fn test_upsert_preserves_tmdb_last_updated() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let titles = vec![make_title(100, "Test", "2024-01-01 00:00:00")];
+        upsert_titles(&conn, &titles).unwrap();
+
+        // Set tmdb_last_updated
+        update_tmdb_last_updated(&conn, 100, "2026-02-19T12:00:00Z").unwrap();
+
+        // Act: upsert with new last_update (tmdb_last_updated should be preserved)
+        let updated = vec![make_title(100, "Updated", "2024-02-01 00:00:00")];
+        upsert_titles(&conn, &updated).unwrap();
+        let loaded = load_titles(&conn).unwrap();
+
+        // Assert: tmdb_last_updated preserved
+        assert_eq!(loaded[0].title, "Updated");
+        assert_eq!(
+            loaded[0].tmdb_last_updated.as_deref(),
+            Some("2026-02-19T12:00:00Z")
+        );
+    }
+
+    #[test]
+    fn test_upsert_and_load_with_keywords() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let mut title = make_title(100, "Test", "2024-01-01 00:00:00");
+        title.keywords = vec![
+            String::from("spy"),
+            String::from("family"),
+            String::from("action"),
+        ];
+
+        // Act
+        upsert_titles(&conn, &[title]).unwrap();
+        let loaded = load_titles(&conn).unwrap();
+
+        // Assert
+        assert_eq!(loaded[0].keywords, vec!["spy", "family", "action"]);
+    }
+
+    #[test]
+    fn test_upsert_and_load_empty_keywords() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let title = make_title(100, "Test", "2024-01-01 00:00:00");
+
+        // Act
+        upsert_titles(&conn, &[title]).unwrap();
+        let loaded = load_titles(&conn).unwrap();
+
+        // Assert
+        assert!(loaded[0].keywords.is_empty());
+    }
+
+    #[test]
+    fn test_filter_keywords_removes_wikipedia_prefix() {
+        // Arrange
+        let keywords = vec![String::from("anime"), String::from("wikipedia:Spy_Family")];
+
+        // Act
+        let filtered = filter_keywords(&keywords, "Test", None);
+
+        // Assert
+        assert_eq!(filtered, vec!["anime"]);
+    }
+
+    #[test]
+    fn test_filter_keywords_removes_legwork_prefix() {
+        // Arrange
+        let keywords = vec![String::from("comedy"), String::from("legwork:some_value")];
+
+        // Act
+        let filtered = filter_keywords(&keywords, "Test", None);
+
+        // Assert
+        assert_eq!(filtered, vec!["comedy"]);
+    }
+
+    #[test]
+    fn test_filter_keywords_removes_empty_and_whitespace() {
+        // Arrange
+        let keywords = vec![
+            String::from("anime"),
+            String::new(),
+            String::from("  "),
+            String::from("comedy"),
+        ];
+
+        // Act
+        let filtered = filter_keywords(&keywords, "Test", None);
+
+        // Assert
+        assert_eq!(filtered, vec!["anime", "comedy"]);
+    }
+
+    #[test]
+    fn test_filter_keywords_removes_title_match() {
+        // Arrange
+        let keywords = vec![
+            String::from("SPY×FAMILY"),
+            String::from("spy"),
+            String::from("family"),
+        ];
+
+        // Act
+        let filtered = filter_keywords(&keywords, "SPY×FAMILY", None);
+
+        // Assert
+        assert_eq!(filtered, vec!["spy", "family"]);
+    }
+
+    #[test]
+    fn test_filter_keywords_removes_short_title_match() {
+        // Arrange
+        let keywords = vec![
+            String::from("spy"),
+            String::from("スパファミ"),
+            String::from("family"),
+        ];
+
+        // Act
+        let filtered = filter_keywords(&keywords, "SPY×FAMILY", Some("スパファミ"));
+
+        // Assert
+        assert_eq!(filtered, vec!["spy", "family"]);
+    }
+
+    #[test]
+    fn test_filter_keywords_prefix_case_insensitive() {
+        // Arrange
+        let keywords = vec![
+            String::from("anime"),
+            String::from("Wikipedia:Test"),
+            String::from("LEGWORK:value"),
+            String::from("Wikiedia:Typo"),
+        ];
+
+        // Act
+        let filtered = filter_keywords(&keywords, "Test Title", None);
+
+        // Assert
+        assert_eq!(filtered, vec!["anime"]);
     }
 }

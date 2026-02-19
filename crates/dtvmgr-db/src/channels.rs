@@ -354,12 +354,13 @@ mod tests {
             title_flag: None,
             first_year: None,
             first_month: None,
-            keywords: None,
+            keywords: Vec::new(),
             sub_titles: None,
             last_update: String::from("2025-01-01 00:00:00"),
             tmdb_original_name: None,
             tmdb_name: None,
             tmdb_alt_titles: None,
+            tmdb_last_updated: None,
         }];
         crate::titles::upsert_titles(&conn, &titles).unwrap();
 

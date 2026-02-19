@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 4;
+const CURRENT_VERSION: u32 = 5;
 
 /// Runs database migrations up to `CURRENT_VERSION`.
 ///
@@ -27,6 +27,9 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
     }
     if version < 4 {
         migrate_v4(conn).context("migration to v4 failed")?;
+    }
+    if version < 5 {
+        migrate_v5(conn).context("migration to v5 failed")?;
     }
 
     conn.pragma_update(None, "user_version", CURRENT_VERSION)
@@ -122,6 +125,14 @@ fn migrate_v4(conn: &Connection) -> Result<()> {
          ALTER TABLE titles ADD COLUMN tmdb_alt_titles TEXT;",
     )
     .context("failed to add TMDB search result columns")?;
+
+    Ok(())
+}
+
+/// Migration to v5: add `tmdb_last_updated` timestamp column to `titles`.
+fn migrate_v5(conn: &Connection) -> Result<()> {
+    conn.execute_batch("ALTER TABLE titles ADD COLUMN tmdb_last_updated TEXT;")
+        .context("failed to add tmdb_last_updated column")?;
 
     Ok(())
 }
@@ -240,12 +251,38 @@ mod tests {
         let version: u32 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, CURRENT_VERSION);
 
         // Verify new columns exist
         let stmt = conn
             .prepare("SELECT tmdb_original_name, tmdb_name, tmdb_alt_titles FROM titles LIMIT 0")
             .unwrap();
         assert_eq!(stmt.column_count(), 3);
+    }
+
+    #[test]
+    fn test_v4_to_v5_migration() {
+        // Arrange: start from v4
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_v1(&conn).unwrap();
+        migrate_v2(&conn).unwrap();
+        migrate_v3(&conn).unwrap();
+        migrate_v4(&conn).unwrap();
+        conn.pragma_update(None, "user_version", 4u32).unwrap();
+
+        // Act: run full migrations (should apply v5)
+        run_migrations(&conn).unwrap();
+
+        // Assert
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 5);
+
+        // Verify tmdb_last_updated column exists
+        let stmt = conn
+            .prepare("SELECT tmdb_last_updated FROM titles LIMIT 0")
+            .unwrap();
+        assert_eq!(stmt.column_count(), 1);
     }
 }

@@ -14,7 +14,9 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use self::state::{InputMode, NormalizeRow, NormalizeViewerState, categorize, normalize_chars};
+use self::state::{
+    InputMode, NormalizeRow, NormalizeViewerState, RegexSource, categorize, normalize_chars,
+};
 use dtvmgr_db::titles::CachedTitle;
 
 /// Runs the normalize viewer TUI.
@@ -29,6 +31,7 @@ use dtvmgr_db::titles::CachedTitle;
 pub fn run_normalize_viewer(
     titles: &[CachedTitle],
     regex_history: &[String],
+    regex_titles: &[String],
 ) -> Result<(Vec<String>, Vec<String>)> {
     let rows: Vec<NormalizeRow> = titles
         .iter()
@@ -49,7 +52,7 @@ pub fn run_normalize_viewer(
         })
         .collect();
 
-    let mut state = NormalizeViewerState::new(rows, regex_history.to_vec());
+    let mut state = NormalizeViewerState::new(rows, regex_history.to_vec(), regex_titles);
 
     enable_raw_mode().context("failed to enable raw mode")?;
     let mut stdout = io::stdout();
@@ -197,7 +200,14 @@ fn handle_normal_input(
             state.input_mode = InputMode::Filter;
         }
         KeyCode::Char('r') => {
+            if state.regex_source != RegexSource::Manual {
+                state.regex_source = RegexSource::Manual;
+                state.apply_regex();
+            }
             state.input_mode = InputMode::Regex;
+        }
+        KeyCode::Char('R') => {
+            state.toggle_regex_source();
         }
         _ => {}
     }

@@ -41,7 +41,7 @@ tmp/
 .claude/skills/tool-*/SKILL.md
 
 # DTVMGR
-dtvmgr.toml*
-dtvmgr.db*
+dtvmgr*.toml*
+dtvmgr*.db*
 
 # Under the unknown

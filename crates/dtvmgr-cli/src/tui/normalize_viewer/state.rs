@@ -2,10 +2,16 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
+use std::sync::LazyLock;
 
 use ratatui::widgets::TableState;
 use regex::Regex;
 use unicode_normalization::UnicodeNormalization;
+
+/// Fallback regex to extract season number from trimmed text.
+#[allow(clippy::expect_used)]
+static SEASON_NUM_FALLBACK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\d+").expect("fallback regex must compile"));
 
 // ---------------------------------------------------------------------------
 // MediaType
@@ -140,6 +146,15 @@ pub enum InputMode {
     Regex,
 }
 
+/// Regex source selector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegexSource {
+    /// User-typed manual regex.
+    Manual,
+    /// Combined `regex_titles` patterns from config.
+    Config,
+}
+
 // ---------------------------------------------------------------------------
 // NormalizeViewerState
 // ---------------------------------------------------------------------------
@@ -164,7 +179,7 @@ pub struct NormalizeViewerState {
     pub filter: String,
     /// Cached filtered row indices.
     filtered_indices: Vec<usize>,
-    /// Regex input text.
+    /// Regex input text (manual mode).
     pub regex_input: String,
     /// Compiled regex (from last successful Enter).
     compiled_regex: Option<Regex>,
@@ -178,15 +193,22 @@ pub struct NormalizeViewerState {
     regex_draft: String,
     /// Cursor position within `regex_input` (character index, not byte).
     regex_cursor: usize,
+    /// Active regex source (manual vs config).
+    pub regex_source: RegexSource,
+    /// Combined `regex_titles` pattern from config (joined with `|`).
+    regex_titles_combined: String,
+    /// Number of `regex_titles` patterns in config.
+    regex_titles_count: usize,
 }
 
 impl NormalizeViewerState {
-    /// Creates a new state from normalize rows and regex history.
+    /// Creates a new state from normalize rows, regex history, and config
+    /// title patterns.
     ///
     /// Pre-fills `regex_input` with the last history entry (or the default
     /// placeholder when history is empty) and applies the regex immediately.
     #[must_use]
-    pub fn new(rows: Vec<NormalizeRow>, history: Vec<String>) -> Self {
+    pub fn new(rows: Vec<NormalizeRow>, history: Vec<String>, regex_titles: &[String]) -> Self {
         let filtered_indices: Vec<usize> = (0..rows.len()).collect();
         let mut table_state = TableState::default();
         if !rows.is_empty() {
@@ -197,6 +219,9 @@ impl NormalizeViewerState {
             .last()
             .cloned()
             .unwrap_or_else(|| String::from(REGEX_PLACEHOLDER));
+
+        let regex_titles_count = regex_titles.len();
+        let regex_titles_combined = regex_titles.join("|");
 
         let regex_cursor = prefill.chars().count();
         let mut state = Self {
@@ -214,6 +239,9 @@ impl NormalizeViewerState {
             regex_history_cursor: None,
             regex_draft: String::new(),
             regex_cursor,
+            regex_source: RegexSource::Manual,
+            regex_titles_combined,
+            regex_titles_count,
         };
         state.apply_regex();
         state
@@ -381,13 +409,23 @@ impl NormalizeViewerState {
         }
     }
 
-    /// Compiles and applies the current `regex_input` to all rows.
+    /// Returns the active regex pattern based on the current source.
+    fn active_pattern(&self) -> &str {
+        match self.regex_source {
+            RegexSource::Manual => &self.regex_input,
+            RegexSource::Config => &self.regex_titles_combined,
+        }
+    }
+
+    /// Compiles and applies the active regex pattern to all rows.
     ///
     /// On success, updates `base_query` and `season_num` for every row.
     /// On compile error, sets `regex_error` and leaves rows unchanged.
-    /// If `regex_input` is empty, resets all rows.
+    /// If the pattern is empty, resets all rows.
     pub fn apply_regex(&mut self) {
-        if self.regex_input.is_empty() {
+        let pattern = self.active_pattern().to_owned();
+
+        if pattern.is_empty() {
             self.compiled_regex = None;
             self.regex_error = None;
             for row in &mut self.rows {
@@ -398,7 +436,7 @@ impl NormalizeViewerState {
             return;
         }
 
-        match Regex::new(&self.regex_input) {
+        match Regex::new(&pattern) {
             Ok(re) => {
                 self.regex_error = None;
                 for row in &mut self.rows {
@@ -414,11 +452,18 @@ impl NormalizeViewerState {
                         row.trimmed = None;
                     }
 
-                    // Extract SeasonNum named group
+                    // Try named group first, fall back to first digit in trimmed text.
                     row.season_num = re
                         .captures(&row.normalized_title)
                         .and_then(|caps| caps.name("SeasonNum"))
-                        .and_then(|m| m.as_str().parse::<u32>().ok());
+                        .and_then(|m| m.as_str().parse::<u32>().ok())
+                        .or_else(|| {
+                            row.trimmed.as_deref().and_then(|t| {
+                                SEASON_NUM_FALLBACK
+                                    .find(t)
+                                    .and_then(|m| m.as_str().parse::<u32>().ok())
+                            })
+                        });
                 }
                 self.compiled_regex = Some(re);
             }
@@ -426,6 +471,21 @@ impl NormalizeViewerState {
                 self.regex_error = Some(e.to_string());
             }
         }
+    }
+
+    /// Toggles between manual regex and config `regex_titles`.
+    pub fn toggle_regex_source(&mut self) {
+        self.regex_source = match self.regex_source {
+            RegexSource::Manual => RegexSource::Config,
+            RegexSource::Config => RegexSource::Manual,
+        };
+        self.apply_regex();
+    }
+
+    /// Returns the number of `regex_titles` patterns from config.
+    #[must_use]
+    pub const fn regex_titles_count(&self) -> usize {
+        self.regex_titles_count
     }
 
     // -------------------------------------------------------------------
@@ -634,7 +694,7 @@ mod tests {
             make_row(2, "Bocchi the Rock!", Some(1), Some(2022)),
             make_row(3, "進撃の巨人", Some(1), Some(2013)),
         ];
-        NormalizeViewerState::new(rows, Vec::new())
+        NormalizeViewerState::new(rows, Vec::new(), &[])
     }
 
     // -------------------------------------------------------------------
@@ -719,7 +779,7 @@ mod tests {
             Some(1),
             Some(2022),
         )];
-        let mut state = NormalizeViewerState::new(rows, Vec::new());
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &[]);
         state.regex_input = String::from(r"第(?P<SeasonNum>\d+)期");
 
         // Act
@@ -739,7 +799,7 @@ mod tests {
     fn test_apply_regex_season_en() {
         // Arrange
         let rows = vec![make_row(6668, "SPY×FAMILY Season 2", Some(1), Some(2023))];
-        let mut state = NormalizeViewerState::new(rows, Vec::new());
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &[]);
         state.regex_input = String::from(r"Season\s+(?P<SeasonNum>\d+)");
 
         // Act
@@ -756,7 +816,7 @@ mod tests {
     fn test_apply_regex_no_match() {
         // Arrange
         let rows = vec![make_row(6750, "葬送のフリーレン", Some(1), Some(2023))];
-        let mut state = NormalizeViewerState::new(rows, Vec::new());
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &[]);
         state.regex_input = String::from(r"第(?P<SeasonNum>\d+)期");
 
         // Act
@@ -793,7 +853,7 @@ mod tests {
             Some(1),
             Some(2022),
         )];
-        let mut state = NormalizeViewerState::new(rows, Vec::new());
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &[]);
 
         // First apply a regex
         state.regex_input = String::from(r"第(?P<SeasonNum>\d+)期");
@@ -812,15 +872,15 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_regex_no_season_group() {
-        // Arrange: regex without SeasonNum named group
+    fn test_apply_regex_no_season_group_fallback() {
+        // Arrange: regex without SeasonNum named group — fallback extracts from trimmed
         let rows = vec![make_row(
             5656,
             "はたらく魔王さま!! 第2期",
             Some(1),
             Some(2022),
         )];
-        let mut state = NormalizeViewerState::new(rows, Vec::new());
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &[]);
         state.regex_input = String::from(r"第\d+期");
 
         // Act
@@ -832,7 +892,7 @@ mod tests {
             state.rows[0].base_query.as_deref(),
             Some("はたらく魔王さま!!")
         );
-        assert!(state.rows[0].season_num.is_none());
+        assert_eq!(state.rows[0].season_num, Some(2));
     }
 
     // -------------------------------------------------------------------
@@ -1017,7 +1077,7 @@ mod tests {
             Some(1),
             Some(2022),
         )];
-        let mut state = NormalizeViewerState::new(rows, Vec::new());
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &[]);
         state.regex_input = String::from(r"第(?P<SeasonNum>\d+)期");
         state.apply_regex();
         state.toggle_select();
@@ -1051,7 +1111,7 @@ mod tests {
         ];
 
         // Act
-        let state = NormalizeViewerState::new(rows, history);
+        let state = NormalizeViewerState::new(rows, history, &[]);
 
         // Assert — last history entry is pre-filled and applied
         assert_eq!(state.regex_input, r"第(?P<SeasonNum>\d+)期");
@@ -1074,7 +1134,7 @@ mod tests {
         )];
 
         // Act
-        let state = NormalizeViewerState::new(rows, Vec::new());
+        let state = NormalizeViewerState::new(rows, Vec::new(), &[]);
 
         // Assert — placeholder is pre-filled
         assert_eq!(state.regex_input, REGEX_PLACEHOLDER);
@@ -1090,7 +1150,7 @@ mod tests {
             String::from("pattern_b"),
             String::from("pattern_c"),
         ];
-        let mut state = NormalizeViewerState::new(rows, history);
+        let mut state = NormalizeViewerState::new(rows, history, &[]);
         // regex_input is pre-filled with "pattern_c" (last entry)
         state.regex_input = String::from("current_input");
 
@@ -1141,7 +1201,7 @@ mod tests {
     fn test_commit_regex_to_history() {
         // Arrange
         let rows = vec![make_row(1, "Test", Some(1), None)];
-        let mut state = NormalizeViewerState::new(rows, Vec::new());
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &[]);
         state.regex_input = String::from("new_pattern");
 
         // Act
@@ -1156,7 +1216,7 @@ mod tests {
         // Arrange
         let rows = vec![make_row(1, "Test", Some(1), None)];
         let history = vec![String::from("pattern_a"), String::from("pattern_b")];
-        let mut state = NormalizeViewerState::new(rows, history);
+        let mut state = NormalizeViewerState::new(rows, history, &[]);
 
         // Act: commit an existing pattern
         state.regex_input = String::from("pattern_a");
@@ -1171,7 +1231,7 @@ mod tests {
         // Arrange
         let rows = vec![make_row(1, "Test", Some(1), None)];
         let history = vec![String::from("existing")];
-        let mut state = NormalizeViewerState::new(rows, history);
+        let mut state = NormalizeViewerState::new(rows, history, &[]);
         state.regex_input = String::new();
 
         // Act
@@ -1185,7 +1245,7 @@ mod tests {
     fn test_regex_history_up_empty_history() {
         // Arrange
         let rows = vec![make_row(1, "Test", Some(1), None)];
-        let mut state = NormalizeViewerState::new(rows, Vec::new());
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &[]);
 
         // Act — should be a no-op
         state.regex_history_up();
@@ -1276,5 +1336,153 @@ mod tests {
     #[test]
     fn test_normalize_fullwidth_exclamation() {
         assert_eq!(normalize_chars("！！"), "!!");
+    }
+
+    // -------------------------------------------------------------------
+    // RegexSource toggle tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_season_num_fallback_config_regex_japanese() {
+        // Arrange: config regex without named group — fallback extracts 2 from "(第2期)"
+        let rows = vec![make_row(1, "ダンダダン(第2期)", Some(1), Some(2024))];
+        let regex_titles = vec![String::from(r"\s*\(第\d+(?:期|クール)\)")];
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &regex_titles);
+
+        // Act
+        state.toggle_regex_source();
+
+        // Assert
+        assert_eq!(state.regex_source, RegexSource::Config);
+        assert_eq!(state.rows[0].base_query.as_deref(), Some("ダンダダン"));
+        assert_eq!(state.rows[0].season_num, Some(2));
+    }
+
+    #[test]
+    fn test_season_num_fallback_config_regex_english() {
+        // Arrange: config regex without named group — fallback extracts 3 from " Season 3"
+        let rows = vec![make_row(1, "SPY×FAMILY Season 3", Some(1), Some(2023))];
+        let regex_titles = vec![String::from(r"(?i:\s*season\s*\d+)")];
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &regex_titles);
+
+        // Act
+        state.toggle_regex_source();
+
+        // Assert
+        assert_eq!(state.rows[0].base_query.as_deref(), Some("SPY×FAMILY"));
+        assert_eq!(state.rows[0].season_num, Some(3));
+    }
+
+    #[test]
+    fn test_season_num_fallback_no_digits() {
+        // Arrange: "FINAL SEASON" has no digits → season_num should be None
+        let rows = vec![make_row(1, "進撃の巨人 FINAL SEASON", Some(1), Some(2023))];
+        let regex_titles = vec![String::from(r"(?i:\s*(?:FINAL\s+)?SEASON(?:\s*\d+)?)")];
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &regex_titles);
+
+        // Act
+        state.toggle_regex_source();
+
+        // Assert
+        assert_eq!(state.rows[0].base_query.as_deref(), Some("進撃の巨人"));
+        assert!(state.rows[0].season_num.is_none());
+    }
+
+    #[test]
+    fn test_season_num_named_group_takes_precedence() {
+        // Arrange: regex WITH named group — should use named group, not fallback
+        let rows = vec![make_row(1, "タイトル 第5期", Some(1), Some(2024))];
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &[]);
+        state.regex_input = String::from(r"\s*第(?P<SeasonNum>\d+)期");
+
+        // Act
+        state.apply_regex();
+
+        // Assert
+        assert_eq!(state.rows[0].season_num, Some(5));
+    }
+
+    #[test]
+    fn test_toggle_regex_source_applies_config() {
+        // Arrange
+        let rows = vec![
+            make_row(1, "SPY×FAMILY Season 3", Some(1), Some(2023)),
+            make_row(2, "ダンダダン(第2期)", Some(1), Some(2024)),
+            make_row(3, "葬送のフリーレン", Some(1), Some(2023)),
+        ];
+        let regex_titles = vec![
+            String::from(r"\s*\(第\d+(?:期|クール)\)"),
+            String::from(r"(?i:\s*season\s*\d+)"),
+        ];
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &regex_titles);
+
+        // Act
+        state.toggle_regex_source();
+
+        // Assert
+        assert_eq!(state.regex_source, RegexSource::Config);
+        assert!(state.regex_error.is_none());
+        assert_eq!(state.rows[0].base_query.as_deref(), Some("SPY×FAMILY"));
+        assert_eq!(state.rows[0].season_num, Some(3));
+        assert_eq!(state.rows[1].base_query.as_deref(), Some("ダンダダン"));
+        assert_eq!(state.rows[1].season_num, Some(2));
+        assert!(state.rows[2].base_query.is_none());
+        assert!(state.rows[2].season_num.is_none());
+    }
+
+    #[test]
+    fn test_toggle_regex_source_back_to_manual() {
+        // Arrange
+        let rows = vec![make_row(1, "SPY×FAMILY Season 3", Some(1), Some(2023))];
+        let regex_titles = vec![String::from(r"(?i:\s*season\s*\d+)")];
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &regex_titles);
+        state.regex_input = String::from(r"SPY");
+
+        // Act: toggle to config, then back to manual
+        state.toggle_regex_source();
+        assert_eq!(state.regex_source, RegexSource::Config);
+        state.toggle_regex_source();
+
+        // Assert: manual regex is re-applied
+        assert_eq!(state.regex_source, RegexSource::Manual);
+        assert_eq!(
+            state.rows[0].base_query.as_deref(),
+            Some("×FAMILY Season 3")
+        );
+    }
+
+    #[test]
+    fn test_toggle_config_empty_patterns() {
+        // Arrange
+        let rows = vec![make_row(1, "SPY×FAMILY Season 3", Some(1), Some(2023))];
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &[]);
+
+        // Act
+        state.toggle_regex_source();
+
+        // Assert: empty config resets rows
+        assert_eq!(state.regex_source, RegexSource::Config);
+        assert!(state.rows[0].base_query.is_none());
+        assert!(state.rows[0].trimmed.is_none());
+    }
+
+    #[test]
+    fn test_regex_titles_count() {
+        // Arrange
+        let rows = vec![make_row(1, "Test", Some(1), None)];
+        let regex_titles = vec![String::from("a"), String::from("b"), String::from("c")];
+        let state = NormalizeViewerState::new(rows, Vec::new(), &regex_titles);
+
+        // Assert
+        assert_eq!(state.regex_titles_count(), 3);
+    }
+
+    #[test]
+    fn test_initial_regex_source_is_manual() {
+        // Arrange & Act
+        let state = make_state();
+
+        // Assert
+        assert_eq!(state.regex_source, RegexSource::Manual);
     }
 }

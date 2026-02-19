@@ -270,12 +270,13 @@ mod tests {
             title_flag: None,
             first_year: None,
             first_month: None,
-            keywords: None,
+            keywords: Vec::new(),
             sub_titles: None,
             last_update: String::from("2024-01-01 00:00:00"),
             tmdb_original_name: None,
             tmdb_name: None,
             tmdb_alt_titles: None,
+            tmdb_last_updated: None,
         }];
         upsert_titles(&conn, &titles).unwrap();
 
@@ -403,12 +404,13 @@ mod tests {
             title_flag: None,
             first_year: None,
             first_month: None,
-            keywords: None,
+            keywords: Vec::new(),
             sub_titles: None,
             last_update: String::from("2024-01-01 00:00:00"),
             tmdb_original_name: None,
             tmdb_name: None,
             tmdb_alt_titles: None,
+            tmdb_last_updated: None,
         };
         upsert_titles(&conn, &[title2]).unwrap();
 
@@ -493,12 +495,13 @@ mod tests {
             title_flag: None,
             first_year: None,
             first_month: None,
-            keywords: None,
+            keywords: Vec::new(),
             sub_titles: None,
             last_update: String::from("2024-01-01 00:00:00"),
             tmdb_original_name: None,
             tmdb_name: None,
             tmdb_alt_titles: None,
+            tmdb_last_updated: None,
         };
         upsert_titles(&conn, &[title2]).unwrap();
 

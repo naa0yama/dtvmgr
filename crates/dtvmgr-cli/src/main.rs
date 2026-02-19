@@ -7,9 +7,11 @@ mod tui;
 
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use clap::{Parser, Subcommand};
 use tracing::instrument;
 use tracing_subscriber::filter::EnvFilter;
@@ -33,11 +35,11 @@ use dtvmgr_api::tmdb::{
 use dtvmgr_db::channels::{CachedChannel, CachedChannelGroup};
 use dtvmgr_db::programs::CachedProgram;
 use dtvmgr_db::titles::CachedTitle;
-use dtvmgr_db::update_tmdb_search_result;
 use dtvmgr_db::{
     delete_programs_by_tids_not_in, delete_titles_by_cat_not_in, load_channels, load_programs,
-    load_titles, load_titles_by_tids, open_db, upsert_channel_groups, upsert_channels,
-    upsert_programs, upsert_titles,
+    load_titles, load_titles_by_tids, open_db, update_tmdb_last_updated, update_tmdb_mapping,
+    update_tmdb_search_result, upsert_channel_groups, upsert_channels, upsert_programs,
+    upsert_titles,
 };
 
 /// CLI argument parser.
@@ -111,6 +113,9 @@ struct DbTmdbLookupArgs {
     /// Response language (e.g. "ja-JP"). Falls back to config, then "en-US".
     #[arg(long)]
     language: Option<String>,
+    /// Ignore cooldown and re-search all titles.
+    #[arg(long)]
+    force: bool,
 }
 
 /// Arguments for the `channels` subcommand.
@@ -421,12 +426,13 @@ fn to_cached_title(t: &SyoboiTitle) -> CachedTitle {
         title_flag: t.title_flag,
         first_year: t.first_year,
         first_month: t.first_month,
-        keywords: t.keywords.clone(),
+        keywords: dtvmgr_db::parse_keywords(t.keywords.clone()),
         sub_titles: t.sub_titles.clone(),
         last_update: t.last_update.clone(),
         tmdb_original_name: None,
         tmdb_name: None,
         tmdb_alt_titles: None,
+        tmdb_last_updated: None,
     }
 }
 
@@ -755,10 +761,71 @@ fn extract_base_query(title: &str, compiled_regex: Option<&regex::Regex>) -> Str
     }
 }
 
+/// Compiles `regex_titles` patterns into a single regex joined with `|`.
+///
+/// Returns `None` if the list is empty or the combined pattern is invalid.
+fn compile_regex_titles(patterns: &[String]) -> Option<regex::Regex> {
+    if patterns.is_empty() {
+        return None;
+    }
+    let combined = patterns.join("|");
+    regex::Regex::new(&combined)
+        .map_err(|e| {
+            tracing::warn!(pattern = %combined, error = %e, "Failed to compile regex_titles");
+        })
+        .ok()
+}
+
+/// Regex to extract the first number from matched text.
+#[allow(clippy::expect_used)]
+static FIRST_DIGIT_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\d+").expect("digit regex must compile"));
+
+/// General-purpose season number regex for common patterns.
+///
+/// Matches: `第Nシリーズ`, `第N期`, `第Nクール`, `Season N`, `Nth Season`.
+#[allow(clippy::expect_used)]
+static GENERAL_SEASON_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?:第(\d+)(?:期|クール|シリーズ)|(?i:season)\s*(\d+)|(\d+)(?:st|nd|rd|th)\s+(?i:season))",
+    )
+    .expect("general season regex must compile")
+});
+
+/// Extracts a season number from a title.
+///
+/// 1. If the compiled config regex matches, extracts the first digit from
+///    the matched portion.
+/// 2. Otherwise, falls back to general season patterns (e.g. `第Nシリーズ`,
+///    `Season N`).
+fn extract_season_number(title: &str, compiled_regex: Option<&regex::Regex>) -> Option<u32> {
+    let normalized = crate::tui::normalize_viewer::state::normalize_chars(title);
+
+    // Try config regex first.
+    if let Some(re) = compiled_regex
+        && let Some(m) = re.find(&normalized)
+    {
+        let trimmed = m.as_str();
+        let result = FIRST_DIGIT_RE
+            .find(trimmed)
+            .and_then(|d| d.as_str().parse::<u32>().ok());
+        if result.is_some() {
+            return result;
+        }
+    }
+
+    // Fallback: general season patterns.
+    let caps = GENERAL_SEASON_RE.captures(&normalized)?;
+    caps.get(1)
+        .or_else(|| caps.get(2))
+        .or_else(|| caps.get(3))
+        .and_then(|m| m.as_str().parse::<u32>().ok())
+}
+
 /// Result of a single TMDB lookup attempt.
 enum LookupOutcome {
-    /// Successfully matched with TMDB result data.
-    Success(u64, String, String, String),
+    /// Successfully matched with TMDB result data and optional season number.
+    Success(u64, String, String, String, Option<u32>),
     /// No match found (empty results or filter miss).
     Skipped,
     /// API error occurred.
@@ -806,44 +873,37 @@ async fn fetch_alt_and_build_outcome(
         original_name.to_owned(),
         name.to_owned(),
         alt_json,
+        None,
     ))
 }
 
-/// Performs TMDB search and filtering for a single title.
-#[instrument(skip_all)]
-async fn lookup_single_title(
-    title: &CachedTitle,
+/// Searches TMDB with a query and returns the first matching result.
+///
+/// Returns `Ok(Some(LookupOutcome::Success(...)))` on match,
+/// `Ok(None)` when no result passes filters (caller should try next query),
+/// or `Ok(Some(LookupOutcome::Error))` / `Err` on API failure.
+async fn search_tmdb_filtered(
     tmdb_client: &TmdbClient,
+    query: &str,
     language: &str,
-    compiled_regex: Option<&regex::Regex>,
-    cat_movie: &HashSet<u32>,
-) -> Result<LookupOutcome> {
-    let base_query = extract_base_query(&title.title, compiled_regex);
-    let expected_type = resolve_media_type(title.cat, cat_movie);
-
-    tracing::info!(
-        tid = title.tid, title = %title.title, base_query = %base_query,
-        media_type = ?expected_type, "Searching TMDB"
-    );
-
-    let check_animation = requires_animation_filter(title.cat);
+    tid: u32,
+    expected_type: TmdbMediaType,
+    check_animation: bool,
+) -> Result<Option<LookupOutcome>> {
     let mut page = 1u32;
 
     loop {
-        let params = SearchMultiParams::new(&base_query)
-            .language(language)
-            .page(page);
+        let params = SearchMultiParams::new(query).language(language).page(page);
         let search_result = match tmdb_client.search_multi(&params).await {
             Ok(r) => r,
             Err(e) => {
-                tracing::error!(tid = title.tid, error = %e, "TMDB search failed");
-                return Ok(LookupOutcome::Error);
+                tracing::error!(tid, error = %e, "TMDB search failed");
+                return Ok(Some(LookupOutcome::Error));
             }
         };
 
         if search_result.results.is_empty() {
-            tracing::info!(tid = title.tid, "No TMDB results found");
-            return Ok(LookupOutcome::Skipped);
+            return Ok(None);
         }
 
         for result in &search_result.results {
@@ -853,20 +913,21 @@ async fn lookup_single_title(
                         !check_animation || tv.genre_ids.contains(&TMDB_GENRE_ANIMATION);
                     let lang_ja = tv.original_language == "ja";
                     tracing::info!(
-                        tid = title.tid, tmdb_id = tv.id, name = %tv.name,
+                        tid, tmdb_id = tv.id, name = %tv.name,
                         animation, lang_ja,
                         matched = animation && lang_ja, "Filter check (TV)"
                     );
                     if animation && lang_ja {
-                        return fetch_alt_and_build_outcome(
+                        let outcome = fetch_alt_and_build_outcome(
                             tmdb_client,
-                            title.tid,
+                            tid,
                             TmdbMediaType::Tv,
                             tv.id,
                             &tv.original_name,
                             &tv.name,
                         )
-                        .await;
+                        .await?;
+                        return Ok(Some(outcome));
                     }
                 }
                 TmdbMultiSearchResult::Movie(movie) if expected_type == TmdbMediaType::Movie => {
@@ -874,20 +935,21 @@ async fn lookup_single_title(
                         !check_animation || movie.genre_ids.contains(&TMDB_GENRE_ANIMATION);
                     let lang_ja = movie.original_language == "ja";
                     tracing::info!(
-                        tid = title.tid, tmdb_id = movie.id, title = %movie.title,
+                        tid, tmdb_id = movie.id, title = %movie.title,
                         animation, lang_ja,
                         matched = animation && lang_ja, "Filter check (Movie)"
                     );
                     if animation && lang_ja {
-                        return fetch_alt_and_build_outcome(
+                        let outcome = fetch_alt_and_build_outcome(
                             tmdb_client,
-                            title.tid,
+                            tid,
                             TmdbMediaType::Movie,
                             movie.id,
                             &movie.original_title,
                             &movie.title,
                         )
-                        .await;
+                        .await?;
+                        return Ok(Some(outcome));
                     }
                 }
                 _ => {}
@@ -900,8 +962,134 @@ async fn lookup_single_title(
         page = page.saturating_add(1);
     }
 
-    tracing::info!(tid = title.tid, "No matching result after filtering");
+    Ok(None)
+}
+
+/// Verifies a season number against TMDB `tv_details` and returns the verified
+/// season number, or `None` if not applicable / not found.
+async fn verify_season_number(
+    tmdb_client: &TmdbClient,
+    tid: u32,
+    tmdb_id: u64,
+    language: &str,
+    expected_type: TmdbMediaType,
+    season_num: Option<u32>,
+) -> Option<u32> {
+    let sn = season_num?;
+    if expected_type != TmdbMediaType::Tv {
+        return None;
+    }
+    match tmdb_client.tv_details(tmdb_id, language).await {
+        Ok(details) => {
+            let found = details.seasons.iter().any(|s| s.season_number == sn);
+            tracing::info!(tid, tmdb_id, season = sn, found, "Season check");
+            if found { Some(sn) } else { None }
+        }
+        Err(e) => {
+            tracing::warn!(tid, error = %e, "tv_details failed, skipping season");
+            None
+        }
+    }
+}
+
+/// Performs TMDB search and filtering for a single title.
+///
+/// Tries `base_query` first, then falls back to filtered keywords from Syoboi.
+/// For TV results, verifies the extracted season number via `tv_details`.
+#[instrument(skip_all)]
+async fn lookup_single_title(
+    title: &CachedTitle,
+    tmdb_client: &TmdbClient,
+    language: &str,
+    compiled_regex: Option<&regex::Regex>,
+    cat_movie: &HashSet<u32>,
+) -> Result<LookupOutcome> {
+    let base_query = extract_base_query(&title.title, compiled_regex);
+    let expected_type = resolve_media_type(title.cat, cat_movie);
+    let check_animation = requires_animation_filter(title.cat);
+
+    tracing::info!(
+        tid = title.tid, title = %title.title, base_query = %base_query,
+        media_type = ?expected_type, "Searching TMDB"
+    );
+
+    // 1. Try base_query
+    if let Some(outcome) = search_tmdb_filtered(
+        tmdb_client,
+        &base_query,
+        language,
+        title.tid,
+        expected_type,
+        check_animation,
+    )
+    .await?
+    {
+        if let LookupOutcome::Success(tmdb_id, orig, name, alt, _) = outcome {
+            let season_num = extract_season_number(&title.title, compiled_regex);
+            let verified = verify_season_number(
+                tmdb_client,
+                title.tid,
+                tmdb_id,
+                language,
+                expected_type,
+                season_num,
+            )
+            .await;
+            return Ok(LookupOutcome::Success(tmdb_id, orig, name, alt, verified));
+        }
+        return Ok(outcome);
+    }
+
+    // 2. Fallback: try filtered keywords
+    let keywords =
+        dtvmgr_db::filter_keywords(&title.keywords, &title.title, title.short_title.as_deref());
+    for kw in &keywords {
+        tracing::info!(tid = title.tid, keyword = %kw, "Trying keyword fallback");
+        if let Some(outcome) = search_tmdb_filtered(
+            tmdb_client,
+            kw,
+            language,
+            title.tid,
+            expected_type,
+            check_animation,
+        )
+        .await?
+        {
+            if let LookupOutcome::Success(tmdb_id, orig, name, alt, _) = outcome {
+                let season_num = extract_season_number(&title.title, compiled_regex);
+                let verified = verify_season_number(
+                    tmdb_client,
+                    title.tid,
+                    tmdb_id,
+                    language,
+                    expected_type,
+                    season_num,
+                )
+                .await;
+                return Ok(LookupOutcome::Success(tmdb_id, orig, name, alt, verified));
+            }
+            return Ok(outcome);
+        }
+    }
+
+    tracing::info!(tid = title.tid, "No match after keyword fallback");
     Ok(LookupOutcome::Skipped)
+}
+
+/// Cooldown period (hours) before re-searching a title on TMDB.
+const TMDB_LOOKUP_COOLDOWN_HOURS: i64 = 12;
+
+/// Returns `true` if the title was looked up within the cooldown period.
+fn is_within_cooldown(tmdb_last_updated: Option<&str>) -> bool {
+    let Some(ts) = tmdb_last_updated else {
+        return false;
+    };
+    let Ok(last) = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%SZ") else {
+        return false;
+    };
+    let last_utc = last.and_utc();
+    let elapsed = Utc::now().signed_duration_since(last_utc);
+    elapsed.num_hours() < TMDB_LOOKUP_COOLDOWN_HOURS
 }
 
 /// Runs the `db tmdb-lookup` subcommand.
@@ -913,6 +1101,7 @@ async fn lookup_single_title(
 ///
 /// Returns an error if API calls or DB operations fail.
 #[instrument(skip_all)]
+#[allow(clippy::too_many_lines)]
 async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> Result<()> {
     let data_dir = resolve_data_dir(dir).context("failed to resolve data directory")?;
     let conn = open_db(data_dir.as_ref()).context("failed to open database")?;
@@ -923,12 +1112,24 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> R
     let tmdb_client = build_tmdb_client(dir)?;
 
     let titles = if let Some(ref tids) = args.tids {
-        load_titles_by_tids(&conn, tids).context("failed to load titles by tids")?
+        let loaded = load_titles_by_tids(&conn, tids).context("failed to load titles by tids")?;
+        if args.force {
+            loaded
+        } else {
+            loaded
+                .into_iter()
+                .filter(|t| !is_within_cooldown(t.tmdb_last_updated.as_deref()))
+                .collect()
+        }
     } else {
         let all = load_titles(&conn).context("failed to load titles")?;
-        all.into_iter()
-            .filter(|t| t.tmdb_series_id.is_none())
-            .collect()
+        if args.force {
+            all
+        } else {
+            all.into_iter()
+                .filter(|t| !is_within_cooldown(t.tmdb_last_updated.as_deref()))
+                .collect()
+        }
     };
 
     if titles.is_empty() {
@@ -938,11 +1139,7 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> R
 
     tracing::info!("Processing {} titles...", titles.len());
 
-    let compiled_regex = config
-        .normalize
-        .regex_history
-        .last()
-        .and_then(|p| regex::Regex::new(p).ok());
+    let compiled_regex = compile_regex_titles(&config.normalize.regex_titles);
 
     let cat_movie: HashSet<u32> = config.syoboi.titles.cat_movie.iter().copied().collect();
 
@@ -957,6 +1154,7 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> R
         .map_or(1, |n| (n as usize).saturating_add(1));
 
     for (i, title) in titles.iter().enumerate() {
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         match lookup_single_title(
             title,
             &tmdb_client,
@@ -966,7 +1164,7 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> R
         )
         .await?
         {
-            LookupOutcome::Success(tmdb_id, original_name, name, alt_json) => {
+            LookupOutcome::Success(tmdb_id, original_name, name, alt_json, season_num) => {
                 update_tmdb_search_result(
                     &conn,
                     title.tid,
@@ -974,13 +1172,30 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> R
                     &original_name,
                     &name,
                     &alt_json,
+                    &now,
                 )
                 .with_context(|| format!("failed to update TMDB result for tid {}", title.tid))?;
+                if let Some(sn) = season_num {
+                    update_tmdb_mapping(&conn, title.tid, Some(tmdb_id), Some(sn)).with_context(
+                        || format!("failed to update season for tid {}", title.tid),
+                    )?;
+                    tracing::info!(tid = title.tid, tmdb_id, season = sn, "Season number saved");
+                }
                 tracing::info!(tid = title.tid, tmdb_id, "TMDB result saved");
                 success_count = success_count.saturating_add(1);
             }
-            LookupOutcome::Skipped => skip_count = skip_count.saturating_add(1),
-            LookupOutcome::Error => error_count = error_count.saturating_add(1),
+            LookupOutcome::Skipped => {
+                update_tmdb_last_updated(&conn, title.tid, &now).with_context(|| {
+                    format!("failed to update tmdb_last_updated for tid {}", title.tid)
+                })?;
+                skip_count = skip_count.saturating_add(1);
+            }
+            LookupOutcome::Error => {
+                update_tmdb_last_updated(&conn, title.tid, &now).with_context(|| {
+                    format!("failed to update tmdb_last_updated for tid {}", title.tid)
+                })?;
+                error_count = error_count.saturating_add(1);
+            }
         }
 
         let current = i.saturating_add(1);
@@ -1397,11 +1612,7 @@ fn run_db_list(dir: Option<&PathBuf>) -> Result<()> {
         return Ok(());
     }
 
-    let compiled_regex = config
-        .normalize
-        .regex_history
-        .last()
-        .and_then(|p| regex::Regex::new(p).ok());
+    let compiled_regex = compile_regex_titles(&config.normalize.regex_titles);
 
     tracing::info!(
         "Loaded {} titles, {} programs, {} channels. Launching TUI...",
@@ -1468,6 +1679,7 @@ fn run_db_normalize(dir: Option<&PathBuf>) -> Result<()> {
     let (output, updated_history) = crate::tui::normalize_viewer::run_normalize_viewer(
         &titles,
         &config.normalize.regex_history,
+        &config.normalize.regex_titles,
     )
     .context("normalize viewer TUI failed")?;
 
@@ -1561,5 +1773,171 @@ async fn main() -> Result<()> {
             DbSubcommands::Normalize => run_db_normalize(cli.dir.as_ref()),
             DbSubcommands::TmdbLookup(args) => run_db_tmdb_lookup(&args, cli.dir.as_ref()).await,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn test_compile_regex_titles_empty() {
+        // Arrange
+        let patterns: Vec<String> = vec![];
+
+        // Act
+        let result = compile_regex_titles(&patterns);
+
+        // Assert
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_compile_regex_titles_single() {
+        // Arrange
+        let patterns = vec![String::from(r"第\d+期$")];
+
+        // Act
+        let result = compile_regex_titles(&patterns);
+
+        // Assert
+        let re = result.unwrap();
+        assert!(re.is_match("タイトル 第2期"));
+        assert!(!re.is_match("タイトル"));
+    }
+
+    #[test]
+    fn test_compile_regex_titles_multiple() {
+        // Arrange
+        let patterns = vec![String::from(r"第\d+期$"), String::from(r"\s*Season\s*\d+")];
+
+        // Act
+        let result = compile_regex_titles(&patterns);
+
+        // Assert
+        let re = result.unwrap();
+        assert!(re.is_match("タイトル 第2期"));
+        assert!(re.is_match("Title Season 3"));
+        assert!(!re.is_match("タイトル"));
+    }
+
+    #[test]
+    fn test_compile_regex_titles_invalid() {
+        // Arrange
+        let patterns = vec![String::from(r"(unclosed")];
+
+        // Act
+        let result = compile_regex_titles(&patterns);
+
+        // Assert
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_season_number_english() {
+        // Arrange
+        let re = regex::Regex::new(r"(?i:\s*season\s*\d+)").unwrap();
+
+        // Act & Assert
+        assert_eq!(extract_season_number("作品名 Season 3", Some(&re)), Some(3));
+    }
+
+    #[test]
+    fn test_extract_season_number_japanese() {
+        // Arrange
+        let re = regex::Regex::new(r"\s*\(第\d+(?:期|クール)\)").unwrap();
+
+        // Act & Assert
+        assert_eq!(extract_season_number("作品名(第2期)", Some(&re)), Some(2));
+    }
+
+    #[test]
+    fn test_extract_season_number_final_season() {
+        // Arrange: "FINAL SEASON" has no digits
+        let re = regex::Regex::new(r"(?i:\s*FINAL\s+SEASON)").unwrap();
+
+        // Act & Assert
+        assert_eq!(
+            extract_season_number("作品名 FINAL SEASON", Some(&re)),
+            None
+        );
+    }
+
+    #[test]
+    fn test_extract_season_number_no_regex_fallback() {
+        // Act & Assert: no compiled regex, but general pattern matches
+        assert_eq!(extract_season_number("作品名 Season 3", None), Some(3));
+    }
+
+    #[test]
+    fn test_extract_season_number_no_match() {
+        // Arrange
+        let re = regex::Regex::new(r"(?i:\s*season\s*\d+)").unwrap();
+
+        // Act & Assert: title doesn't match either regex or general pattern
+        assert_eq!(extract_season_number("葬送のフリーレン", Some(&re)), None);
+    }
+
+    #[test]
+    fn test_extract_season_number_series_fallback() {
+        // Arrange: config regex only covers 期/クール, not シリーズ
+        let re = regex::Regex::new(r"\s*\(第\d+(?:期|クール)\)").unwrap();
+
+        // Act & Assert: general pattern catches 第2シリーズ
+        assert_eq!(
+            extract_season_number("科学×冒険サバイバル！(第2シリーズ)", Some(&re)),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn test_extract_season_number_no_regex_no_pattern() {
+        // Act & Assert: no regex, no general pattern match
+        assert_eq!(extract_season_number("葬送のフリーレン", None), None);
+    }
+
+    #[test]
+    fn test_extract_season_number_nth_season() {
+        // Act & Assert: "2nd Season" pattern
+        assert_eq!(
+            extract_season_number("BanG Dream! 2nd Season", None),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn test_is_within_cooldown_none() {
+        // Arrange & Act & Assert: None means never looked up
+        assert!(!is_within_cooldown(None));
+    }
+
+    #[test]
+    fn test_is_within_cooldown_recent() {
+        // Arrange: 10 hours ago (within 12h cooldown)
+        let ts = (Utc::now() - chrono::Duration::hours(10))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+
+        // Act & Assert
+        assert!(is_within_cooldown(Some(&ts)));
+    }
+
+    #[test]
+    fn test_is_within_cooldown_expired() {
+        // Arrange: 13 hours ago (past 12h cooldown)
+        let ts = (Utc::now() - chrono::Duration::hours(13))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+
+        // Act & Assert
+        assert!(!is_within_cooldown(Some(&ts)));
+    }
+
+    #[test]
+    fn test_is_within_cooldown_invalid_format() {
+        // Arrange & Act & Assert: invalid format returns false
+        assert!(!is_within_cooldown(Some("not-a-date")));
     }
 }
