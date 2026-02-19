@@ -22,7 +22,7 @@ use tracing_subscriber::layer::SubscriberExt;
 #[cfg(feature = "otel")]
 use tracing_subscriber::util::SubscriberInitExt;
 
-use crate::config::{AppConfig, resolve_config_path, resolve_data_dir};
+use crate::config::{AppConfig, load_or_fetch, resolve_config_path, resolve_data_dir};
 use crate::tui::run_channel_selector;
 use crate::tui::state::{ChannelEntry, ChannelGroup};
 use dtvmgr_api::syoboi::{
@@ -116,6 +116,9 @@ struct DbTmdbLookupArgs {
     /// Ignore cooldown and re-search all titles.
     #[arg(long)]
     force: bool,
+    /// Retry only unmapped titles (`tmdb_series_id` is NULL), ignoring cooldown.
+    #[arg(long)]
+    retry_unmapped: bool,
 }
 
 /// Arguments for the `channels` subcommand.
@@ -418,6 +421,7 @@ fn to_cached_title(t: &SyoboiTitle) -> CachedTitle {
         tid: t.tid,
         tmdb_series_id: None,
         tmdb_season_number: None,
+        tmdb_season_id: None,
         title: t.title.clone(),
         short_title: t.short_title.clone(),
         title_yomi: t.title_yomi.clone(),
@@ -824,8 +828,8 @@ fn extract_season_number(title: &str, compiled_regex: Option<&regex::Regex>) -> 
 
 /// Result of a single TMDB lookup attempt.
 enum LookupOutcome {
-    /// Successfully matched with TMDB result data and optional season number.
-    Success(u64, String, String, String, Option<u32>),
+    /// Successfully matched with TMDB result data and optional (`season_number`, `season_id`).
+    Success(u64, String, String, String, Option<(u32, u64)>),
     /// No match found (empty results or filter miss).
     Skipped,
     /// API error occurred.
@@ -915,9 +919,9 @@ async fn search_tmdb_filtered(
                     tracing::info!(
                         tid, tmdb_id = tv.id, name = %tv.name,
                         animation, lang_ja,
-                        matched = animation && lang_ja, "Filter check (TV)"
+                        matched = animation, "Filter check (TV)"
                     );
-                    if animation && lang_ja {
+                    if animation {
                         let outcome = fetch_alt_and_build_outcome(
                             tmdb_client,
                             tid,
@@ -937,9 +941,9 @@ async fn search_tmdb_filtered(
                     tracing::info!(
                         tid, tmdb_id = movie.id, title = %movie.title,
                         animation, lang_ja,
-                        matched = animation && lang_ja, "Filter check (Movie)"
+                        matched = animation, "Filter check (Movie)"
                     );
-                    if animation && lang_ja {
+                    if animation {
                         let outcome = fetch_alt_and_build_outcome(
                             tmdb_client,
                             tid,
@@ -966,7 +970,7 @@ async fn search_tmdb_filtered(
 }
 
 /// Verifies a season number against TMDB `tv_details` and returns the verified
-/// season number, or `None` if not applicable / not found.
+/// `(season_number, season_id)`, or `None` if not applicable / not found.
 async fn verify_season_number(
     tmdb_client: &TmdbClient,
     tid: u32,
@@ -974,16 +978,17 @@ async fn verify_season_number(
     language: &str,
     expected_type: TmdbMediaType,
     season_num: Option<u32>,
-) -> Option<u32> {
+) -> Option<(u32, u64)> {
     let sn = season_num?;
     if expected_type != TmdbMediaType::Tv {
         return None;
     }
     match tmdb_client.tv_details(tmdb_id, language).await {
         Ok(details) => {
-            let found = details.seasons.iter().any(|s| s.season_number == sn);
+            let season = details.seasons.iter().find(|s| s.season_number == sn);
+            let found = season.is_some();
             tracing::info!(tid, tmdb_id, season = sn, found, "Season check");
-            if found { Some(sn) } else { None }
+            season.map(|s| (sn, s.id))
         }
         Err(e) => {
             tracing::warn!(tid, error = %e, "tv_details failed, skipping season");
@@ -1092,6 +1097,27 @@ fn is_within_cooldown(tmdb_last_updated: Option<&str>) -> bool {
     elapsed.num_hours() < TMDB_LOOKUP_COOLDOWN_HOURS
 }
 
+/// Filters titles based on `--force` and `--retry-unmapped` flags.
+///
+/// - `force`: return all titles (skip no filtering).
+/// - `retry_unmapped`: return only titles with `tmdb_series_id IS NULL` (ignore cooldown).
+/// - default: skip titles within the cooldown period.
+fn filter_titles(titles: Vec<CachedTitle>, force: bool, retry_unmapped: bool) -> Vec<CachedTitle> {
+    if force {
+        return titles;
+    }
+    if retry_unmapped {
+        return titles
+            .into_iter()
+            .filter(|t| t.tmdb_series_id.is_none())
+            .collect();
+    }
+    titles
+        .into_iter()
+        .filter(|t| !is_within_cooldown(t.tmdb_last_updated.as_deref()))
+        .collect()
+}
+
 /// Runs the `db tmdb-lookup` subcommand.
 ///
 /// Searches TMDB for cached titles and stores search results
@@ -1111,26 +1137,29 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> R
     let language = resolve_tmdb_language(args.language.as_deref(), dir);
     let tmdb_client = build_tmdb_client(dir)?;
 
+    let mapping_dir = config_path
+        .parent()
+        .context("failed to get config directory")?;
+    let (mut mapping_file, mapping_path) = load_or_fetch(mapping_dir)
+        .await
+        .context("failed to load mapping file")?;
+    let mapping_index = mapping_file.build_index();
+    tracing::info!(entries = mapping_index.len(), "Mapping index loaded");
+
+    let excluded_tids: HashSet<u32> = config.syoboi.titles.excludes.iter().copied().collect();
+
     let titles = if let Some(ref tids) = args.tids {
         let loaded = load_titles_by_tids(&conn, tids).context("failed to load titles by tids")?;
-        if args.force {
-            loaded
-        } else {
-            loaded
-                .into_iter()
-                .filter(|t| !is_within_cooldown(t.tmdb_last_updated.as_deref()))
-                .collect()
-        }
+        filter_titles(loaded, args.force, args.retry_unmapped)
     } else {
         let all = load_titles(&conn).context("failed to load titles")?;
-        if args.force {
-            all
-        } else {
-            all.into_iter()
-                .filter(|t| !is_within_cooldown(t.tmdb_last_updated.as_deref()))
-                .collect()
-        }
+        filter_titles(all, args.force, args.retry_unmapped)
     };
+
+    let titles: Vec<_> = titles
+        .into_iter()
+        .filter(|t| !excluded_tids.contains(&t.tid))
+        .collect();
 
     if titles.is_empty() {
         tracing::info!("No titles to process");
@@ -1146,6 +1175,10 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> R
     let mut success_count: usize = 0;
     let mut skip_count: usize = 0;
     let mut error_count: usize = 0;
+    let mut mapped_count: usize = 0;
+    let mut needs_template: Vec<(u32, String)> = Vec::new();
+    let mut season_id_updates: std::collections::HashMap<u32, u64> =
+        std::collections::HashMap::new();
 
     let total = titles.len();
     #[allow(clippy::as_conversions)]
@@ -1155,6 +1188,67 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> R
 
     for (i, title) in titles.iter().enumerate() {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+        // Check manual mapping first
+        if let Some(entry) = mapping_index.get(&title.tid)
+            && entry.tmdb_series_id > 0
+        {
+            // Resolve tmdb_season_id via API if season_number is set but season_id is missing
+            let resolved_season_id =
+                if entry.tmdb_season_number.is_some() && entry.tmdb_season_id == 0 {
+                    let expected_type = resolve_media_type(title.cat, &cat_movie);
+                    let verified = verify_season_number(
+                        &tmdb_client,
+                        title.tid,
+                        entry.tmdb_series_id,
+                        &language,
+                        expected_type,
+                        entry.tmdb_season_number,
+                    )
+                    .await;
+                    if let Some((_, sid)) = verified {
+                        season_id_updates.insert(title.tid, sid);
+                        Some(sid)
+                    } else {
+                        None
+                    }
+                } else if entry.tmdb_season_id > 0 {
+                    Some(entry.tmdb_season_id)
+                } else {
+                    None
+                };
+
+            update_tmdb_mapping(
+                &conn,
+                title.tid,
+                Some(entry.tmdb_series_id),
+                entry.tmdb_season_number,
+                resolved_season_id,
+            )
+            .with_context(|| format!("failed to apply manual mapping for tid {}", title.tid))?;
+            update_tmdb_last_updated(&conn, title.tid, &now).with_context(|| {
+                format!("failed to update tmdb_last_updated for tid {}", title.tid)
+            })?;
+            tracing::info!(
+                tid = title.tid,
+                tmdb_series_id = entry.tmdb_series_id,
+                season = entry.tmdb_season_number,
+                season_id = resolved_season_id,
+                "Applied manual mapping"
+            );
+            mapped_count = mapped_count.saturating_add(1);
+
+            let current = i.saturating_add(1);
+            #[allow(clippy::cast_precision_loss, clippy::as_conversions)]
+            let pct = (current as f64 / total as f64) * 100.0;
+            let miss = skip_count.saturating_add(error_count);
+            tracing::info!(
+                "{current:0>width$}/{total:0>width$} ({pct:06.2}%), match={}, miss={miss}",
+                success_count.saturating_add(mapped_count),
+            );
+            continue;
+        }
+
         match lookup_single_title(
             title,
             &tmdb_client,
@@ -1164,7 +1258,7 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> R
         )
         .await?
         {
-            LookupOutcome::Success(tmdb_id, original_name, name, alt_json, season_num) => {
+            LookupOutcome::Success(tmdb_id, original_name, name, alt_json, season_info) => {
                 update_tmdb_search_result(
                     &conn,
                     title.tid,
@@ -1175,11 +1269,18 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> R
                     &now,
                 )
                 .with_context(|| format!("failed to update TMDB result for tid {}", title.tid))?;
-                if let Some(sn) = season_num {
-                    update_tmdb_mapping(&conn, title.tid, Some(tmdb_id), Some(sn)).with_context(
-                        || format!("failed to update season for tid {}", title.tid),
-                    )?;
-                    tracing::info!(tid = title.tid, tmdb_id, season = sn, "Season number saved");
+                if let Some((sn, sid)) = season_info {
+                    update_tmdb_mapping(&conn, title.tid, Some(tmdb_id), Some(sn), Some(sid))
+                        .with_context(|| {
+                            format!("failed to update season for tid {}", title.tid)
+                        })?;
+                    tracing::info!(
+                        tid = title.tid,
+                        tmdb_id,
+                        season = sn,
+                        season_id = sid,
+                        "Season number saved"
+                    );
                 }
                 tracing::info!(tid = title.tid, tmdb_id, "TMDB result saved");
                 success_count = success_count.saturating_add(1);
@@ -1189,12 +1290,14 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> R
                     format!("failed to update tmdb_last_updated for tid {}", title.tid)
                 })?;
                 skip_count = skip_count.saturating_add(1);
+                needs_template.push((title.tid, title.title.clone()));
             }
             LookupOutcome::Error => {
                 update_tmdb_last_updated(&conn, title.tid, &now).with_context(|| {
                     format!("failed to update tmdb_last_updated for tid {}", title.tid)
                 })?;
                 error_count = error_count.saturating_add(1);
+                needs_template.push((title.tid, title.title.clone()));
             }
         }
 
@@ -1203,7 +1306,8 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> R
         let pct = (current as f64 / total as f64) * 100.0;
         let miss = skip_count.saturating_add(error_count);
         tracing::info!(
-            "{current:0>width$}/{total:0>width$} ({pct:06.2}%), match={success_count}, miss={miss}",
+            "{current:0>width$}/{total:0>width$} ({pct:06.2}%), match={}, miss={miss}",
+            success_count.saturating_add(mapped_count),
         );
     }
 
@@ -1212,8 +1316,51 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> R
         success = success_count,
         skipped = skip_count,
         errors = error_count,
+        mapped = mapped_count,
         "TMDB lookup complete"
     );
+
+    // Apply discovered season_id values back to mapping entries
+    if !season_id_updates.is_empty() {
+        for entry in &mut mapping_file.mappings {
+            if let Some(sid) = season_id_updates.get(&entry.tid) {
+                entry.tmdb_season_id = *sid;
+            }
+        }
+        tracing::info!(
+            updated = season_id_updates.len(),
+            "Updated mapping entries with resolved tmdb_season_id"
+        );
+    }
+
+    // Merge skipped/errored titles into mapping file and save
+    let skipped_refs: Vec<(u32, &str)> = needs_template
+        .iter()
+        .map(|(tid, name)| (*tid, name.as_str()))
+        .collect();
+    if !skipped_refs.is_empty() {
+        mapping_file.merge_new_entries(&skipped_refs);
+    }
+
+    // Remove any entries whose tid is in excludes
+    let pre_remove = mapping_file.mappings.len();
+    mapping_file.remove_excluded(&excluded_tids);
+    let removed = pre_remove.saturating_sub(mapping_file.mappings.len());
+    if removed > 0 {
+        tracing::info!(removed, "Removed excluded TIDs from mapping file");
+    }
+
+    if !skipped_refs.is_empty() || removed > 0 || !season_id_updates.is_empty() {
+        mapping_file
+            .save(&mapping_path)
+            .context("failed to save updated mapping file")?;
+        tracing::info!(
+            new = skipped_refs.len(),
+            total = mapping_file.mappings.len(),
+            path = %mapping_path.display(),
+            "Updated mapping file"
+        );
+    }
 
     Ok(())
 }
@@ -1939,5 +2086,96 @@ mod tests {
     fn test_is_within_cooldown_invalid_format() {
         // Arrange & Act & Assert: invalid format returns false
         assert!(!is_within_cooldown(Some("not-a-date")));
+    }
+
+    fn make_cached_title(
+        tid: u32,
+        tmdb_series_id: Option<u64>,
+        tmdb_last_updated: Option<&str>,
+    ) -> CachedTitle {
+        CachedTitle {
+            tid,
+            tmdb_series_id,
+            tmdb_season_number: None,
+            tmdb_season_id: None,
+            title: format!("Title {tid}"),
+            short_title: None,
+            title_yomi: None,
+            title_en: None,
+            cat: None,
+            title_flag: None,
+            first_year: None,
+            first_month: None,
+            keywords: vec![],
+            sub_titles: None,
+            last_update: String::new(),
+            tmdb_original_name: None,
+            tmdb_name: None,
+            tmdb_alt_titles: None,
+            tmdb_last_updated: tmdb_last_updated.map(String::from),
+        }
+    }
+
+    #[test]
+    fn test_filter_titles_default() {
+        // Arrange: one title within cooldown, one outside
+        let recent_ts = (Utc::now() - chrono::Duration::hours(6))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let old_ts = (Utc::now() - chrono::Duration::hours(24))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let titles = vec![
+            make_cached_title(1, Some(100), Some(&recent_ts)),
+            make_cached_title(2, None, Some(&old_ts)),
+            make_cached_title(3, None, None),
+        ];
+
+        // Act
+        let result = filter_titles(titles, false, false);
+
+        // Assert: only title 2 (expired cooldown) and 3 (never looked up)
+        let tids: Vec<u32> = result.iter().map(|t| t.tid).collect();
+        assert_eq!(tids, vec![2, 3]);
+    }
+
+    #[test]
+    fn test_filter_titles_force() {
+        // Arrange
+        let recent_ts = (Utc::now() - chrono::Duration::hours(6))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let titles = vec![
+            make_cached_title(1, Some(100), Some(&recent_ts)),
+            make_cached_title(2, None, Some(&recent_ts)),
+            make_cached_title(3, None, None),
+        ];
+
+        // Act
+        let result = filter_titles(titles, true, false);
+
+        // Assert: all titles returned
+        let tids: Vec<u32> = result.iter().map(|t| t.tid).collect();
+        assert_eq!(tids, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_filter_titles_retry_unmapped() {
+        // Arrange: title 1 is mapped, titles 2 and 3 are unmapped
+        let recent_ts = (Utc::now() - chrono::Duration::hours(6))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let titles = vec![
+            make_cached_title(1, Some(100), Some(&recent_ts)),
+            make_cached_title(2, None, Some(&recent_ts)),
+            make_cached_title(3, None, None),
+        ];
+
+        // Act
+        let result = filter_titles(titles, false, true);
+
+        // Assert: only unmapped titles (2, 3), even though 2 is within cooldown
+        let tids: Vec<u32> = result.iter().map(|t| t.tid).collect();
+        assert_eq!(tids, vec![2, 3]);
     }
 }

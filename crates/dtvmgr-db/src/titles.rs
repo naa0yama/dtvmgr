@@ -12,6 +12,8 @@ pub struct CachedTitle {
     pub tmdb_series_id: Option<u64>,
     /// Mapped TMDB season number (cache, nullable).
     pub tmdb_season_number: Option<u32>,
+    /// Mapped TMDB season ID (cache, nullable).
+    pub tmdb_season_id: Option<u64>,
     /// Title name.
     pub title: String,
     /// Short title (nullable).
@@ -122,13 +124,13 @@ pub fn upsert_titles(conn: &Connection, titles: &[CachedTitle]) -> Result<usize>
     let mut stmt = tx
         .prepare(
             "INSERT INTO titles (
-                tid, tmdb_series_id, tmdb_season_number,
+                tid, tmdb_series_id, tmdb_season_number, tmdb_season_id,
                 title, short_title, title_yomi, title_en,
                 cat, title_flag, first_year, first_month,
                 keywords, sub_titles, last_update,
                 tmdb_original_name, tmdb_name, tmdb_alt_titles,
                 tmdb_last_updated
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
             ON CONFLICT(tid) DO UPDATE SET
                 title = excluded.title,
                 short_title = excluded.short_title,
@@ -152,6 +154,7 @@ pub fn upsert_titles(conn: &Connection, titles: &[CachedTitle]) -> Result<usize>
                 t.tid,
                 t.tmdb_series_id,
                 t.tmdb_season_number,
+                t.tmdb_season_id,
                 t.title,
                 t.short_title,
                 t.title_yomi,
@@ -186,7 +189,7 @@ pub fn upsert_titles(conn: &Connection, titles: &[CachedTitle]) -> Result<usize>
 pub fn load_titles(conn: &Connection) -> Result<Vec<CachedTitle>> {
     let mut stmt = conn
         .prepare(
-            "SELECT tid, tmdb_series_id, tmdb_season_number,
+            "SELECT tid, tmdb_series_id, tmdb_season_number, tmdb_season_id,
                     title, short_title, title_yomi, title_en,
                     cat, title_flag, first_year, first_month,
                     keywords, sub_titles, last_update,
@@ -203,21 +206,22 @@ pub fn load_titles(conn: &Connection) -> Result<Vec<CachedTitle>> {
                 tid: row.get(0)?,
                 tmdb_series_id: row.get(1)?,
                 tmdb_season_number: row.get(2)?,
-                title: row.get(3)?,
-                short_title: row.get(4)?,
-                title_yomi: row.get(5)?,
-                title_en: row.get(6)?,
-                cat: row.get(7)?,
-                title_flag: row.get(8)?,
-                first_year: row.get(9)?,
-                first_month: row.get(10)?,
-                keywords: parse_keywords(row.get(11)?),
-                sub_titles: row.get(12)?,
-                last_update: row.get(13)?,
-                tmdb_original_name: row.get(14)?,
-                tmdb_name: row.get(15)?,
-                tmdb_alt_titles: row.get(16)?,
-                tmdb_last_updated: row.get(17)?,
+                tmdb_season_id: row.get(3)?,
+                title: row.get(4)?,
+                short_title: row.get(5)?,
+                title_yomi: row.get(6)?,
+                title_en: row.get(7)?,
+                cat: row.get(8)?,
+                title_flag: row.get(9)?,
+                first_year: row.get(10)?,
+                first_month: row.get(11)?,
+                keywords: parse_keywords(row.get(12)?),
+                sub_titles: row.get(13)?,
+                last_update: row.get(14)?,
+                tmdb_original_name: row.get(15)?,
+                tmdb_name: row.get(16)?,
+                tmdb_alt_titles: row.get(17)?,
+                tmdb_last_updated: row.get(18)?,
             })
         })
         .context("failed to query titles")?;
@@ -239,7 +243,7 @@ pub fn load_titles_by_tids(conn: &Connection, tids: &[u32]) -> Result<Vec<Cached
 
     let placeholders: Vec<String> = tids.iter().map(|_| String::from("?")).collect();
     let sql = format!(
-        "SELECT tid, tmdb_series_id, tmdb_season_number,
+        "SELECT tid, tmdb_series_id, tmdb_season_number, tmdb_season_id,
                 title, short_title, title_yomi, title_en,
                 cat, title_flag, first_year, first_month,
                 keywords, sub_titles, last_update,
@@ -267,21 +271,22 @@ pub fn load_titles_by_tids(conn: &Connection, tids: &[u32]) -> Result<Vec<Cached
                 tid: row.get(0)?,
                 tmdb_series_id: row.get(1)?,
                 tmdb_season_number: row.get(2)?,
-                title: row.get(3)?,
-                short_title: row.get(4)?,
-                title_yomi: row.get(5)?,
-                title_en: row.get(6)?,
-                cat: row.get(7)?,
-                title_flag: row.get(8)?,
-                first_year: row.get(9)?,
-                first_month: row.get(10)?,
-                keywords: parse_keywords(row.get(11)?),
-                sub_titles: row.get(12)?,
-                last_update: row.get(13)?,
-                tmdb_original_name: row.get(14)?,
-                tmdb_name: row.get(15)?,
-                tmdb_alt_titles: row.get(16)?,
-                tmdb_last_updated: row.get(17)?,
+                tmdb_season_id: row.get(3)?,
+                title: row.get(4)?,
+                short_title: row.get(5)?,
+                title_yomi: row.get(6)?,
+                title_en: row.get(7)?,
+                cat: row.get(8)?,
+                title_flag: row.get(9)?,
+                first_year: row.get(10)?,
+                first_month: row.get(11)?,
+                keywords: parse_keywords(row.get(12)?),
+                sub_titles: row.get(13)?,
+                last_update: row.get(14)?,
+                tmdb_original_name: row.get(15)?,
+                tmdb_name: row.get(16)?,
+                tmdb_alt_titles: row.get(17)?,
+                tmdb_last_updated: row.get(18)?,
             })
         })
         .context("failed to query titles by tids")?;
@@ -300,10 +305,11 @@ pub fn update_tmdb_mapping(
     tid: u32,
     tmdb_series_id: Option<u64>,
     tmdb_season_number: Option<u32>,
+    tmdb_season_id: Option<u64>,
 ) -> Result<()> {
     conn.execute(
-        "UPDATE titles SET tmdb_series_id = ?1, tmdb_season_number = ?2 WHERE tid = ?3",
-        rusqlite::params![tmdb_series_id, tmdb_season_number, tid],
+        "UPDATE titles SET tmdb_series_id = ?1, tmdb_season_number = ?2, tmdb_season_id = ?3 WHERE tid = ?4",
+        rusqlite::params![tmdb_series_id, tmdb_season_number, tmdb_season_id, tid],
     )
     .with_context(|| format!("failed to update TMDB mapping for title {tid}"))?;
     Ok(())
@@ -416,6 +422,7 @@ mod tests {
             tid,
             tmdb_series_id: None,
             tmdb_season_number: None,
+            tmdb_season_id: None,
             title: String::from(title),
             short_title: None,
             title_yomi: None,
@@ -499,7 +506,7 @@ mod tests {
         upsert_titles(&conn, &titles).unwrap();
 
         // Set TMDB mapping
-        update_tmdb_mapping(&conn, 100, Some(12345), Some(1)).unwrap();
+        update_tmdb_mapping(&conn, 100, Some(12345), Some(1), Some(77777)).unwrap();
 
         // Act: upsert with new last_update (TMDB fields should be preserved)
         let updated = vec![make_title(100, "Updated", "2024-02-01 00:00:00")];
@@ -510,6 +517,7 @@ mod tests {
         assert_eq!(loaded[0].title, "Updated");
         assert_eq!(loaded[0].tmdb_series_id, Some(12345));
         assert_eq!(loaded[0].tmdb_season_number, Some(1));
+        assert_eq!(loaded[0].tmdb_season_id, Some(77777));
     }
 
     #[test]
@@ -552,12 +560,13 @@ mod tests {
         upsert_titles(&conn, &titles).unwrap();
 
         // Act
-        update_tmdb_mapping(&conn, 100, Some(99999), Some(2)).unwrap();
+        update_tmdb_mapping(&conn, 100, Some(99999), Some(2), Some(55555)).unwrap();
         let loaded = load_titles(&conn).unwrap();
 
         // Assert
         assert_eq!(loaded[0].tmdb_series_id, Some(99999));
         assert_eq!(loaded[0].tmdb_season_number, Some(2));
+        assert_eq!(loaded[0].tmdb_season_id, Some(55555));
     }
 
     #[test]

@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 5;
+const CURRENT_VERSION: u32 = 6;
 
 /// Runs database migrations up to `CURRENT_VERSION`.
 ///
@@ -30,6 +30,9 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
     }
     if version < 5 {
         migrate_v5(conn).context("migration to v5 failed")?;
+    }
+    if version < 6 {
+        migrate_v6(conn).context("migration to v6 failed")?;
     }
 
     conn.pragma_update(None, "user_version", CURRENT_VERSION)
@@ -133,6 +136,14 @@ fn migrate_v4(conn: &Connection) -> Result<()> {
 fn migrate_v5(conn: &Connection) -> Result<()> {
     conn.execute_batch("ALTER TABLE titles ADD COLUMN tmdb_last_updated TEXT;")
         .context("failed to add tmdb_last_updated column")?;
+
+    Ok(())
+}
+
+/// Migration to v6: add `tmdb_season_id` column to `titles`.
+fn migrate_v6(conn: &Connection) -> Result<()> {
+    conn.execute_batch("ALTER TABLE titles ADD COLUMN tmdb_season_id INTEGER;")
+        .context("failed to add tmdb_season_id column")?;
 
     Ok(())
 }
@@ -277,11 +288,38 @@ mod tests {
         let version: u32 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, CURRENT_VERSION);
 
         // Verify tmdb_last_updated column exists
         let stmt = conn
             .prepare("SELECT tmdb_last_updated FROM titles LIMIT 0")
+            .unwrap();
+        assert_eq!(stmt.column_count(), 1);
+    }
+
+    #[test]
+    fn test_v5_to_v6_migration() {
+        // Arrange: start from v5
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_v1(&conn).unwrap();
+        migrate_v2(&conn).unwrap();
+        migrate_v3(&conn).unwrap();
+        migrate_v4(&conn).unwrap();
+        migrate_v5(&conn).unwrap();
+        conn.pragma_update(None, "user_version", 5u32).unwrap();
+
+        // Act: run full migrations (should apply v6)
+        run_migrations(&conn).unwrap();
+
+        // Assert
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_VERSION);
+
+        // Verify tmdb_season_id column exists
+        let stmt = conn
+            .prepare("SELECT tmdb_season_id FROM titles LIMIT 0")
             .unwrap();
         assert_eq!(stmt.column_count(), 1);
     }

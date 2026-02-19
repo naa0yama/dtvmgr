@@ -43,5 +43,6 @@ tmp/
 # DTVMGR
 dtvmgr*.toml*
 dtvmgr*.db*
+!dtvmgr.mapping.toml
 
 # Under the unknown

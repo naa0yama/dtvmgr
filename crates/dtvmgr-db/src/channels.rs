@@ -346,6 +346,7 @@ mod tests {
             tid: 100,
             tmdb_series_id: None,
             tmdb_season_number: None,
+            tmdb_season_id: None,
             title: String::from("Test Title"),
             short_title: None,
             title_yomi: None,
