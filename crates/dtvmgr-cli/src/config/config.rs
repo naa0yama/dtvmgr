@@ -41,6 +41,21 @@ fn default_cat_movie() -> Vec<u32> {
     vec![8]
 }
 
+/// Default TIDs excluded from display in the title viewer.
+fn default_excludes() -> Vec<u32> {
+    vec![
+        5, 44, 46, 92, 93, 385, 399, 414, 438, 464, 604, 620, 635, 679, 700, 706, 727, 811, 842,
+        855, 868, 871, 894, 913, 967, 1003, 1112, 1192, 1235, 1245, 1363, 1387, 1447, 1511, 1512,
+        1640, 1647, 1726, 1764, 1775, 1786, 1803, 1829, 1850, 1865, 1910, 2102, 2103, 2179, 2181,
+        2232, 2300, 2319, 2415, 2440, 2710, 2871, 2950, 2956, 2976, 3007, 3154, 3291, 3350, 3384,
+        3407, 3476, 3519, 3520, 3533, 3547, 3721, 3732, 3880, 3908, 3940, 4062, 4202, 4243, 4272,
+        4290, 4317, 4349, 4357, 4391, 4397, 4457, 4459, 4534, 4564, 4599, 4608, 4653, 4720, 4744,
+        4812, 4879, 4909, 5083, 5104, 5109, 5173, 5189, 5268, 5301, 5318, 5405, 5446, 5478, 5486,
+        5645, 5727, 5771, 5807, 5987, 6019, 6122, 6169, 6347, 6496, 6507, 6514, 6605, 6696, 6698,
+        6984, 6993, 7059, 7264, 7345, 7537, 7586, 7605, 7617,
+    ]
+}
+
 /// Title configuration.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TitlesConfig {
@@ -51,7 +66,7 @@ pub struct TitlesConfig {
     #[serde(default = "default_cat_movie")]
     pub cat_movie: Vec<u32>,
     /// TIDs excluded from display in the title viewer.
-    #[serde(default)]
+    #[serde(default = "default_excludes")]
     pub excludes: Vec<u32>,
 }
 
@@ -60,7 +75,7 @@ impl Default for TitlesConfig {
         Self {
             cat: default_cat(),
             cat_movie: default_cat_movie(),
-            excludes: Vec::new(),
+            excludes: default_excludes(),
         }
     }
 }
@@ -312,7 +327,7 @@ mod tests {
         assert!(output.contains("# selected = []"));
         assert!(output.contains("cat = [1, 7, 8, 10]"));
         assert!(output.contains("cat_movie = [8]"));
-        assert!(output.contains("# excludes = []"));
+        assert!(output.contains("excludes = [5, 44, 46,"));
         assert!(output.contains("language = \"ja-JP\""));
         assert!(!output.contains("# language"));
         assert!(output.contains("# api_key = \"\""));
