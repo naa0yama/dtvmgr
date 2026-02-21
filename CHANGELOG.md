@@ -1,7 +1,9 @@
 # Changelog
 
 ## [v0.1.0](https://github.com/naa0yama/dtvmgr/commits/v0.1.0) - 2026-02-21
+
 ### Dependency Updates 👒
+
 - Update taiki-e/install-action action to v2.67.20 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/4
 - Update All action update by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/5
 - Update taiki-e/install-action action to v2.67.25 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/6
@@ -16,5 +18,7 @@
 - Update taiki-e/install-action action to v2.67.30 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/18
 - Update dependency rust-cross/cargo-zigbuild to v0.22.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/19
 - Update Songmu/tagpr action to v1.17.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/21
+
 ### Other Changes
+
 - Add permissions for actionlint and zizmor jobs by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/2
