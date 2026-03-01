@@ -41,6 +41,9 @@ use dtvmgr_db::{
     update_tmdb_search_result, upsert_channel_groups, upsert_channels, upsert_programs,
     upsert_titles,
 };
+use dtvmgr_jlse::channel::{detect_channel, load_channels as load_jlse_channels};
+use dtvmgr_jlse::param::{detect_param, load_params};
+use dtvmgr_jlse::types::JlseConfig;
 
 /// CLI argument parser.
 #[derive(Parser)]
@@ -64,6 +67,47 @@ enum Commands {
     Tmdb(TmdbCommand),
     /// Local database operations.
     Db(DbCommand),
+    /// CM detection pipeline (`join_logo_scp`).
+    Jlse(JlseCommand),
+}
+
+/// Arguments for the `jlse` subcommand.
+#[derive(clap::Args)]
+struct JlseCommand {
+    /// Jlse subcommand to run.
+    #[command(subcommand)]
+    command: JlseSubcommands,
+}
+
+/// Available jlse subcommands.
+#[derive(Subcommand)]
+enum JlseSubcommands {
+    /// Detect broadcast channel from filename.
+    Channel(JlseChannelArgs),
+    /// Detect JL parameters from channel and filename.
+    Param(JlseParamArgs),
+}
+
+/// Arguments for `jlse channel`.
+#[derive(clap::Args)]
+struct JlseChannelArgs {
+    /// Path to input .ts or .m2ts file.
+    #[arg(short, long)]
+    input: PathBuf,
+    /// Channel name override (env: CHNNELNAME).
+    #[arg(short, long)]
+    channel: Option<String>,
+}
+
+/// Arguments for `jlse param`.
+#[derive(clap::Args)]
+struct JlseParamArgs {
+    /// Path to input .ts or .m2ts file.
+    #[arg(short, long)]
+    input: PathBuf,
+    /// Channel name override (env: CHNNELNAME).
+    #[arg(short, long)]
+    channel: Option<String>,
 }
 
 /// Arguments for the `db` subcommand.
@@ -1549,6 +1593,94 @@ async fn run_tmdb_tv_season(args: &TmdbTvSeasonArgs, dir: Option<&PathBuf>) -> R
     Ok(())
 }
 
+// ── jlse subcommands ──────────────────────────────────────────
+
+/// Resolves the `JlseConfig` from the app config.
+///
+/// # Errors
+///
+/// Returns an error if the jlse section is not configured.
+fn resolve_jlse_config(dir: Option<&PathBuf>) -> Result<JlseConfig> {
+    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+    let config = AppConfig::load(&config_path).context("failed to load config")?;
+    config
+        .jlse
+        .context("jlse config not found in dtvmgr.toml; add a [jlse] section with jl_dir, logo_dir, result_dir")
+}
+
+/// Runs the `jlse channel` subcommand.
+///
+/// Detects broadcast channel from the input filename.
+///
+/// # Errors
+///
+/// Returns an error if the channel list cannot be loaded.
+#[allow(clippy::print_stdout)]
+#[instrument(skip_all)]
+fn run_jlse_channel(args: &JlseChannelArgs, dir: Option<&PathBuf>) -> Result<()> {
+    let jlse_config = resolve_jlse_config(dir)?;
+    let csv_path = jlse_config.jl_dir.join("data").join("ChList.csv");
+    let channels = load_jlse_channels(&csv_path)?;
+
+    let channel_name = args
+        .channel
+        .clone()
+        .or_else(|| std::env::var("CHNNELNAME").ok());
+
+    let filepath = args.input.to_string_lossy();
+    let result = detect_channel(&channels, &filepath, channel_name.as_deref());
+
+    match result {
+        Some(ch) => {
+            println!("recognize: {}", ch.recognize);
+            println!("install: {}", ch.install);
+            println!("short: {}", ch.short);
+            println!("service_id: {}", ch.service_id);
+        }
+        None => {
+            println!("No channel detected.");
+        }
+    }
+    Ok(())
+}
+
+/// Runs the `jlse param` subcommand.
+///
+/// Detects JL parameters from the channel and input filename.
+///
+/// # Errors
+///
+/// Returns an error if the param lists cannot be loaded.
+#[allow(clippy::print_stdout)]
+#[instrument(skip_all)]
+fn run_jlse_param(args: &JlseParamArgs, dir: Option<&PathBuf>) -> Result<()> {
+    let jlse_config = resolve_jlse_config(dir)?;
+    let jl_data_dir = jlse_config.jl_dir.join("data");
+
+    let csv_path_ch = jl_data_dir.join("ChList.csv");
+    let channels = load_jlse_channels(&csv_path_ch)?;
+
+    let channel_name = args
+        .channel
+        .clone()
+        .or_else(|| std::env::var("CHNNELNAME").ok());
+    let filepath = args.input.to_string_lossy();
+    let channel = detect_channel(&channels, &filepath, channel_name.as_deref());
+
+    let params_jl1 = load_params(&jl_data_dir.join("ChParamJL1.csv"))?;
+    let params_jl2 = load_params(&jl_data_dir.join("ChParamJL2.csv"))?;
+
+    let filename = args.input.file_stem().unwrap_or_default().to_string_lossy();
+    let result = detect_param(&params_jl1, &params_jl2, channel.as_ref(), &filename);
+
+    println!("jl_run: {}", result.jl_run);
+    println!("flags: {}", result.flags);
+    println!("options: {}", result.options);
+    Ok(())
+}
+
+// ── Syoboi / TMDB helpers ────────────────────────────────────
+
 /// Builds a `SyoboiClient` with default user agent.
 ///
 /// # Errors
@@ -1919,6 +2051,10 @@ async fn main() -> Result<()> {
             DbSubcommands::List => run_db_list(cli.dir.as_ref()),
             DbSubcommands::Normalize => run_db_normalize(cli.dir.as_ref()),
             DbSubcommands::TmdbLookup(args) => run_db_tmdb_lookup(&args, cli.dir.as_ref()).await,
+        },
+        Commands::Jlse(jlse) => match jlse.command {
+            JlseSubcommands::Channel(args) => run_jlse_channel(&args, cli.dir.as_ref()),
+            JlseSubcommands::Param(args) => run_jlse_param(&args, cli.dir.as_ref()),
         },
     }
 }

@@ -1,0 +1,20 @@
+[package]
+name = "dtvmgr-jlse"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CM detection pipeline for Japanese TV broadcast TS files"
+
+[dependencies]
+anyhow.workspace = true
+csv.workspace = true
+regex.workspace = true
+serde = { workspace = true }
+tracing.workspace = true
+unicode-normalization.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

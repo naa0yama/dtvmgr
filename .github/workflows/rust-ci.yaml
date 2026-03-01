@@ -87,6 +87,47 @@ jobs:
           set -euxo pipefail
           mise run clippy:strict
 
+  cross-check:
+    name: cross-check (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    needs: fmt
+    timeout-minutes: 15
+    permissions:
+      contents: read # Required to checkout the repository
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-gnu
+            gcc: gcc-mingw-w64
+          - target: aarch64-unknown-linux-gnu
+            gcc: gcc-aarch64-linux-gnu
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install cross-compilation tools
+        env:
+          GCC_PACKAGE: ${{ matrix.gcc }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "${GCC_PACKAGE}"
+          rustup target add "${TARGET}"
+
+      - name: Rust setup
+        uses: ./.github/actions/act-setup-rust
+        with:
+          sccache: ${{ needs.fmt.outputs.sccache }}
+          sccache_disable_annotations: true
+
+      - name: Cross-check compilation
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo check --target "${TARGET}"
+
   check:
     name: check
     runs-on: ubuntu-latest

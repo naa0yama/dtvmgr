@@ -22,6 +22,7 @@ All tasks use `mise run <task>`:
 | Pre-commit (required) | `mise run pre-commit`                   |
 | Coverage              | `mise run coverage`                     |
 | Deny (licenses/deps)  | `mise run deny`                         |
+| Miri (UB detection)   | `mise run miri`                         |
 | Build (OTel)          | `cargo build -p dtvmgr --features otel` |
 
 ## Commit Convention
@@ -36,7 +37,7 @@ Allowed types: feat, update, fix, style, refactor, docs, perf, test, build, ci, 
 2. Implement
 3. Run `mise run test` — all tests must pass
 4. Stage only the relevant files
-5. Run `mise run pre-commit` (runs fmt:check, clippy:strict, ast-grep)
+5. Run `mise run pre-commit` (runs fmt:check, clippy:strict, ast-grep, lint:gh)
 6. If errors, fix → re-stage → re-run `mise run pre-commit`
 
 ## Code Comments

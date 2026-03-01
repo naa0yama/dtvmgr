@@ -4,6 +4,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use dtvmgr_jlse::types::JlseConfig;
 use serde::{Deserialize, Serialize};
 
 /// Top-level application configuration.
@@ -18,6 +19,9 @@ pub struct AppConfig {
     /// Normalize viewer settings.
     #[serde(default)]
     pub normalize: NormalizeConfig,
+    /// CM detection pipeline settings.
+    #[serde(default)]
+    pub jlse: Option<JlseConfig>,
 }
 
 /// Syoboi Calendar settings.
@@ -151,6 +155,7 @@ impl AppConfig {
     }
 
     /// Renders config as TOML with commented-out hints for unset options.
+    #[allow(clippy::too_many_lines)]
     fn to_commented_toml(&self) -> String {
         let mut out = String::new();
 
@@ -259,6 +264,20 @@ impl AppConfig {
             let _ = writeln!(out, "regex_titles = [{}]", patterns.join(", "));
         }
 
+        // [jlse]
+        out.push_str("\n# CM detection pipeline settings.\n");
+        if let Some(jlse) = &self.jlse {
+            out.push_str("[jlse]\n");
+            let _ = writeln!(out, "jl_dir = \"{}\"", jlse.jl_dir.display());
+            let _ = writeln!(out, "logo_dir = \"{}\"", jlse.logo_dir.display());
+            let _ = writeln!(out, "result_dir = \"{}\"", jlse.result_dir.display());
+        } else {
+            out.push_str("# [jlse]\n");
+            out.push_str("# jl_dir = \"/path/to/JL\"\n");
+            out.push_str("# logo_dir = \"/path/to/logo\"\n");
+            out.push_str("# result_dir = \"/path/to/result\"\n");
+        }
+
         out
     }
 }
@@ -305,6 +324,7 @@ mod tests {
                 ],
                 regex_titles: vec![String::from(r"第\d+期$"), String::from(r"\s*Season\s*\d+")],
             },
+            jlse: None,
         };
 
         // Act
@@ -360,6 +380,7 @@ mod tests {
                 regex_history: vec![String::from(r"第(?P<SeasonNum>\d+)期")],
                 regex_titles: vec![String::from(r"第\d+期$"), String::from(r"\s*Season\s*\d+")],
             },
+            jlse: None,
         };
 
         // Act
