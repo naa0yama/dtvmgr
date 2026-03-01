@@ -502,6 +502,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_builder_with_user_agent_succeeds() {
         // Arrange & Act
@@ -511,6 +512,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_builder_with_custom_base_url() {
         // Arrange

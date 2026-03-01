@@ -93,14 +93,26 @@ wiremock::Mock::given(wiremock::matchers::method("GET"))
 
 ## Miri Compatibility
 
-Tests using network I/O (e.g. `wiremock::MockServer`) must be annotated
-with `#[cfg_attr(miri, ignore)]`. Miri cannot handle socket FFI calls.
+The following tests must be annotated with `#[cfg_attr(miri, ignore)]`:
+
+1. **Network I/O**: Tests using socket FFI (e.g. `wiremock::MockServer`).
+   Miri does not support socket FFI calls.
+2. **TLS initialization**: Tests calling `reqwest::Client::builder().build()`.
+   The TLS stack (rustls) crypto initialization is extremely slow under Miri
+   (~10 min per call), causing CI timeouts.
 
 ```rust
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_http_endpoint() {
     let mock_server = wiremock::MockServer::start().await;
+    // ...
+}
+
+#[cfg_attr(miri, ignore)]
+#[test]
+fn test_builder_succeeds() {
+    let client = MyClient::builder().build().unwrap();
     // ...
 }
 ```

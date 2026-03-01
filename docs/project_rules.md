@@ -262,7 +262,7 @@ project-name/
 
 ## 5. テスト戦略
 
-### 4.1 テストの種類
+### 5.1 テストの種類
 
 #### 単体テスト
 
@@ -316,7 +316,7 @@ fn cli_version_flag() {
 }
 ```
 
-### 4.2 テストユーティリティ
+### 5.2 テストユーティリティ
 
 ```rust
 // テストでのtracing出力モック
@@ -354,7 +354,7 @@ mod tests {
 
 ## 6. CI/CD
 
-### 5.1 必須チェック(`mise run` 経由)
+### 6.1 必須チェック(`mise run` 経由)
 
 ```bash
 # フォーマットチェック
@@ -379,17 +379,21 @@ mise run coverage        # code coverage report
 mise run zigbuild:all    # Tier 1 targets
 ```
 
-### 5.2 品質基準
+### 6.2 品質基準
 
 - **Warning一切禁止**
 - **フォーマット違反禁止**
 - **カバレッジ目標**: 80%以上
 
-### 5.3 Miri 互換性
+### 6.3 Miri 互換性
 
-ネットワーク I/O (TCP ソケット等) を使うテストには `#[cfg_attr(miri, ignore)]` を付与する。
-Miri はソケット FFI をサポートしないため、`wiremock::MockServer` 等を使用するテストは
-Miri 実行時にスキップする必要がある。
+以下のテストには `#[cfg_attr(miri, ignore)]` を付与する:
+
+1. **ネットワーク I/O**: `wiremock::MockServer` 等のソケット FFI を使用するテスト。
+   Miri はソケット FFI をサポートしない。
+2. **TLS 初期化**: `reqwest::Client::builder().build()` を呼び出すテスト。
+   TLS スタック(rustls)の暗号初期化が Miri 上で極端に遅くなり(1 回あたり約 10 分)、
+   CI タイムアウトの原因となる。
 
 ```rust
 #[cfg_attr(miri, ignore)]
@@ -398,9 +402,16 @@ async fn test_something_via_http() {
     let mock_server = wiremock::MockServer::start().await;
     // ...
 }
+
+#[cfg_attr(miri, ignore)]
+#[test]
+fn test_builder_succeeds() {
+    let client = MyClient::builder().build().unwrap();
+    // ...
+}
 ```
 
-### 5.4 クロスコンパイル対応
+### 6.4 クロスコンパイル対応
 
 ```bash
 # Tier 1 targets（全て対応）
@@ -414,7 +425,7 @@ mise run zigbuild:all
 TARGET=x86_64-pc-windows-gnu mise run zigbuild
 ```
 
-### 5.4 Git フック(`.githooks/` + `mise`)
+### 6.5 Git フック(`.githooks/` + `mise`)
 
 #### 事前チェック(pre-commit)
 
@@ -430,7 +441,7 @@ mise run pre-commit
 
 ## 7. ドキュメント
 
-### 6.1 コメント規約
+### 7.1 コメント規約
 
 #### ドキュメントコメント
 
@@ -459,7 +470,7 @@ pub fn function(param: Type) -> Result<ReturnType> {
 }
 ````
 
-### 6.2 README必須項目(CLIプロジェクト)
+### 7.2 README必須項目(CLIプロジェクト)
 
 - プロジェクト概要(CLIツールの目的)
 - Dev Container を使ったセットアップ手順
@@ -570,14 +581,14 @@ println!("cargo:rustc-env=GIT_HASH={}", git_hash.trim());
 
 ## 10. パフォーマンス最適化
 
-### 9.1 最適化の原則
+### 10.1 最適化の原則
 
 - **計測なき最適化は悪**
 - まず動くものを作る
 - ボトルネックを`cargo build --timings`で特定
 - 必要な箇所のみ最適化
 
-### 9.2 メモリ管理
+### 10.2 メモリ管理
 
 ```rust
 // 開発速度優先
