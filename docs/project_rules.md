@@ -385,7 +385,22 @@ mise run zigbuild:all    # Tier 1 targets
 - **フォーマット違反禁止**
 - **カバレッジ目標**: 80%以上
 
-### 5.3 クロスコンパイル対応
+### 5.3 Miri 互換性
+
+ネットワーク I/O (TCP ソケット等) を使うテストには `#[cfg_attr(miri, ignore)]` を付与する。
+Miri はソケット FFI をサポートしないため、`wiremock::MockServer` 等を使用するテストは
+Miri 実行時にスキップする必要がある。
+
+```rust
+#[cfg_attr(miri, ignore)]
+#[tokio::test]
+async fn test_something_via_http() {
+    let mock_server = wiremock::MockServer::start().await;
+    // ...
+}
+```
+
+### 5.4 クロスコンパイル対応
 
 ```bash
 # Tier 1 targets（全て対応）

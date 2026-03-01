@@ -375,6 +375,7 @@ mod tests {
         assert!(error.status_message.contains("Invalid API key"));
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_tv_details_via_http() {
         // Arrange
@@ -404,6 +405,7 @@ mod tests {
         assert_eq!(details.name, "SPY×FAMILY");
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_tv_season_via_http() {
         // Arrange
@@ -433,6 +435,7 @@ mod tests {
         assert!(!season.episodes.is_empty());
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_bearer_token_is_sent() {
         // Arrange
@@ -465,6 +468,7 @@ mod tests {
         client.search_multi(&params).await.unwrap();
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_http_error_returns_tmdb_error() {
         // Arrange
@@ -498,6 +502,7 @@ mod tests {
         assert!(err.contains("Invalid API key"));
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_http_429_retries() {
         // Arrange
@@ -577,6 +582,7 @@ mod tests {
         assert!(serialized.contains("romaji"));
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_genre_tv_list_via_http() {
         // Arrange
@@ -605,6 +611,7 @@ mod tests {
         assert!(!response.genres.is_empty());
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_alternative_titles_tv_via_http() {
         // Arrange
@@ -637,6 +644,7 @@ mod tests {
         assert_eq!(response.results.len(), 2);
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_alternative_titles_movie_via_http() {
         // Arrange
@@ -753,6 +761,7 @@ mod tests {
         assert_eq!(response.results[1].title, "Suzume no Tojimari");
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_search_multi_via_http() {
         // Arrange
@@ -784,6 +793,7 @@ mod tests {
         assert_eq!(response.results.len(), 2);
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_rate_limiter_enforces_interval() {
         // Arrange

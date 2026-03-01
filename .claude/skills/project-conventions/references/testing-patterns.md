@@ -91,6 +91,20 @@ wiremock::Mock::given(wiremock::matchers::method("GET"))
     .mount(&mock_server).await;
 ```
 
+## Miri Compatibility
+
+Tests using network I/O (e.g. `wiremock::MockServer`) must be annotated
+with `#[cfg_attr(miri, ignore)]`. Miri cannot handle socket FFI calls.
+
+```rust
+#[cfg_attr(miri, ignore)]
+#[tokio::test]
+async fn test_http_endpoint() {
+    let mock_server = wiremock::MockServer::start().await;
+    // ...
+}
+```
+
 ## Coverage
 
 Target: 80%+ line coverage. Run: `mise run coverage`

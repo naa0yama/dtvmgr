@@ -670,6 +670,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_title_lookup_via_http() {
         // Arrange
@@ -701,6 +702,7 @@ mod tests {
         assert_eq!(titles[0].tid, 6309);
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_prog_lookup_via_http() {
         // Arrange
@@ -736,6 +738,7 @@ mod tests {
         assert_eq!(programs[0].ch_id, 7);
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_ch_lookup_via_http() {
         // Arrange
@@ -782,6 +785,7 @@ mod tests {
         assert_eq!(groups[1].ch_group_name, "BSデジタル");
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_ch_group_lookup_via_http() {
         // Arrange
@@ -812,6 +816,7 @@ mod tests {
         assert_eq!(groups[0].ch_group_name, "テレビ 関東");
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_rate_limiter_enforces_interval() {
         // Arrange
@@ -844,6 +849,7 @@ mod tests {
         assert!(elapsed >= Duration::from_millis(100));
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_user_agent_is_sent() {
         // Arrange
@@ -871,6 +877,7 @@ mod tests {
         client.lookup_titles(&[1], None).await.unwrap();
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_title_lookup_with_fields() {
         // Arrange
@@ -906,6 +913,7 @@ mod tests {
         assert_eq!(titles[0].tid, 6309);
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_title_lookup_without_fields_omits_query_param() {
         // Arrange
