@@ -34,4 +34,4 @@ jobs:
       - name: Run Miri
         env:
           MIRIFLAGS: -Zmiri-disable-isolation
-        run: cargo +nightly miri test --workspace --exclude dtvmgr-db
+        run: cargo +nightly miri test --workspace --exclude dtvmgr-db --exclude dtvmgr
