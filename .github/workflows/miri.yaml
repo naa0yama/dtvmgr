@@ -32,4 +32,6 @@ jobs:
           rustup override set nightly
 
       - name: Run Miri
-        run: cargo +nightly miri test
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+        run: cargo +nightly miri test --workspace --exclude dtvmgr-db
