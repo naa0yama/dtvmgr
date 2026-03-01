@@ -100,6 +100,9 @@ The following tests must be annotated with `#[cfg_attr(miri, ignore)]`:
 2. **TLS initialization**: Tests calling `reqwest::Client::builder().build()`.
    The TLS stack (rustls) crypto initialization is extremely slow under Miri
    (~10 min per call), causing CI timeouts.
+3. **Regex compilation**: Tests that compile `regex::Regex::new()` (directly or
+   indirectly). DFA construction under bytecode interpretation is extremely slow
+   (~2-6 min per test), causing CI timeouts.
 
 ```rust
 #[cfg_attr(miri, ignore)]
@@ -113,6 +116,13 @@ async fn test_http_endpoint() {
 #[test]
 fn test_builder_succeeds() {
     let client = MyClient::builder().build().unwrap();
+    // ...
+}
+
+#[cfg_attr(miri, ignore)]
+#[test]
+fn test_detect_by_pattern() {
+    // calls detect_channel() which compiles regex patterns
     // ...
 }
 ```

@@ -300,6 +300,7 @@ mod tests {
         assert_eq!(result.flags, "customFlag");
     }
 
+    #[cfg_attr(miri, ignore)] // regex DFA compilation is prohibitively slow under Miri
     #[test]
     fn test_detect_with_title_regex() {
         // Arrange
@@ -319,6 +320,7 @@ mod tests {
         assert_eq!(result.jl_run, "JL_special.txt");
     }
 
+    #[cfg_attr(miri, ignore)] // regex DFA compilation is prohibitively slow under Miri
     #[test]
     fn test_detect_title_regex_no_match() {
         // Arrange

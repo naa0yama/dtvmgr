@@ -292,6 +292,7 @@ mod tests {
         ]
     }
 
+    #[cfg_attr(miri, ignore)] // regex DFA compilation is prohibitively slow under Miri
     #[test]
     fn test_detect_by_short_in_brackets() {
         // Arrange
@@ -304,6 +305,7 @@ mod tests {
         assert_eq!(result.unwrap().short, "BS11");
     }
 
+    #[cfg_attr(miri, ignore)] // regex DFA compilation is prohibitively slow under Miri
     #[test]
     fn test_detect_by_short_at_start() {
         // Arrange
@@ -316,6 +318,7 @@ mod tests {
         assert_eq!(result.unwrap().short, "NHK-G");
     }
 
+    #[cfg_attr(miri, ignore)] // regex DFA compilation is prohibitively slow under Miri
     #[test]
     fn test_detect_by_short_at_start_underscore() {
         // Arrange
@@ -328,6 +331,7 @@ mod tests {
         assert_eq!(result.unwrap().short, "BS11");
     }
 
+    #[cfg_attr(miri, ignore)] // regex DFA compilation is prohibitively slow under Miri
     #[test]
     fn test_detect_by_channel_name() {
         // Arrange
@@ -340,6 +344,7 @@ mod tests {
         assert_eq!(result.unwrap().short, "BS11");
     }
 
+    #[cfg_attr(miri, ignore)] // regex DFA compilation is prohibitively slow under Miri
     #[test]
     fn test_detect_by_channel_name_recognize() {
         // Arrange
@@ -352,6 +357,7 @@ mod tests {
         assert_eq!(result.unwrap().short, "NHK-G");
     }
 
+    #[cfg_attr(miri, ignore)] // regex DFA compilation is prohibitively slow under Miri
     #[test]
     fn test_detect_by_service_id_in_brackets() {
         // Arrange
@@ -364,6 +370,7 @@ mod tests {
         assert_eq!(result.unwrap().short, "BS11");
     }
 
+    #[cfg_attr(miri, ignore)] // regex DFA compilation is prohibitively slow under Miri
     #[test]
     fn test_detect_recognize_after_bracket() {
         // Arrange
@@ -376,6 +383,7 @@ mod tests {
         assert_eq!(result.unwrap().short, "MX");
     }
 
+    #[cfg_attr(miri, ignore)] // regex DFA compilation is prohibitively slow under Miri
     #[test]
     fn test_detect_no_match() {
         // Arrange
@@ -388,6 +396,7 @@ mod tests {
         assert!(result.is_none());
     }
 
+    #[cfg_attr(miri, ignore)] // regex DFA compilation is prohibitively slow under Miri
     #[test]
     fn test_detect_channel_name_fallback_to_filename() {
         // Arrange
