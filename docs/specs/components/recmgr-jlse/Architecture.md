@@ -86,16 +86,16 @@ flowchart TD
 | --------------- | -------------------------------------- | ----- | -------- | --------------------------------------- |
 | チャンネル検出  | [channel.md](./channel.md)             | 1     | **完了** | CSV からの放送局検出                    |
 | パラメータ検出  | [param.md](./param.md)                 | 1     | **完了** | JL パラメータ検出・マージ               |
-| 設定・パス管理  | [settings.md](./settings.md)           | 2     | 未実装   | OutputPaths, BinaryPaths, init          |
-| 入力 AVS 生成   | [avs.md](./avs.md)                     | 2     | 未実装   | createAvs テンプレート                  |
-| chapter_exe     | [chapter_exe.md](./chapter_exe.md)     | 2     | 未実装   | 無音・シーンチェンジ検出                |
-| logoframe       | [logoframe.md](./logoframe.md)         | 2     | 未実装   | ロゴ検出 + ロゴ選択                     |
-| join_logo_scp   | [join_logo_scp.md](./join_logo_scp.md) | 2     | 未実装   | CM 区間決定                             |
-| tsdivider       | [tsdivider.md](./tsdivider.md)         | 2     | 未実装   | TS 分割 (任意)                          |
-| ffprobe         | [ffprobe.md](./ffprobe.md)             | 2     | 未実装   | メタ情報取得                            |
-| AVS 連結        | [output_avs.md](./output_avs.md)       | 2     | 未実装   | AVS ファイル連結                        |
-| チャプター生成  | [chapter.md](./chapter.md)             | 3     | 未実装   | TrimReader + CreateChapter + OutputData |
-| パイプライン    | [pipeline.md](./pipeline.md)           | 3     | 未実装   | オーケストレーション + CLI              |
+| 設定・パス管理  | [settings.md](./settings.md)           | 2     | **完了** | OutputPaths, BinaryPaths, init          |
+| 入力 AVS 生成   | [avs.md](./avs.md)                     | 2     | **完了** | createAvs テンプレート                  |
+| chapter_exe     | [chapter_exe.md](./chapter_exe.md)     | 2     | **完了** | 無音・シーンチェンジ検出                |
+| logoframe       | [logoframe.md](./logoframe.md)         | 2     | **完了** | ロゴ検出 + ロゴ選択                     |
+| join_logo_scp   | [join_logo_scp.md](./join_logo_scp.md) | 2     | **完了** | CM 区間決定                             |
+| tsdivider       | [tsdivider.md](./tsdivider.md)         | 2     | **完了** | TS 分割 (任意)                          |
+| ffprobe         | [ffprobe.md](./ffprobe.md)             | 2     | **完了** | メタ情報取得                            |
+| AVS 連結        | [output_avs.md](./output_avs.md)       | 2     | **完了** | AVS ファイル連結                        |
+| チャプター生成  | [chapter.md](./chapter.md)             | 3     | **完了** | TrimReader + CreateChapter + OutputData |
+| パイプライン    | [pipeline.md](./pipeline.md)           | 3     | **完了** | オーケストレーション + CLI              |
 | ffmpeg          | [ffmpeg.md](./ffmpeg.md)               | 4     | 未実装   | エンコード実行                          |
 | FFmpeg フィルタ | [ffmpeg_filter.md](./ffmpeg_filter.md) | 4     | 未実装   | filter_complex 文字列生成               |
 
@@ -103,18 +103,18 @@ flowchart TD
 
 | Node.js ソース                   | 行数 | Rust モジュール            | 状態     |
 | -------------------------------- | ---- | -------------------------- | -------- |
-| `src/jlse.js`                    | 165  | `pipeline.rs` + CLI        | 未実装   |
-| `src/settings.js`                | 44   | `settings.rs`              | 未実装   |
+| `src/jlse.js`                    | 165  | `pipeline.rs` + CLI        | **完了** |
+| `src/settings.js`                | 44   | `settings.rs`              | **完了** |
 | `src/channel.js`                 | 130  | `channel.rs`               | **完了** |
 | `src/param.js`                   | 96   | `param.rs`                 | **完了** |
-| `src/command/chapterexe.js`      | 34   | `command/chapter_exe.rs`   | 未実装   |
-| `src/command/logoframe.js`       | 96   | `command/logoframe.rs`     | 未実装   |
-| `src/command/join_logo_frame.js` | 47   | `command/join_logo_scp.rs` | 未実装   |
-| `src/command/tsdivider.js`       | 13   | `command/tsdivider.rs`     | 未実装   |
-| `src/command/ffprobe.js`         | 43   | `command/ffprobe.rs`       | 未実装   |
+| `src/command/chapterexe.js`      | 34   | `command/chapter_exe.rs`   | **完了** |
+| `src/command/logoframe.js`       | 96   | `command/logoframe.rs`     | **完了** |
+| `src/command/join_logo_frame.js` | 47   | `command/join_logo_scp.rs` | **完了** |
+| `src/command/tsdivider.js`       | 13   | `command/tsdivider.rs`     | **完了** |
+| `src/command/ffprobe.js`         | 43   | `command/ffprobe.rs`       | **完了** |
 | `src/command/ffmpeg.js`          | 64   | `command/ffmpeg.rs`        | 未実装   |
-| `src/output/avs.js`              | 37   | `output/avs.rs`            | 未実装   |
-| `src/output/chapter_jls.js`      | 520  | `output/chapter.rs`        | 未実装   |
+| `src/output/avs.js`              | 37   | `output/avs.rs`            | **完了** |
+| `src/output/chapter_jls.js`      | 520  | `output/chapter.rs`        | **完了** |
 | `src/output/ffmpeg_filter.js`    | 46   | `output/ffmpeg_filter.rs`  | 未実装   |
 
 ### ディレクトリツリー (計画)
@@ -205,10 +205,9 @@ crates/dtvmgr-jlse/src/
 
 ### 追加予定
 
-| クレート | 用途                           |
-| -------- | ------------------------------ |
-| `tokio`  | 非同期コマンド実行 (`Command`) |
-| `clap`   | CLI 引数パーサー               |
+| クレート | 用途             |
+| -------- | ---------------- |
+| `clap`   | CLI 引数パーサー |
 
 ---
 
@@ -275,11 +274,11 @@ crates/dtvmgr-jlse/src/
 
 ### 設計上の決定事項
 
-| 項目                         | 方針                                                                |
-| ---------------------------- | ------------------------------------------------------------------- |
-| 外部コマンド実行方式         | `tokio::process::Command` による非同期実行                          |
-| フレームレート               | チャプター生成は 29.97fps 固定 (元実装準拠)、フィルタ生成は動的取得 |
-| `OutputPaths` のライフタイム | パイプライン開始時に一度生成し、全モジュールで共有                  |
+| 項目                         | 方針                                                                      |
+| ---------------------------- | ------------------------------------------------------------------------- |
+| 外部コマンド実行方式         | `std::process::Command` による同期実行 (ライブラリクレートの軽量性を優先) |
+| フレームレート               | チャプター生成は 29.97fps 固定 (元実装準拠)、フィルタ生成は動的取得       |
+| `OutputPaths` のライフタイム | パイプライン開始時に一度生成し、全モジュールで共有                        |
 
 ### 元実装のバグ・改善点
 
