@@ -42,8 +42,11 @@ use dtvmgr_db::{
     upsert_titles,
 };
 use dtvmgr_jlse::channel::{detect_channel, load_channels as load_jlse_channels};
+use dtvmgr_jlse::command::ffmpeg::FfmpegMetadata;
 use dtvmgr_jlse::param::{detect_param, load_params};
-use dtvmgr_jlse::types::JlseConfig;
+use dtvmgr_jlse::pipeline::{PipelineContext, run_pipeline};
+use dtvmgr_jlse::settings::DataPaths;
+use dtvmgr_jlse::types::{AvsTarget, JlseConfig};
 
 /// CLI argument parser.
 #[derive(Parser)]
@@ -86,6 +89,66 @@ enum JlseSubcommands {
     Channel(JlseChannelArgs),
     /// Detect JL parameters from channel and filename.
     Param(JlseParamArgs),
+    /// Run the full CM detection pipeline.
+    Run(JlseRunArgs),
+}
+
+/// Encode target AVS selection for CLI.
+#[derive(clap::ValueEnum, Clone, Copy, Default)]
+enum AvsTargetArg {
+    /// Cut CM only.
+    Cutcm,
+    /// Cut CM + logo removal.
+    #[default]
+    CutcmLogo,
+}
+
+impl From<AvsTargetArg> for AvsTarget {
+    fn from(arg: AvsTargetArg) -> Self {
+        match arg {
+            AvsTargetArg::Cutcm => Self::CutCm,
+            AvsTargetArg::CutcmLogo => Self::CutCmLogo,
+        }
+    }
+}
+
+/// Arguments for `jlse run`.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(clap::Args)]
+struct JlseRunArgs {
+    /// Path to input .ts or .m2ts file.
+    #[arg(short, long)]
+    input: PathBuf,
+    /// Channel name override.
+    #[arg(short, long)]
+    channel: Option<String>,
+    /// Run tsdivider preprocessing.
+    #[arg(long, alias = "tsd")]
+    tsdivider: bool,
+    /// Encode target AVS.
+    #[arg(short, long, value_enum, default_value_t)]
+    target: AvsTargetArg,
+    /// Enable `FFmpeg` filter output.
+    #[arg(short, long)]
+    filter: bool,
+    /// Enable `FFmpeg` encoding.
+    #[arg(short, long)]
+    encode: bool,
+    /// Additional `FFmpeg` options.
+    #[arg(long)]
+    ffmpeg_option: Option<String>,
+    /// Encode output directory.
+    #[arg(long)]
+    outdir: Option<PathBuf>,
+    /// Encode output filename.
+    #[arg(long)]
+    outname: Option<String>,
+    /// Remove intermediate files after processing.
+    #[arg(short, long)]
+    remove: bool,
+    /// Add chapter to encoded file.
+    #[arg(long)]
+    add_chapter: bool,
 }
 
 /// Arguments for `jlse channel`.
@@ -1605,7 +1668,27 @@ fn resolve_jlse_config(dir: Option<&PathBuf>) -> Result<JlseConfig> {
     let config = AppConfig::load(&config_path).context("failed to load config")?;
     config
         .jlse
-        .context("jlse config not found in dtvmgr.toml; add a [jlse] section with jl_dir, logo_dir, result_dir")
+        .context("jlse config not found in dtvmgr.toml; add [jlse.dirs] with jl, logo, result")
+}
+
+/// Environment variable name for channel name override.
+///
+/// The original Node.js tool uses `CHNNELNAME` (intentional typo preserved).
+const CHANNEL_ENV_VAR: &str = "CHNNELNAME";
+
+/// Resolve channel name from CLI argument or environment variable.
+fn resolve_channel_name(arg: Option<&str>) -> Option<String> {
+    arg.map(ToOwned::to_owned)
+        .or_else(|| std::env::var(CHANNEL_ENV_VAR).ok())
+}
+
+/// Read `FFmpeg` metadata from `EPGStation` environment variables.
+fn read_metadata_from_env() -> FfmpegMetadata {
+    FfmpegMetadata {
+        title: std::env::var("HALF_WIDTH_NAME").unwrap_or_default(),
+        description: std::env::var("DESCRIPTION").unwrap_or_default(),
+        extended: std::env::var("EXTENDED").unwrap_or_default(),
+    }
 }
 
 /// Runs the `jlse channel` subcommand.
@@ -1619,13 +1702,10 @@ fn resolve_jlse_config(dir: Option<&PathBuf>) -> Result<JlseConfig> {
 #[instrument(skip_all)]
 fn run_jlse_channel(args: &JlseChannelArgs, dir: Option<&PathBuf>) -> Result<()> {
     let jlse_config = resolve_jlse_config(dir)?;
-    let csv_path = jlse_config.jl_dir.join("data").join("ChList.csv");
-    let channels = load_jlse_channels(&csv_path)?;
+    let data = DataPaths::from_config(&jlse_config);
+    let channels = load_jlse_channels(&data.channel_list)?;
 
-    let channel_name = args
-        .channel
-        .clone()
-        .or_else(|| std::env::var("CHNNELNAME").ok());
+    let channel_name = resolve_channel_name(args.channel.as_deref());
 
     let filepath = args.input.to_string_lossy();
     let result = detect_channel(&channels, &filepath, channel_name.as_deref());
@@ -1655,20 +1735,15 @@ fn run_jlse_channel(args: &JlseChannelArgs, dir: Option<&PathBuf>) -> Result<()>
 #[instrument(skip_all)]
 fn run_jlse_param(args: &JlseParamArgs, dir: Option<&PathBuf>) -> Result<()> {
     let jlse_config = resolve_jlse_config(dir)?;
-    let jl_data_dir = jlse_config.jl_dir.join("data");
+    let data = DataPaths::from_config(&jlse_config);
+    let channels = load_jlse_channels(&data.channel_list)?;
 
-    let csv_path_ch = jl_data_dir.join("ChList.csv");
-    let channels = load_jlse_channels(&csv_path_ch)?;
-
-    let channel_name = args
-        .channel
-        .clone()
-        .or_else(|| std::env::var("CHNNELNAME").ok());
+    let channel_name = resolve_channel_name(args.channel.as_deref());
     let filepath = args.input.to_string_lossy();
     let channel = detect_channel(&channels, &filepath, channel_name.as_deref());
 
-    let params_jl1 = load_params(&jl_data_dir.join("ChParamJL1.csv"))?;
-    let params_jl2 = load_params(&jl_data_dir.join("ChParamJL2.csv"))?;
+    let params_jl1 = load_params(&data.param_jl1)?;
+    let params_jl2 = load_params(&data.param_jl2)?;
 
     let filename = args.input.file_stem().unwrap_or_default().to_string_lossy();
     let result = detect_param(&params_jl1, &params_jl2, channel.as_ref(), &filename);
@@ -1677,6 +1752,38 @@ fn run_jlse_param(args: &JlseParamArgs, dir: Option<&PathBuf>) -> Result<()> {
     println!("flags: {}", result.flags);
     println!("options: {}", result.options);
     Ok(())
+}
+
+/// Runs the `jlse run` subcommand.
+///
+/// Executes the full CM detection pipeline.
+///
+/// # Errors
+///
+/// Returns an error if the pipeline fails.
+#[instrument(skip_all)]
+fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
+    let jlse_config = resolve_jlse_config(dir)?;
+
+    let channel_name = resolve_channel_name(args.channel.as_deref());
+
+    let ctx = PipelineContext {
+        input: args.input.clone(),
+        channel_name,
+        tsdivider: args.tsdivider,
+        config: jlse_config,
+        filter: args.filter,
+        encode: args.encode,
+        target: AvsTarget::from(args.target),
+        add_chapter: args.add_chapter,
+        ffmpeg_option: args.ffmpeg_option.clone(),
+        out_dir: args.outdir.clone(),
+        out_name: args.outname.clone(),
+        remove: args.remove,
+        metadata: read_metadata_from_env(),
+    };
+
+    run_pipeline(&ctx)
 }
 
 // ── Syoboi / TMDB helpers ────────────────────────────────────
@@ -2055,6 +2162,7 @@ async fn main() -> Result<()> {
         Commands::Jlse(jlse) => match jlse.command {
             JlseSubcommands::Channel(args) => run_jlse_channel(&args, cli.dir.as_ref()),
             JlseSubcommands::Param(args) => run_jlse_param(&args, cli.dir.as_ref()),
+            JlseSubcommands::Run(args) => run_jlse_run(&args, cli.dir.as_ref()),
         },
     }
 }
