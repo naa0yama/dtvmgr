@@ -1,6 +1,6 @@
 //! Core types for the jlse CM detection pipeline.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -50,10 +50,61 @@ pub struct DetectionParam {
 /// Configuration for the jlse CM detection pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JlseConfig {
+    /// Directory paths (JL, logo, result).
+    pub dirs: JlseDirs,
+    /// Binary path overrides. Omit to use defaults.
+    #[serde(default)]
+    pub bins: JlseBins,
+}
+
+/// Required directory paths for the pipeline.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JlseDirs {
     /// Path to JL directory containing command files and `data/`.
-    pub jl_dir: PathBuf,
+    pub jl: PathBuf,
     /// Path to logo directory containing `.lgd` files.
-    pub logo_dir: PathBuf,
+    pub logo: PathBuf,
     /// Path to result output directory.
-    pub result_dir: PathBuf,
+    pub result: PathBuf,
+}
+
+impl JlseDirs {
+    /// Derive the default binary directory from the JL path.
+    ///
+    /// Returns `<jl_parent>/bin/` — the conventional location for
+    /// JL-bundled binaries.
+    #[must_use]
+    pub fn bin_dir(&self) -> PathBuf {
+        self.jl
+            .parent()
+            .unwrap_or_else(|| Path::new("/"))
+            .join("bin")
+    }
+}
+
+/// Encode target AVS selection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AvsTarget {
+    /// Cut CM only (`in_cutcm.avs`).
+    CutCm,
+    /// Cut CM + logo removal (`in_cutcm_logo.avs`).
+    #[default]
+    CutCmLogo,
+}
+
+/// Optional binary path overrides. `None` fields use default derivation.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JlseBins {
+    /// logoframe binary override.
+    pub logoframe: Option<PathBuf>,
+    /// `chapter_exe` binary override.
+    pub chapter_exe: Option<PathBuf>,
+    /// tsdivider binary override.
+    pub tsdivider: Option<PathBuf>,
+    /// `join_logo_scp` binary override.
+    pub join_logo_scp: Option<PathBuf>,
+    /// ffprobe binary override.
+    pub ffprobe: Option<PathBuf>,
+    /// ffmpeg binary override.
+    pub ffmpeg: Option<PathBuf>,
 }
