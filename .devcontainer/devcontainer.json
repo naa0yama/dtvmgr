@@ -41,6 +41,7 @@
 				"Anthropic.claude-code", // 			Claude Code for VSCode
 				"dprint.dprint", // 					Dprint Code Formatter
 				"EditorConfig.EditorConfig", // 		EditorConfig for VS Code
+				"MermaidChart.vscode-mermaid-chart", // Mermaid
 				"ms-azuretools.vscode-containers", // 	Container Tools
 				"ms-vscode.live-server", // 			Live Preview
 				"redhat.vscode-yaml", // 				YAML
