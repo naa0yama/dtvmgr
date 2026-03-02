@@ -1,7 +1,7 @@
 //! `AppConfig` struct and TOML read/write.
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use dtvmgr_jlse::types::JlseConfig;
@@ -264,21 +264,97 @@ impl AppConfig {
             let _ = writeln!(out, "regex_titles = [{}]", patterns.join(", "));
         }
 
-        // [jlse]
+        // [jlse.dirs] + [jlse.bins]
         out.push_str("\n# CM detection pipeline settings.\n");
         if let Some(jlse) = &self.jlse {
-            out.push_str("[jlse]\n");
-            let _ = writeln!(out, "jl_dir = \"{}\"", jlse.jl_dir.display());
-            let _ = writeln!(out, "logo_dir = \"{}\"", jlse.logo_dir.display());
-            let _ = writeln!(out, "result_dir = \"{}\"", jlse.result_dir.display());
+            out.push_str("[jlse.dirs]\n");
+            let _ = writeln!(out, "jl = \"{}\"", jlse.dirs.jl.display());
+            let _ = writeln!(out, "logo = \"{}\"", jlse.dirs.logo.display());
+            let _ = writeln!(out, "result = \"{}\"", jlse.dirs.result.display());
+
+            out.push_str("\n[jlse.bins]\n");
+            let bins = &jlse.bins;
+            let jl_bin_dir = jlse.dirs.bin_dir();
+            Self::write_bin_field(
+                &mut out,
+                "logoframe",
+                bins.logoframe.as_ref(),
+                &jl_bin_dir,
+                "logoframe",
+            );
+            Self::write_bin_field(
+                &mut out,
+                "chapter_exe",
+                bins.chapter_exe.as_ref(),
+                &jl_bin_dir,
+                "chapter_exe",
+            );
+            Self::write_bin_field(
+                &mut out,
+                "tsdivider",
+                bins.tsdivider.as_ref(),
+                &jl_bin_dir,
+                "tsdivider",
+            );
+            Self::write_bin_field(
+                &mut out,
+                "join_logo_scp",
+                bins.join_logo_scp.as_ref(),
+                &jl_bin_dir,
+                "join_logo_scp",
+            );
+            Self::write_bin_field(
+                &mut out,
+                "ffprobe",
+                bins.ffprobe.as_ref(),
+                Path::new("/usr/local/bin"),
+                "ffprobe",
+            );
+            Self::write_bin_field(
+                &mut out,
+                "ffmpeg",
+                bins.ffmpeg.as_ref(),
+                Path::new("/usr/local/bin"),
+                "ffmpeg",
+            );
         } else {
-            out.push_str("# [jlse]\n");
-            out.push_str("# jl_dir = \"/path/to/JL\"\n");
-            out.push_str("# logo_dir = \"/path/to/logo\"\n");
-            out.push_str("# result_dir = \"/path/to/result\"\n");
+            out.push_str("# [jlse.dirs]\n");
+            out.push_str("# jl = \"/path/to/JL\"\n");
+            out.push_str("# logo = \"/path/to/logo\"\n");
+            out.push_str("# result = \"/path/to/result\"\n");
+            out.push_str("#\n");
+            out.push_str("# [jlse.bins]\n");
+            out.push_str("# logoframe = \"/path/to/bin/logoframe\"\n");
+            out.push_str("# chapter_exe = \"/path/to/bin/chapter_exe\"\n");
+            out.push_str("# tsdivider = \"/path/to/bin/tsdivider\"\n");
+            out.push_str("# join_logo_scp = \"/path/to/bin/join_logo_scp\"\n");
+            out.push_str("# ffprobe = \"/usr/local/bin/ffprobe\"\n");
+            out.push_str("# ffmpeg = \"/usr/local/bin/ffmpeg\"\n");
         }
 
         out
+    }
+
+    /// Write a single binary field as active or commented-out line.
+    fn write_bin_field(
+        out: &mut String,
+        key: &str,
+        value: Option<&PathBuf>,
+        default_dir: &Path,
+        default_name: &str,
+    ) {
+        match value {
+            Some(p) => {
+                let _ = writeln!(out, "{key} = \"{}\"", p.display());
+            }
+            None => {
+                let _ = writeln!(
+                    out,
+                    "# {key} = \"{}\"",
+                    default_dir.join(default_name).display()
+                );
+            }
+        }
     }
 }
 
@@ -446,5 +522,66 @@ mod tests {
 
         // Assert
         assert_eq!(config, AppConfig::default());
+    }
+
+    #[test]
+    fn test_jlse_roundtrip() {
+        use dtvmgr_jlse::types::{JlseBins, JlseDirs};
+
+        // Arrange
+        let config = AppConfig {
+            tmdb: TmdbConfig {
+                language: Some(String::from("ja-JP")),
+                ..TmdbConfig::default()
+            },
+            jlse: Some(JlseConfig {
+                dirs: JlseDirs {
+                    jl: PathBuf::from("/opt/module/JL"),
+                    logo: PathBuf::from("/opt/module/logo"),
+                    result: PathBuf::from("/tmp/result"),
+                },
+                bins: JlseBins::default(),
+            }),
+            ..AppConfig::default()
+        };
+
+        // Act
+        let toml_str = config.to_commented_toml();
+        let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
+
+        // Assert
+        assert_eq!(parsed, config);
+    }
+
+    #[test]
+    fn test_jlse_with_bins_override_roundtrip() {
+        use dtvmgr_jlse::types::{JlseBins, JlseDirs};
+
+        // Arrange
+        let config = AppConfig {
+            tmdb: TmdbConfig {
+                language: Some(String::from("ja-JP")),
+                ..TmdbConfig::default()
+            },
+            jlse: Some(JlseConfig {
+                dirs: JlseDirs {
+                    jl: PathBuf::from("/opt/module/JL"),
+                    logo: PathBuf::from("/opt/module/logo"),
+                    result: PathBuf::from("/tmp/result"),
+                },
+                bins: JlseBins {
+                    ffmpeg: Some(PathBuf::from("/usr/bin/ffmpeg")),
+                    ..JlseBins::default()
+                },
+            }),
+            ..AppConfig::default()
+        };
+
+        // Act
+        let toml_str = config.to_commented_toml();
+        let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
+
+        // Assert
+        assert_eq!(parsed, config);
     }
 }
