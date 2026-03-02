@@ -152,6 +152,19 @@ USER root
 
 
 #- -------------------------------------------------------------------------------------------------
+#- Copy libs
+#-
+FROM ghcr.io/naa0yama/join_logo_scp_trial:v25.10.00-beta30-ubuntu2404 AS jlse
+
+RUN echo "**** Directory Create ****" && \
+	set -euxo pipefail && \
+	mkdir -p /tmp/lib && \
+	find /usr/lib/x86_64-linux-gnu \( -type f -o -type l \) \
+	\( -name 'libdrm.so*' -o -name 'libmp3lame.so*' \) \
+	-exec cp -av {} /tmp/lib/ \;
+
+
+#- -------------------------------------------------------------------------------------------------
 #- Development
 #-
 FROM builder-base AS development
@@ -216,32 +229,18 @@ RUN echo "**** Install Claude Code ****" && \
 	claude --version && \
 	type cc
 
+ENV PKG_CONFIG_PATH=/opt/ffmpeg/lib/pkgconfig \
+	LD_LIBRARY_PATH=/opt/ffmpeg/lib \
+	LIBVA_DRIVERS_PATH=/opt/ffmpeg/lib/dri
 
-#- -------------------------------------------------------------------------------------------------
-#- Production
-#-
-#FROM debian:bullseye-slim
-#ARG DEBIAN_FRONTEND \
-#	TZ
-#
-#SHELL [ "/bin/bash", "-c" ]
-#
-#RUN echo "**** set Timezone ****" && \
-#	set -euxo pipefail && \
-#	ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime && echo ${TZ} > /etc/timezone
-#
-#RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-#	--mount=type=cache,target=/var/lib/apt,sharing=locked \
-#	\
-#	echo "**** Dependencies ****" && \
-#	set -euxo pipefail && \
-#	apt-get -y install --no-install-recommends \
-#	bash \
-#	ca-certificates
-#
-##COPY --from=development /usr/local/cargo/bin/myapp /usr/local/bin/myapp
-#
-#SHELL [ "/bin/sh", "-c" ]
-##CMD ["myapp"]
+COPY --from=jlse 			/join_logo_scp_trial							/join_logo_scp_trial
+COPY --from=jlse 			/opt/ffmpeg										/opt/ffmpeg
+COPY --from=jlse 			/tmp/lib										/usr/lib/x86_64-linux-gnu
 
-# vim: set filetype=dockerfile:
+RUN echo  "**** FFmpeg | check library ****" && \
+	set -euxo pipefail && \
+	find /usr/lib/x86_64-linux-gnu -name 'libdrm.so*' -or -name 'libmp3lame.so*' && \
+	/opt/ffmpeg/bin/ffmpeg -hide_banner -hwaccels && \
+	/opt/ffmpeg/bin/ffmpeg -hide_banner -buildconf && \
+	for i in decoders encoders; do echo ${i}:; /opt/ffmpeg/bin/ffmpeg -hide_banner -${i} | \
+	egrep -i "[x|h]264|[x|h]265|av1|cuvid|hevc|libmfx|nv[dec|enc]|qsv|vaapi|vp9"; done
