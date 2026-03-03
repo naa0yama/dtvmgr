@@ -104,6 +104,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_run_crash_with_output_file_existing() {
         // Arrange: a "binary" that writes output but exits with failure
         let dir = tempfile::tempdir().unwrap();
@@ -136,6 +137,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_run_crash_without_output_file() {
         // Arrange: a "binary" that exits with failure and no output
         let dir = tempfile::tempdir().unwrap();
