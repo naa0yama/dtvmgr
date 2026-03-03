@@ -2693,6 +2693,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_resolve_channel_name_none() {
         // Arrange: clear env var to ensure None fallback
         unsafe { std::env::remove_var(CHANNEL_ENV_VAR) };
@@ -2704,6 +2705,7 @@ mod tests {
     // ── read_metadata_from_env ─────────────────────────────────
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_read_metadata_from_env_empty() {
         // Arrange
         unsafe {
