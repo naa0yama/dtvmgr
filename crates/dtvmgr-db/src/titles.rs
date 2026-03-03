@@ -442,6 +442,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_and_load_titles() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -463,6 +464,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_updates_on_last_update_change() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -482,6 +484,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_skips_when_last_update_unchanged() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -499,6 +502,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_preserves_tmdb_mapping() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -521,6 +525,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_load_titles_by_tids() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -541,6 +546,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_load_titles_by_tids_empty() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -553,6 +559,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_update_tmdb_mapping() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -570,6 +577,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_update_tmdb_search_result() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -603,6 +611,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_preserves_tmdb_search_result() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -642,6 +651,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_delete_titles_by_cat_not_in() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -665,6 +675,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_delete_titles_by_cat_not_in_empty_allowed() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -684,6 +695,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_update_tmdb_last_updated() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -705,6 +717,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_preserves_tmdb_last_updated() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -728,6 +741,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_and_load_with_keywords() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -747,6 +761,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_and_load_empty_keywords() {
         // Arrange
         let (conn, _dir) = setup_db();

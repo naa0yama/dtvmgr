@@ -313,6 +313,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_and_load_programs() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -333,6 +334,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_programs_updates_existing() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -353,6 +355,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_programs_skips_when_last_update_unchanged() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -370,6 +373,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_preserves_tmdb_episode_id() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -388,6 +392,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_load_programs_by_tids() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -433,6 +438,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_load_programs_by_tids_empty() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -445,6 +451,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_computes_duration_min() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -460,6 +467,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_load_programs_ordered_by_st_time() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -480,6 +488,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_delete_programs_by_tids_not_in() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -527,6 +536,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_delete_programs_by_tids_not_in_empty() {
         // Arrange
         let (conn, _dir) = setup_db();

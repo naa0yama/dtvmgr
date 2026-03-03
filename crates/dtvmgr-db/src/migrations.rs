@@ -155,6 +155,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_migrations_idempotent() {
         // Arrange
         let conn = Connection::open_in_memory().unwrap();
@@ -171,6 +172,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_tables_exist_after_migration() {
         // Arrange
         let conn = Connection::open_in_memory().unwrap();
@@ -194,6 +196,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_v1_to_v2_migration() {
         // Arrange: start from v1
         let conn = Connection::open_in_memory().unwrap();
@@ -222,6 +225,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_v2_to_v3_migration() {
         // Arrange: start from v2
         let conn = Connection::open_in_memory().unwrap();
@@ -247,6 +251,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_v3_to_v4_migration() {
         // Arrange: start from v3
         let conn = Connection::open_in_memory().unwrap();
@@ -272,6 +277,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_v4_to_v5_migration() {
         // Arrange: start from v4
         let conn = Connection::open_in_memory().unwrap();
@@ -298,6 +304,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_v5_to_v6_migration() {
         // Arrange: start from v5
         let conn = Connection::open_in_memory().unwrap();

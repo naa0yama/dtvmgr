@@ -172,6 +172,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_and_load_channel_groups() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -201,6 +202,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_and_load_channels() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -237,6 +239,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_channel_groups_updates_existing() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -273,6 +276,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_channel_groups_unchanged_returns_zero() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -291,6 +295,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_channels_updates_existing() {
         // Arrange
         let (conn, _dir) = setup_db();
@@ -324,6 +329,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_channels_with_programs_present() {
         // Arrange — insert channel group, channel, title, and program
         let (conn, _dir) = setup_db();
@@ -400,6 +406,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_channels_preserves_ch_gid_when_null() {
         // Arrange — insert channel with ch_gid
         let (conn, _dir) = setup_db();
@@ -432,6 +439,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_load_empty_tables() {
         // Arrange
         let (conn, _dir) = setup_db();

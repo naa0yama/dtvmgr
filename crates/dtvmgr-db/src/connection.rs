@@ -55,6 +55,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_open_db_in_temp_dir() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();
@@ -71,6 +72,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_foreign_keys_enabled() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();
@@ -87,6 +89,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_resolve_db_path_with_dir() {
         // Arrange
         let dir = PathBuf::from("/tmp/myproject");
@@ -99,6 +102,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_resolve_db_path_default() {
         // Arrange & Act
         let path = resolve_db_path(None).unwrap();
