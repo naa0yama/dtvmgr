@@ -98,29 +98,28 @@ For universal Miri rules and decision flowchart, see
 
 ### Crate-Level Exclusions
 
-| Crate     | Reason                                 | Tests |
-| --------- | -------------------------------------- | ----- |
-| dtvmgr-db | All tests use rusqlite (C FFI binding) | 50    |
-| dtvmgr    | Binary crate — integration tests only  | N/A   |
+| Crate     | Reason                                                   | Tests |
+| --------- | -------------------------------------------------------- | ----- |
+| dtvmgr-db | FFI — all tests use rusqlite (bundled SQLite C bindings) | 50    |
 
 ### Per-Test Skip Categories
 
-1. **File system (tempfile)** — 69 tests. Tests using `tempfile::tempdir()` or real file I/O. Miri has limited file system support. Affects dtvmgr-cli (14) and dtvmgr-jlse (55).
-2. **FFI / C bindings (rusqlite)** — 50 tests. All dtvmgr-db tests use SQLite via C FFI. Entire crate excluded from Miri CI.
-3. **Network I/O (reqwest, wiremock)** — 27 tests. HTTP client and mock server use unsupported socket syscalls. Affects dtvmgr-api (22) and dtvmgr-cli (5).
-4. **Process spawning (Command)** — 19 tests. Tests that execute external tools via `std::process::Command`. Affects dtvmgr-jlse.
-5. **TLS / Crypto (reqwest + rustls)** — included in Network I/O count. TLS initialization is extremely slow under Miri (~10 min/call).
-6. **Regex compilation** — included in tests that indirectly trigger `regex::Regex::new()`. DFA construction under interpretation is extremely slow (~2-6 min/test).
-7. **Environment variables** — 3 tests. Tests calling `std::env::set_var` or relying on `HOME`/`current_dir`. Affects dtvmgr-cli config/paths.
+1. **File system (`tempfile` / `dirs`)** — 57 tests. Miri cannot perform real filesystem I/O (`mkdir`, `write`, `read_dir`, `canonicalize`). Tests in `dtvmgr-jlse` (avs, pipeline, settings, output/\*, command/logoframe, command/chapter\_exe, channel, param) and `dtvmgr` (config/config, config/mapping, config/paths, main) use `tempfile::tempdir()` or `dirs::config_dir()`.
+2. **Process spawning (`assert_cmd` / `std::process::Command`)** — 26 tests. Miri does not support `fork`/`exec`. Integration tests in `dtvmgr` (cli\_subcommands\_test, cli\_syoboi\_test) use `assert_cmd`, and `dtvmgr-jlse` (command/mod) tests use `std::process::Command` directly.
+3. **Network I/O (`wiremock` / `reqwest`)** — 22 tests. Miri cannot open sockets or perform TLS handshakes. All HTTP client tests in `dtvmgr-api` (tmdb/client, syoboi/client) build `reqwest` clients and/or spin up `wiremock` mock servers.
+4. **Regex DFA compilation (`regex`)** — 11 tests. Regex DFA compilation is prohibitively slow under Miri's interpreter. Channel detection tests in `dtvmgr-jlse` (channel) and param detection tests (param) compile regex patterns at runtime.
+5. **Clock syscall (`chrono::Utc::now`)** — 6 tests. `Utc::now()` issues a clock syscall unsupported by Miri. Cooldown and time-range tests in `dtvmgr` (main) and `dtvmgr-api` (syoboi/params).
+6. **FFI / `rusqlite`** — 3 tests. Tests in `dtvmgr` (main) call `dtvmgr_db::open_db` which invokes SQLite FFI through `rusqlite`.
+7. **Environment variables (`set_var` / `remove_var`)** — 2 tests. `std::env::set_var` and `remove_var` are unsafe under Miri with `-Zmiri-disable-isolation` due to potential data races. Tests in `dtvmgr` (main).
 
 ### Statistics
 
-| Metric                      | Count                        |
-| --------------------------- | ---------------------------- |
-| Total tests                 | 499                          |
-| Miri-compatible             | 329                          |
-| Miri-ignored (per-test)     | 170                          |
-| Miri-excluded (crate-level) | 2 crates (dtvmgr-db, dtvmgr) |
+| Metric                      | Count |
+| --------------------------- | ----- |
+| Total tests                 | 499   |
+| Miri-compatible             | 322   |
+| Miri-ignored (per-test)     | 127   |
+| Miri-excluded (crate-level) | 50    |
 
 ## Coverage
 

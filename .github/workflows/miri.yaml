@@ -15,11 +15,18 @@ concurrency:
 
 jobs:
   miri:
-    name: Miri
+    name: Miri (${{ matrix.crate }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     permissions:
       contents: read # Required to checkout the repository
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          - dtvmgr-api
+          - dtvmgr
+          - dtvmgr-jlse
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -34,4 +41,5 @@ jobs:
       - name: Run Miri
         env:
           MIRIFLAGS: -Zmiri-disable-isolation
-        run: cargo +nightly miri test --workspace --exclude dtvmgr-db --exclude dtvmgr
+          CRATE: ${{ matrix.crate }}
+        run: cargo +nightly miri test -p "${CRATE}"
