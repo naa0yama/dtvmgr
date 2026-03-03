@@ -160,6 +160,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_load_nonexistent_returns_empty() {
         // Arrange
         let path = Path::new("/tmp/nonexistent_mapping_test_file.toml");
@@ -172,6 +173,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_load_valid_toml() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();
@@ -208,6 +210,7 @@ tmdb_season_number = 2
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_load_without_season_number() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();
@@ -263,6 +266,7 @@ tmdb_series_id = 67890
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_save_and_load_roundtrip() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();
@@ -439,6 +443,7 @@ tmdb_series_id = 67890
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_load_or_fetch_local_exists() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();

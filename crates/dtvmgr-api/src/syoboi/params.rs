@@ -246,6 +246,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_resolve_time_range_both_none() {
         // Arrange & Act
         let range = resolve_time_range(None, None).unwrap();

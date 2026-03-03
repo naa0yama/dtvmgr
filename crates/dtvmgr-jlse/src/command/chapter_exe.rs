@@ -60,6 +60,7 @@ mod tests {
 
     use std::path::Path;
 
+    use super::super::test_utils::write_script;
     use super::*;
 
     #[test]
@@ -112,22 +113,15 @@ mod tests {
         let avs_file = dir.path().join("input.avs");
         std::fs::write(&avs_file, "dummy avs").unwrap();
 
-        let script = dir.path().join("fake_chapter_exe.sh");
         // Script: write to the output file (arg -o position=7) then exit 1
-        std::fs::write(
-            &script,
-            format!(
+        let script = write_script(
+            dir.path(),
+            "fake_chapter_exe.sh",
+            &format!(
                 "#!/bin/sh\necho 'chapter data' > '{}'\nexit 1",
                 output_file.display()
             ),
-        )
-        .unwrap();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        );
 
         // Act: should succeed because output file exists after crash
         let result = run(&script, &avs_file, &output_file);
@@ -145,14 +139,7 @@ mod tests {
         let avs_file = dir.path().join("input.avs");
         std::fs::write(&avs_file, "dummy avs").unwrap();
 
-        let script = dir.path().join("fake_chapter_exe.sh");
-        std::fs::write(&script, "#!/bin/sh\nexit 1").unwrap();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        let script = write_script(dir.path(), "fake_chapter_exe.sh", "#!/bin/sh\nexit 1");
 
         // Act
         let result = run(&script, &avs_file, &output_file);

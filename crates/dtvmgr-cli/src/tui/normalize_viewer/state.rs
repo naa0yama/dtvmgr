@@ -1551,4 +1551,168 @@ mod tests {
         assert!(output[0].starts_with("TID\t"));
         assert!(output[1].starts_with("1\t"));
     }
+
+    // -------------------------------------------------------------------
+    // MediaType Display tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_media_type_display() {
+        assert_eq!(MediaType::Movie.to_string(), "Movie");
+        assert_eq!(MediaType::Ova.to_string(), "Ova");
+        assert_eq!(MediaType::Tv.to_string(), "Tv");
+    }
+
+    // -------------------------------------------------------------------
+    // Filter push/pop tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_filter_push_pop() {
+        // Arrange
+        let mut state = make_state();
+        assert_eq!(state.filtered_indices().len(), 3);
+
+        // Act: type "spy" char by char
+        state.filter_push('s');
+        state.filter_push('p');
+        state.filter_push('y');
+
+        // Assert: only SPY×FAMILY visible
+        assert_eq!(state.filtered_indices().len(), 1);
+        assert_eq!(state.current_row().unwrap().tid, 1);
+        assert_eq!(state.filter, "spy");
+
+        // Act: pop all
+        state.filter_pop();
+        state.filter_pop();
+        state.filter_pop();
+
+        // Assert: all rows visible
+        assert!(state.filter.is_empty());
+        assert_eq!(state.filtered_indices().len(), 3);
+    }
+
+    #[test]
+    fn test_filter_by_base_query() {
+        // Arrange: apply regex so base_query is set, then filter by it
+        let rows = vec![
+            make_row(1, "SPY×FAMILY Season 2", Some(1), Some(2023)),
+            make_row(2, "Bocchi the Rock!", Some(1), Some(2022)),
+        ];
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &[]);
+        state.regex_input = String::from(r"Season\s+\d+");
+        state.apply_regex();
+        // base_query for row 0 is "SPY×FAMILY"
+
+        // Act: filter by "SPY"
+        state.set_filter(String::from("SPY"));
+
+        // Assert: both title and base_query match "SPY" for row 0
+        assert_eq!(state.filtered_indices().len(), 1);
+        assert_eq!(state.current_row().unwrap().tid, 1);
+    }
+
+    // -------------------------------------------------------------------
+    // Regex cursor left/right tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_regex_cursor_left_right() {
+        // Arrange
+        let mut state = make_state();
+        state.regex_input = String::from("abc");
+        state.regex_cursor = 3;
+
+        // Act: move left
+        state.regex_cursor_left();
+        assert_eq!(state.regex_cursor, 2);
+
+        state.regex_cursor_left();
+        assert_eq!(state.regex_cursor, 1);
+
+        state.regex_cursor_left();
+        assert_eq!(state.regex_cursor, 0);
+
+        // At 0, should not move
+        state.regex_cursor_left();
+        assert_eq!(state.regex_cursor, 0);
+
+        // Move right
+        state.regex_cursor_right();
+        assert_eq!(state.regex_cursor, 1);
+
+        state.regex_cursor_right();
+        state.regex_cursor_right();
+        assert_eq!(state.regex_cursor, 3);
+
+        // At end, should not move
+        state.regex_cursor_right();
+        assert_eq!(state.regex_cursor, 3);
+    }
+
+    #[test]
+    fn test_regex_cursor_display_width() {
+        // Arrange: mix of ASCII and multibyte
+        let mut state = make_state();
+        state.regex_input = String::from("aあb");
+        state.regex_cursor = 2; // "aあ" = 1 + 2 = 3 columns
+
+        // Act
+        let width = state.regex_cursor_display_width();
+
+        // Assert
+        assert_eq!(width, 3);
+    }
+
+    // -------------------------------------------------------------------
+    // Shift move boundary tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_shift_move_up_at_zero() {
+        // Arrange: cursor at 0
+        let mut state = make_state();
+        assert_eq!(state.cursor(), 0);
+
+        // Act: shift_move_up at 0 is no-op
+        state.shift_move_up();
+
+        // Assert
+        assert_eq!(state.cursor(), 0);
+    }
+
+    #[test]
+    fn test_shift_move_down_at_end() {
+        // Arrange: cursor at last row
+        let mut state = make_state();
+        state.move_down();
+        state.move_down(); // cursor at 2 (last)
+        assert_eq!(state.cursor(), 2);
+
+        // Act: shift_move_down at end is no-op
+        state.shift_move_down();
+
+        // Assert
+        assert_eq!(state.cursor(), 2);
+    }
+
+    // -------------------------------------------------------------------
+    // Regex delete_back inner path
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_regex_delete_back_inner() {
+        // Arrange: cursor in the middle of input
+        let mut state = make_state();
+        state.regex_input = String::from("abcde");
+        state.regex_cursor = 3; // after 'c'
+
+        // Act
+        state.regex_delete_back();
+
+        // Assert: 'c' removed, cursor moves back
+        assert_eq!(state.regex_input, "abde");
+        assert_eq!(state.regex_cursor, 2);
+    }
 }

@@ -2169,7 +2169,11 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::undocumented_unsafe_blocks)]
+    #![allow(
+        clippy::unwrap_used,
+        clippy::undocumented_unsafe_blocks,
+        clippy::indexing_slicing
+    )]
 
     use super::*;
 
@@ -2305,6 +2309,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_is_within_cooldown_recent() {
         // Arrange: 10 hours ago (within 12h cooldown)
         let ts = (Utc::now() - chrono::Duration::hours(10))
@@ -2316,6 +2321,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_is_within_cooldown_expired() {
         // Arrange: 13 hours ago (past 12h cooldown)
         let ts = (Utc::now() - chrono::Duration::hours(13))
@@ -2361,6 +2367,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_filter_titles_default() {
         // Arrange: one title within cooldown, one outside
         let recent_ts = (Utc::now() - chrono::Duration::hours(6))
@@ -2384,6 +2391,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_filter_titles_force() {
         // Arrange
         let recent_ts = (Utc::now() - chrono::Duration::hours(6))
@@ -2404,6 +2412,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_filter_titles_retry_unmapped() {
         // Arrange: title 1 is mapped, titles 2 and 3 are unmapped
         let recent_ts = (Utc::now() - chrono::Duration::hours(6))
@@ -2726,6 +2735,7 @@ mod tests {
     // ── upsert_filtered_programs ───────────────────────────────
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_filtered_programs_filters_by_tid_and_chid() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();
@@ -2776,6 +2786,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_upsert_filtered_programs_counts_cat_filtered_and_fk_missing() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();
@@ -2806,6 +2817,7 @@ mod tests {
     // ── cleanup_disallowed_cats ────────────────────────────────
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_cleanup_disallowed_cats_removes_and_cascades() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();
@@ -2840,5 +2852,169 @@ mod tests {
         let remaining = dtvmgr_db::load_titles(&conn).unwrap();
         let tids: Vec<u32> = remaining.iter().map(|t| t.tid).collect();
         assert_eq!(tids, vec![1]);
+    }
+
+    // ── From<AvsTargetArg> ───────────────────────────────────
+
+    #[test]
+    fn test_from_avstargetarg_cutcm() {
+        // Act
+        let target: AvsTarget = AvsTargetArg::Cutcm.into();
+
+        // Assert
+        assert_eq!(target, AvsTarget::CutCm);
+    }
+
+    #[test]
+    fn test_from_avstargetarg_cutcm_logo() {
+        // Act
+        let target: AvsTarget = AvsTargetArg::CutcmLogo.into();
+
+        // Assert
+        assert_eq!(target, AvsTarget::CutCmLogo);
+    }
+
+    // ── resolve_ch_ids ───────────────────────────────────────
+
+    #[test]
+    fn test_resolve_ch_ids_with_explicit_ids() {
+        // Act
+        let result = resolve_ch_ids(Some(vec![1, 2]), None);
+
+        // Assert
+        assert_eq!(result.unwrap(), vec![1, 2]);
+    }
+
+    // ── resolve_tmdb_language ────────────────────────────────
+
+    #[test]
+    fn test_resolve_tmdb_language_cli_arg() {
+        // Act
+        let lang = resolve_tmdb_language(Some("fr-FR"), None);
+
+        // Assert
+        assert_eq!(lang, "fr-FR");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_resolve_tmdb_language_fallback_default() {
+        // Act: no CLI arg, nonexistent dir → config load fails → "en-US"
+        let lang = resolve_tmdb_language(None, Some(&PathBuf::from("/nonexistent/path")));
+
+        // Assert
+        assert_eq!(lang, "en-US");
+    }
+
+    // ── build_tui_groups ─────────────────────────────────────
+
+    #[test]
+    fn test_build_tui_groups_maps_channels_to_groups() {
+        // Arrange
+        let groups = vec![
+            CachedChannelGroup {
+                ch_gid: 1,
+                ch_group_name: String::from("Group A"),
+                ch_group_order: 1,
+            },
+            CachedChannelGroup {
+                ch_gid: 2,
+                ch_group_name: String::from("Group B"),
+                ch_group_order: 2,
+            },
+        ];
+        let channels = vec![
+            CachedChannel {
+                ch_id: 10,
+                ch_gid: Some(1),
+                ch_name: String::from("Ch10"),
+            },
+            CachedChannel {
+                ch_id: 20,
+                ch_gid: Some(2),
+                ch_name: String::from("Ch20"),
+            },
+            CachedChannel {
+                ch_id: 11,
+                ch_gid: Some(1),
+                ch_name: String::from("Ch11"),
+            },
+        ];
+
+        // Act
+        let result = build_tui_groups(&groups, &channels);
+
+        // Assert
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].ch_gid, 1);
+        assert_eq!(result[0].channels.len(), 2);
+        assert_eq!(result[0].channels[0].ch_id, 10);
+        assert_eq!(result[0].channels[1].ch_id, 11);
+        assert_eq!(result[1].ch_gid, 2);
+        assert_eq!(result[1].channels.len(), 1);
+        assert_eq!(result[1].channels[0].ch_id, 20);
+    }
+
+    #[test]
+    fn test_build_tui_groups_sorts_by_order() {
+        // Arrange: group B has lower order than group A
+        let groups = vec![
+            CachedChannelGroup {
+                ch_gid: 1,
+                ch_group_name: String::from("Group A"),
+                ch_group_order: 5,
+            },
+            CachedChannelGroup {
+                ch_gid: 2,
+                ch_group_name: String::from("Group B"),
+                ch_group_order: 1,
+            },
+        ];
+        let channels: Vec<CachedChannel> = vec![];
+
+        // Act
+        let result = build_tui_groups(&groups, &channels);
+
+        // Assert: Group B (order=1) should come first
+        assert_eq!(result[0].ch_gid, 2);
+        assert_eq!(result[1].ch_gid, 1);
+    }
+
+    #[test]
+    fn test_build_tui_groups_skips_ungrouped() {
+        // Arrange: channel with ch_gid = None
+        let groups = vec![CachedChannelGroup {
+            ch_gid: 1,
+            ch_group_name: String::from("Group A"),
+            ch_group_order: 1,
+        }];
+        let channels = vec![
+            CachedChannel {
+                ch_id: 10,
+                ch_gid: Some(1),
+                ch_name: String::from("Ch10"),
+            },
+            CachedChannel {
+                ch_id: 99,
+                ch_gid: None,
+                ch_name: String::from("Ungrouped"),
+            },
+        ];
+
+        // Act
+        let result = build_tui_groups(&groups, &channels);
+
+        // Assert: only grouped channel included
+        assert_eq!(result[0].channels.len(), 1);
+        assert_eq!(result[0].channels[0].ch_id, 10);
+    }
+
+    #[test]
+    fn test_build_tui_groups_empty() {
+        // Act
+        let result = build_tui_groups(&[], &[]);
+
+        // Assert
+        assert!(result.is_empty());
     }
 }

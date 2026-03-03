@@ -5,6 +5,7 @@ use assert_cmd::cargo_bin_cmd;
 use predicates::prelude::predicate;
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_syoboi_prog_only_time_since() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -17,6 +18,7 @@ fn test_syoboi_prog_only_time_since() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_syoboi_prog_only_time_until() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -29,6 +31,7 @@ fn test_syoboi_prog_only_time_until() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_syoboi_prog_help() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -39,6 +42,7 @@ fn test_syoboi_prog_help() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_syoboi_titles_help() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -49,6 +53,7 @@ fn test_syoboi_titles_help() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_syoboi_titles_missing_tids() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -59,6 +64,7 @@ fn test_syoboi_titles_missing_tids() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_syoboi_channels_select_help() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -68,6 +74,7 @@ fn test_syoboi_channels_select_help() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_syoboi_channels_list_help() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");

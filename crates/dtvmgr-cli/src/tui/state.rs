@@ -538,4 +538,71 @@ mod tests {
         assert!(state.filter.is_empty());
         assert_eq!(state.filtered_groups().len(), 2);
     }
+
+    #[test]
+    fn test_move_up_down_channels_pane() {
+        // Arrange
+        let mut state = make_test_state();
+        state.active_pane = ActivePane::Channels;
+
+        // Act & Assert: move down in channel pane (group 0 has 2 channels)
+        state.move_down();
+        assert_eq!(state.channel_cursor, 1);
+
+        // At end, should not move
+        state.move_down();
+        assert_eq!(state.channel_cursor, 1);
+
+        // Move up
+        state.move_up();
+        assert_eq!(state.channel_cursor, 0);
+
+        // At start, should not move
+        state.move_up();
+        assert_eq!(state.channel_cursor, 0);
+    }
+
+    #[test]
+    fn test_toggle_channel_insert() {
+        // Arrange: switch to channel pane, cursor at 0 (ch_id=3 already selected)
+        let mut state = make_test_state();
+        state.active_pane = ActivePane::Channels;
+
+        // Move to second channel (ch_id=4, not selected)
+        state.move_down();
+
+        // Act
+        state.toggle_current();
+
+        // Assert: ch_id=4 should now be selected
+        assert!(state.selected.contains(&4));
+    }
+
+    #[test]
+    fn test_toggle_group_empty_group() {
+        // Arrange: cursor on group with no channels selected
+        let mut state = make_test_state();
+        state.move_down(); // cursor on group 1 (BSデジタル)
+
+        // Act: toggle group — should select all in group 1
+        state.toggle_current();
+
+        // Assert
+        assert!(state.selected.contains(&10));
+    }
+
+    #[test]
+    fn test_select_all_deselect_all_edge() {
+        // Arrange: move to group 1, select all, then deselect all
+        let mut state = make_test_state();
+        state.move_down(); // group 1
+
+        // Act: select all in group 1
+        state.select_all_in_group();
+        assert!(state.selected.contains(&10));
+
+        // Act: deselect all in group 1
+        state.deselect_all_in_group();
+        assert!(!state.selected.contains(&10));
+    }
 }

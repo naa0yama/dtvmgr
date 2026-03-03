@@ -688,4 +688,79 @@ mod tests {
         state.page_up(100);
         assert_eq!(state.program_cursor(), 0);
     }
+
+    #[test]
+    fn test_move_up_programs_pane() {
+        // Arrange
+        let mut state = make_state();
+        state.focus_programs();
+        state.move_down(); // cursor at 1
+
+        // Act
+        state.move_up();
+
+        // Assert
+        assert_eq!(state.program_cursor(), 0);
+
+        // At start, should not move
+        state.move_up();
+        assert_eq!(state.program_cursor(), 0);
+    }
+
+    #[test]
+    fn test_filter_push_pop() {
+        // Arrange
+        let mut state = make_state();
+        assert_eq!(state.filtered_titles().len(), 2);
+
+        // Act: type "spy" char by char
+        state.filter_push('s');
+        state.filter_push('p');
+        state.filter_push('y');
+
+        // Assert: only SPY×FAMILY visible
+        assert_eq!(state.filtered_titles().len(), 1);
+        assert_eq!(state.current_title().unwrap().tid, 1);
+        assert_eq!(state.filter, "spy");
+
+        // Act: pop all chars
+        state.filter_pop();
+        state.filter_pop();
+        state.filter_pop();
+
+        // Assert: all titles visible
+        assert!(state.filter.is_empty());
+        assert_eq!(state.filtered_titles().len(), 2);
+    }
+
+    #[test]
+    fn test_filter_by_program_sub_title() {
+        // Arrange
+        let mut state = make_state();
+
+        // Act: filter by sub_title "転がるぼっち" (belongs to TID=2)
+        state.set_filter(String::from("転がるぼっち"));
+
+        // Assert
+        assert_eq!(state.filtered_titles().len(), 1);
+        assert_eq!(state.current_title().unwrap().tid, 2);
+    }
+
+    #[test]
+    fn test_toggle_select_insert_and_remove() {
+        // Arrange
+        let mut state = make_state();
+        assert!(state.selected_tids.is_empty());
+
+        // Act: move to second title (tid=2), toggle select
+        state.move_down();
+        state.toggle_select();
+
+        // Assert
+        assert!(state.selected_tids.contains(&2));
+
+        // Act: toggle again to remove
+        state.toggle_select();
+        assert!(!state.selected_tids.contains(&2));
+    }
 }

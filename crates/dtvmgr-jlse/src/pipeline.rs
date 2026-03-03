@@ -489,4 +489,54 @@ mod tests {
         // Assert
         assert_eq!(result, PathBuf::from("/enc/custom.mp4"));
     }
+
+    // ── canonicalize_dirs ────────────────────────────────────
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_canonicalize_dirs_success() {
+        // Arrange
+        let tmp = tempfile::tempdir().unwrap();
+        let jl = tmp.path().join("jl");
+        let logo = tmp.path().join("logo");
+        let result_dir = tmp.path().join("result");
+        std::fs::create_dir_all(&jl).unwrap();
+        std::fs::create_dir_all(&logo).unwrap();
+        std::fs::create_dir_all(&result_dir).unwrap();
+
+        let dirs = JlseDirs {
+            jl,
+            logo,
+            result: result_dir,
+        };
+
+        // Act
+        let canon = canonicalize_dirs(&dirs).unwrap();
+
+        // Assert: canonicalized paths should be absolute
+        assert!(canon.jl.is_absolute());
+        assert!(canon.logo.is_absolute());
+        assert!(canon.result.is_absolute());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_canonicalize_dirs_nonexistent() {
+        // Arrange
+        let dirs = JlseDirs {
+            jl: PathBuf::from("/nonexistent/jl"),
+            logo: PathBuf::from("/nonexistent/logo"),
+            result: PathBuf::from("/nonexistent/result"),
+        };
+
+        // Act
+        let result = canonicalize_dirs(&dirs);
+
+        // Assert
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("failed to canonicalize"),
+            "expected 'failed to canonicalize' in: {err}"
+        );
+    }
 }

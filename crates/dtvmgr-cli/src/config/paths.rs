@@ -104,6 +104,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_resolve_default() {
         // Arrange & Act
         let path = resolve_config_path(None).unwrap();
@@ -125,6 +126,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_resolve_data_dir_none_without_cwd_config() {
         // Arrange & Act
         let result = resolve_data_dir(None).unwrap();
@@ -134,6 +136,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_resolve_config_path_default_contains_config_file() {
         // Arrange & Act
         let path = resolve_config_path(None).unwrap();

@@ -428,6 +428,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // tempdir requires mkdir, unsupported under Miri isolation
     fn test_load_channels_from_csv() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();

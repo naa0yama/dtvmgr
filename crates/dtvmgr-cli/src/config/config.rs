@@ -474,6 +474,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_load_nonexistent_returns_default() {
         // Arrange
         let path = Path::new("/tmp/dtvmgr_test_nonexistent_config.toml");
@@ -486,6 +487,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_save_and_load() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();
@@ -511,6 +513,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_load_partial_config() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();

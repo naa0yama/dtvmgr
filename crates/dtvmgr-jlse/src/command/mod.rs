@@ -72,3 +72,111 @@ pub fn run_capture(program: &Path, args: &[&OsStr]) -> Result<String> {
     String::from_utf8(output.stdout)
         .with_context(|| format!("{} produced non-UTF-8 stdout", program.display()))
 }
+
+#[cfg(test)]
+pub(crate) mod test_utils {
+    /// Creates a temporary executable shell script with the given body.
+    #[cfg(unix)]
+    pub fn write_script(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join(name);
+        std::fs::write(&script, body).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        script
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::path::Path;
+
+    use super::test_utils::write_script;
+    use super::*;
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_success() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script = write_script(dir.path(), "ok.sh", "#!/bin/sh\nexit 0\n");
+
+        // Act
+        let result = run(&script, &[]);
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_failure_exit_code() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script = write_script(dir.path(), "fail.sh", "#!/bin/sh\nexit 42\n");
+
+        // Act
+        let result = run(&script, &[]);
+
+        // Assert
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("42"), "expected exit code 42 in: {err}");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_nonexistent_binary() {
+        // Act
+        let result = run(Path::new("/nonexistent/binary"), &[]);
+
+        // Assert
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("failed to spawn"),
+            "expected 'failed to spawn' in: {err}"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_capture_success() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script = write_script(dir.path(), "echo.sh", "#!/bin/sh\necho hello\n");
+
+        // Act
+        let result = run_capture(&script, &[]);
+
+        // Assert
+        assert_eq!(result.unwrap(), "hello\n");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_capture_failure() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script = write_script(dir.path(), "fail.sh", "#!/bin/sh\nexit 1\n");
+
+        // Act
+        let result = run_capture(&script, &[]);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_capture_nonexistent() {
+        // Act
+        let result = run_capture(Path::new("/nonexistent/binary"), &[]);
+
+        // Assert
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("failed to spawn"),
+            "expected 'failed to spawn' in: {err}"
+        );
+    }
+}

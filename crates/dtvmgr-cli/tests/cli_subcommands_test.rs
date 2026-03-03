@@ -7,6 +7,7 @@ use predicates::prelude::predicate;
 // ── db subcommands ─────────────────────────────────────────────
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_db_sync_help() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -17,6 +18,7 @@ fn test_db_sync_help() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_db_list_help() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -24,6 +26,7 @@ fn test_db_list_help() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_db_normalize_help() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -31,6 +34,7 @@ fn test_db_normalize_help() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_db_tmdb_lookup_help() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -43,6 +47,7 @@ fn test_db_tmdb_lookup_help() {
 // ── tmdb subcommands ───────────────────────────────────────────
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_tmdb_search_tv_help() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -53,6 +58,7 @@ fn test_tmdb_search_tv_help() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_tmdb_search_movie_help() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -63,6 +69,7 @@ fn test_tmdb_search_movie_help() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_tmdb_tv_details_help() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -73,6 +80,7 @@ fn test_tmdb_tv_details_help() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_tmdb_tv_season_help() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -85,6 +93,7 @@ fn test_tmdb_tv_season_help() {
 // ── jlse subcommands ───────────────────────────────────────────
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_jlse_channel_help() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -95,6 +104,7 @@ fn test_jlse_channel_help() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_jlse_param_help() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -105,6 +115,7 @@ fn test_jlse_param_help() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_jlse_run_help() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -115,6 +126,7 @@ fn test_jlse_run_help() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_jlse_channel_missing_input() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");
@@ -125,6 +137,7 @@ fn test_jlse_channel_missing_input() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_jlse_run_missing_input() {
     // Arrange & Act & Assert
     let mut cmd = cargo_bin_cmd!("dtvmgr");

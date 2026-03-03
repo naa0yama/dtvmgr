@@ -183,6 +183,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // tempdir requires mkdir, unsupported under Miri isolation
     fn test_init_output_paths_creates_directory() {
         // Arrange
         let tmp = tempfile::tempdir().unwrap();
@@ -196,6 +197,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // tempdir requires mkdir, unsupported under Miri isolation
     fn test_init_output_paths_all_paths_under_save_dir() {
         // Arrange
         let tmp = tempfile::tempdir().unwrap();
@@ -231,6 +233,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // tempdir requires mkdir, unsupported under Miri isolation
     fn test_init_output_paths_exact_filenames() {
         // Arrange
         let tmp = tempfile::tempdir().unwrap();
@@ -265,6 +268,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // tempdir requires mkdir, unsupported under Miri isolation
     fn test_init_output_paths_nested_directory_creation() {
         // Arrange
         let tmp = tempfile::tempdir().unwrap();
@@ -278,6 +282,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // tempdir requires mkdir, unsupported under Miri isolation
     fn test_init_output_paths_tsdivider_uses_filename() {
         // Arrange
         let tmp = tempfile::tempdir().unwrap();
