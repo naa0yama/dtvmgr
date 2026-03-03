@@ -62,11 +62,15 @@ Record each `--exclude <crate>` with its reason:
 Compute:
 
 ```
-Total tests       = count of #[test] + #[tokio::test] in workspace
-Miri-ignored      = count of #[cfg_attr(miri, ignore)] annotations
-Crate-excluded    = count of tests in --exclude crates (from test count per crate)
-Miri-compatible   = Total - Miri-ignored - Crate-excluded
+Total tests            = count of #[test] + #[tokio::test] in workspace
+Miri-ignored (all)     = count of #[cfg_attr(miri, ignore)] annotations
+Crate-excluded         = count of tests in --exclude crates (from test count per crate)
+Miri-ignored (effective) = Miri-ignored (all) - annotations in excluded crates
+Miri-compatible        = Total - Crate-excluded - Miri-ignored (effective)
 ```
+
+Note: Some annotations exist in crate-excluded packages as a belt-and-suspenders
+approach. Subtract those from the per-test count to avoid double-counting.
 
 Use Grep with `output_mode: "count"` for efficient counting:
 
@@ -74,6 +78,9 @@ Use Grep with `output_mode: "count"` for efficient counting:
 Grep pattern="#\[(tokio::)?test\]" --type=rust output_mode="count"
 Grep pattern="#\[cfg_attr\(miri,\s*ignore\)\]" --type=rust output_mode="count"
 ```
+
+To get effective (non-excluded) per-test count, also count annotations per crate
+and subtract those in `--exclude` crates.
 
 ### Step 5: Generate Report
 
