@@ -103,8 +103,23 @@ run = "cargo +nightly miri test"
 
 [tasks.pre-commit]
 description = "Pre-commit checks (fast)"
-depends = ["fmt:check", "clippy:strict", "ast-grep", "lint:gh"]
+depends = ["clean:sweep", "fmt:check", "clippy:strict", "ast-grep", "lint:gh"]
 
 [tasks.pre-push]
 description = "Pre-push checks (comprehensive)"
 depends = ["lint", "test", "coverage", "build:release", "lint:gh"]
+
+[tasks.clean]
+description = "Remove target directory entirely"
+run = "cargo clean"
+
+[tasks."clean:sweep"]
+description = "Remove build artifacts older than 1 day"
+run = "cargo sweep --time 1"
+
+[tasks."clean:cache"]
+description = "Show cargo cache info and clean registry cache"
+run = """
+cargo cache
+cargo cache --autoclean
+"""

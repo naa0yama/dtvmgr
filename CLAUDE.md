@@ -24,6 +24,9 @@ All tasks use `mise run <task>`:
 | Deny (licenses/deps)  | `mise run deny`                         |
 | Miri (UB detection)   | `mise run miri`                         |
 | Build (OTel)          | `cargo build -p dtvmgr --features otel` |
+| Clean (full)          | `mise run clean`                        |
+| Clean (sweep)         | `mise run clean:sweep`                  |
+| Clean (cache)         | `mise run clean:cache`                  |
 
 ## Commit Convention
 

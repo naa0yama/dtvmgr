@@ -18,6 +18,8 @@ ARG CACHE_VERSION=0.8.3
 ARG MODULES_VERSION=v0.25.0
 ## renovate: datasource=github-releases packageName=mozilla/sccache versioning=semver automerge=true
 ARG SCCACHE_VERSION=v0.14.0
+## renovate: datasource=github-tags packageName=holmgr/cargo-sweep versioning=semver automerge=true
+ARG SWEEP_VERSION=0.8.0
 
 # retry dns and some http codes that might be transient errors
 ARG CURL_OPTS="-sfSL --retry 3 --retry-delay 2 --retry-connrefused"
@@ -33,6 +35,7 @@ ARG CACHE_VERSION \
 	MODULES_VERSION \
 	MOLD_VERSION \
 	SCCACHE_VERSION \
+	SWEEP_VERSION \
 	USER_NAME \
 	USER_UID \
 	USER_GID \
@@ -136,9 +139,11 @@ RUN --mount=type=cache,target=/home/cuser/.cache/sccache,sharing=locked,uid=${US
 	cargo install --locked \
 	cargo-cache@${CACHE_VERSION} \
 	cargo-modules@${MODULES_VERSION#v} \
+	cargo-sweep@${SWEEP_VERSION#v} \
 	&& \
 	cargo cache --version && \
-	cargo modules --version
+	cargo modules --version && \
+	cargo sweep --version
 
 RUN echo "**** Rust bash-completion ****" && \
 	set -euxo pipefail && \
