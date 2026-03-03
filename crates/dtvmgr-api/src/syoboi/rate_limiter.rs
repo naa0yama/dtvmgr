@@ -163,4 +163,39 @@ mod tests {
         assert_eq!(limiter.hourly_window.len(), 3);
         assert_eq!(limiter.daily_window.len(), 3);
     }
+
+    #[test]
+    fn test_cleanup_windows_purges_expired() {
+        // Arrange
+        let mut limiter = SyoboiRateLimiter::new(Duration::from_secs(0), 500, 10_000);
+        let now = Instant::now();
+        // Insert timestamps from 2 hours ago (expired for hourly, not for daily)
+        let two_hours_ago = now.checked_sub(Duration::from_secs(7200)).unwrap();
+        limiter.hourly_window.push_back(two_hours_ago);
+        limiter.daily_window.push_back(two_hours_ago);
+        // Insert a recent timestamp
+        limiter.hourly_window.push_back(now);
+        limiter.daily_window.push_back(now);
+
+        // Act
+        limiter.cleanup_windows(now);
+
+        // Assert: expired entry removed from hourly, but kept in daily
+        assert_eq!(limiter.hourly_window.len(), 1);
+        assert_eq!(limiter.daily_window.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_hourly_limit_fills_window() {
+        // Arrange: tiny hourly limit
+        let mut limiter = SyoboiRateLimiter::new(Duration::from_millis(0), 3, 10_000);
+
+        // Act: fill to the limit
+        limiter.wait().await;
+        limiter.wait().await;
+        limiter.wait().await;
+
+        // Assert
+        assert_eq!(limiter.hourly_window.len(), 3);
+    }
 }

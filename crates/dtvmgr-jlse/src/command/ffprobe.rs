@@ -212,4 +212,40 @@ mod tests {
         assert_eq!(args[3], "a:0");
         assert!(args.contains(&"/rec/video.ts".to_owned()));
     }
+
+    #[test]
+    fn test_parse_frame_rate_with_whitespace() {
+        // Arrange / Act
+        let rate = parse_frame_rate(" 30000 / 1001 ").unwrap();
+
+        // Assert
+        assert_eq!(
+            rate,
+            FrameRate {
+                numerator: 30000,
+                denominator: 1001
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_frame_rate_60fps() {
+        // Arrange / Act
+        let rate = parse_frame_rate("60000/1001").unwrap();
+
+        // Assert
+        assert_eq!(
+            rate,
+            FrameRate {
+                numerator: 60000,
+                denominator: 1001
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_frame_rate_negative() {
+        // Arrange / Act / Assert: negative numbers fail u32 parse
+        assert!(parse_frame_rate("-1/1").is_err());
+    }
 }

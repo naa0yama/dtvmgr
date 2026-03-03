@@ -379,4 +379,87 @@ tmdb_series_id = 67890
         assert_eq!(mapping.mappings[1].tid, 300);
         assert_eq!(mapping.mappings[2].tid, 500);
     }
+
+    #[test]
+    fn test_remove_excluded_basic() {
+        // Arrange
+        let mut mapping = MappingFile {
+            mappings: vec![
+                MappingEntry {
+                    tid: 100,
+                    name: "Keep".to_owned(),
+                    tmdb_series_id: 1,
+                    tmdb_season_number: None,
+                    tmdb_season_id: 0,
+                },
+                MappingEntry {
+                    tid: 200,
+                    name: "Remove".to_owned(),
+                    tmdb_series_id: 2,
+                    tmdb_season_number: None,
+                    tmdb_season_id: 0,
+                },
+                MappingEntry {
+                    tid: 300,
+                    name: "Keep2".to_owned(),
+                    tmdb_series_id: 3,
+                    tmdb_season_number: None,
+                    tmdb_season_id: 0,
+                },
+            ],
+        };
+
+        // Act
+        mapping.remove_excluded(&HashSet::from([200]));
+
+        // Assert
+        assert_eq!(mapping.mappings.len(), 2);
+        assert_eq!(mapping.mappings[0].tid, 100);
+        assert_eq!(mapping.mappings[1].tid, 300);
+    }
+
+    #[test]
+    fn test_remove_excluded_empty_set() {
+        // Arrange
+        let mut mapping = MappingFile {
+            mappings: vec![MappingEntry {
+                tid: 100,
+                name: "Keep".to_owned(),
+                tmdb_series_id: 1,
+                tmdb_season_number: None,
+                tmdb_season_id: 0,
+            }],
+        };
+
+        // Act
+        mapping.remove_excluded(&HashSet::new());
+
+        // Assert: nothing removed
+        assert_eq!(mapping.mappings.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_load_or_fetch_local_exists() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(MAPPING_FILENAME);
+        std::fs::write(
+            &path,
+            r#"
+[[mappings]]
+tid = 42
+name = "Local"
+tmdb_series_id = 999
+"#,
+        )
+        .unwrap();
+
+        // Act
+        let (mapping, returned_path) = load_or_fetch(dir.path()).await.unwrap();
+
+        // Assert
+        assert_eq!(mapping.mappings.len(), 1);
+        assert_eq!(mapping.mappings[0].tid, 42);
+        assert_eq!(returned_path, path);
+    }
 }

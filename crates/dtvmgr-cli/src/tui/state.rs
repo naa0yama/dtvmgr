@@ -510,4 +510,32 @@ mod tests {
         assert!(!state.selected.contains(&3));
         assert!(!state.selected.contains(&4));
     }
+
+    #[test]
+    fn test_filter_push_pop() {
+        // Arrange
+        let mut state = make_test_state();
+        assert_eq!(state.filtered_groups().len(), 2);
+
+        // Act: type "BS" char by char
+        state.filter_push('B');
+        state.filter_push('S');
+
+        // Assert: only BS group visible
+        assert_eq!(state.filtered_groups().len(), 1);
+        assert_eq!(state.filter, "BS");
+
+        // Act: backspace once
+        state.filter_pop();
+
+        // Assert: filter is "B" — still partial match
+        assert_eq!(state.filter, "B");
+
+        // Act: backspace again
+        state.filter_pop();
+
+        // Assert: filter empty — all groups visible
+        assert!(state.filter.is_empty());
+        assert_eq!(state.filtered_groups().len(), 2);
+    }
 }

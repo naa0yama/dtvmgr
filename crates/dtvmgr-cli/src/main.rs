@@ -2169,7 +2169,7 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::undocumented_unsafe_blocks)]
 
     use super::*;
 
@@ -2421,5 +2421,422 @@ mod tests {
         // Assert: only unmapped titles (2, 3), even though 2 is within cooldown
         let tids: Vec<u32> = result.iter().map(|t| t.tid).collect();
         assert_eq!(tids, vec![2, 3]);
+    }
+
+    // ── to_cached_title / to_cached_program ────────────────────
+
+    fn make_syoboi_title(tid: u32) -> SyoboiTitle {
+        SyoboiTitle {
+            tid,
+            last_update: "2024-01-01T00:00:00Z".to_owned(),
+            title: format!("Title {tid}"),
+            short_title: Some("Short".to_owned()),
+            title_yomi: Some("Yomi".to_owned()),
+            title_en: Some("English".to_owned()),
+            comment: None,
+            cat: Some(1),
+            title_flag: Some(0),
+            first_year: Some(2024),
+            first_month: Some(1),
+            first_end_year: None,
+            first_end_month: None,
+            first_ch: None,
+            keywords: Some("key1,key2".to_owned()),
+            user_point: None,
+            user_point_rank: None,
+            sub_titles: Some("*01*EP1\r\n*02*EP2".to_owned()),
+        }
+    }
+
+    #[test]
+    fn test_to_cached_title_maps_all_fields() {
+        // Arrange
+        let src = make_syoboi_title(42);
+
+        // Act
+        let ct = to_cached_title(&src);
+
+        // Assert
+        assert_eq!(ct.tid, 42);
+        assert_eq!(ct.title, "Title 42");
+        assert_eq!(ct.short_title.as_deref(), Some("Short"));
+        assert_eq!(ct.title_yomi.as_deref(), Some("Yomi"));
+        assert_eq!(ct.title_en.as_deref(), Some("English"));
+        assert_eq!(ct.cat, Some(1));
+        assert_eq!(ct.title_flag, Some(0));
+        assert_eq!(ct.first_year, Some(2024));
+        assert_eq!(ct.first_month, Some(1));
+        assert_eq!(ct.keywords, vec!["key1", "key2"]);
+        assert_eq!(ct.sub_titles.as_deref(), Some("*01*EP1\r\n*02*EP2"));
+        assert_eq!(ct.last_update, "2024-01-01T00:00:00Z");
+        // TMDB fields must be None for fresh conversion
+        assert!(ct.tmdb_series_id.is_none());
+        assert!(ct.tmdb_season_number.is_none());
+        assert!(ct.tmdb_season_id.is_none());
+        assert!(ct.tmdb_original_name.is_none());
+        assert!(ct.tmdb_name.is_none());
+        assert!(ct.tmdb_alt_titles.is_none());
+        assert!(ct.tmdb_last_updated.is_none());
+    }
+
+    #[test]
+    fn test_to_cached_title_optional_fields_none() {
+        // Arrange
+        let src = SyoboiTitle {
+            tid: 1,
+            last_update: String::new(),
+            title: "T".to_owned(),
+            short_title: None,
+            title_yomi: None,
+            title_en: None,
+            comment: None,
+            cat: None,
+            title_flag: None,
+            first_year: None,
+            first_month: None,
+            first_end_year: None,
+            first_end_month: None,
+            first_ch: None,
+            keywords: None,
+            user_point: None,
+            user_point_rank: None,
+            sub_titles: None,
+        };
+
+        // Act
+        let ct = to_cached_title(&src);
+
+        // Assert
+        assert!(ct.short_title.is_none());
+        assert!(ct.title_yomi.is_none());
+        assert!(ct.title_en.is_none());
+        assert!(ct.cat.is_none());
+        assert!(ct.title_flag.is_none());
+        assert!(ct.first_year.is_none());
+        assert!(ct.first_month.is_none());
+        assert!(ct.keywords.is_empty());
+        assert!(ct.sub_titles.is_none());
+    }
+
+    fn make_syoboi_program(pid: u32, tid: u32, ch_id: u32) -> SyoboiProgram {
+        SyoboiProgram {
+            pid,
+            tid,
+            st_time: "2024-01-15T20:00:00".to_owned(),
+            st_offset: Some(-30),
+            ed_time: "2024-01-15T20:30:00".to_owned(),
+            count: Some(1),
+            sub_title: Some("Episode 1".to_owned()),
+            prog_comment: None,
+            flag: Some(0),
+            deleted: Some(0),
+            warn: None,
+            ch_id,
+            revision: Some(1),
+            last_update: Some("2024-01-15T00:00:00Z".to_owned()),
+            st_sub_title: Some("Ep 1".to_owned()),
+        }
+    }
+
+    #[test]
+    fn test_to_cached_program_maps_all_fields() {
+        // Arrange
+        let src = make_syoboi_program(100, 42, 5);
+
+        // Act
+        let cp = to_cached_program(&src);
+
+        // Assert
+        assert_eq!(cp.pid, 100);
+        assert_eq!(cp.tid, 42);
+        assert_eq!(cp.ch_id, 5);
+        assert_eq!(cp.st_time, "2024-01-15T20:00:00");
+        assert_eq!(cp.st_offset, Some(-30));
+        assert_eq!(cp.ed_time, "2024-01-15T20:30:00");
+        assert_eq!(cp.count, Some(1));
+        assert_eq!(cp.sub_title.as_deref(), Some("Episode 1"));
+        assert_eq!(cp.flag, Some(0));
+        assert_eq!(cp.deleted, Some(0));
+        assert!(cp.warn.is_none());
+        assert_eq!(cp.revision, Some(1));
+        assert_eq!(cp.last_update.as_deref(), Some("2024-01-15T00:00:00Z"));
+        assert_eq!(cp.st_sub_title.as_deref(), Some("Ep 1"));
+        assert!(cp.tmdb_episode_id.is_none());
+        assert!(cp.duration_min.is_none());
+    }
+
+    #[test]
+    fn test_to_cached_program_optional_none() {
+        // Arrange
+        let src = SyoboiProgram {
+            pid: 1,
+            tid: 1,
+            st_time: String::new(),
+            st_offset: None,
+            ed_time: String::new(),
+            count: None,
+            sub_title: None,
+            prog_comment: None,
+            flag: None,
+            deleted: None,
+            warn: None,
+            ch_id: 1,
+            revision: None,
+            last_update: None,
+            st_sub_title: None,
+        };
+
+        // Act
+        let cp = to_cached_program(&src);
+
+        // Assert
+        assert!(cp.st_offset.is_none());
+        assert!(cp.count.is_none());
+        assert!(cp.sub_title.is_none());
+        assert!(cp.flag.is_none());
+        assert!(cp.deleted.is_none());
+        assert!(cp.revision.is_none());
+        assert!(cp.last_update.is_none());
+        assert!(cp.st_sub_title.is_none());
+    }
+
+    // ── requires_animation_filter ──────────────────────────────
+
+    #[test]
+    fn test_requires_animation_filter_anime_cats() {
+        // Act & Assert
+        assert!(requires_animation_filter(Some(1)));
+        assert!(requires_animation_filter(Some(7)));
+        assert!(requires_animation_filter(Some(8)));
+        assert!(requires_animation_filter(Some(10)));
+    }
+
+    #[test]
+    fn test_requires_animation_filter_non_anime() {
+        // Act & Assert
+        assert!(!requires_animation_filter(None));
+        assert!(!requires_animation_filter(Some(0)));
+        assert!(!requires_animation_filter(Some(2)));
+        assert!(!requires_animation_filter(Some(99)));
+    }
+
+    // ── resolve_media_type ─────────────────────────────────────
+
+    #[test]
+    fn test_resolve_media_type_movie() {
+        // Arrange
+        let cat_movie: HashSet<u32> = [4, 9].iter().copied().collect();
+
+        // Act & Assert
+        assert_eq!(
+            resolve_media_type(Some(4), &cat_movie),
+            TmdbMediaType::Movie
+        );
+        assert_eq!(
+            resolve_media_type(Some(9), &cat_movie),
+            TmdbMediaType::Movie
+        );
+    }
+
+    #[test]
+    fn test_resolve_media_type_tv_default() {
+        // Arrange
+        let cat_movie: HashSet<u32> = [4, 9].iter().copied().collect();
+
+        // Act & Assert
+        assert_eq!(resolve_media_type(None, &cat_movie), TmdbMediaType::Tv);
+        assert_eq!(resolve_media_type(Some(1), &cat_movie), TmdbMediaType::Tv);
+        assert_eq!(resolve_media_type(Some(99), &cat_movie), TmdbMediaType::Tv);
+    }
+
+    // ── extract_base_query ─────────────────────────────────────
+
+    #[test]
+    fn test_extract_base_query_no_regex() {
+        // Act
+        let result = extract_base_query("進撃の巨人", None);
+
+        // Assert
+        assert_eq!(result, "進撃の巨人");
+    }
+
+    #[test]
+    fn test_extract_base_query_regex_removes_match() {
+        // Arrange
+        let re = regex::Regex::new(r"第\d+期$").unwrap();
+
+        // Act
+        let result = extract_base_query("進撃の巨人 第3期", Some(&re));
+
+        // Assert
+        assert_eq!(result, "進撃の巨人");
+    }
+
+    #[test]
+    fn test_extract_base_query_regex_removes_all_returns_original() {
+        // Arrange: regex matches entire normalized string
+        let re = regex::Regex::new(r"^.+$").unwrap();
+
+        // Act
+        let result = extract_base_query("タイトル", Some(&re));
+
+        // Assert: when result would be empty, return original normalized string
+        assert_eq!(result, "タイトル");
+    }
+
+    // ── resolve_channel_name ───────────────────────────────────
+
+    #[test]
+    fn test_resolve_channel_name_from_arg() {
+        // Act & Assert
+        assert_eq!(resolve_channel_name(Some("NHK")), Some("NHK".to_owned()));
+    }
+
+    #[test]
+    fn test_resolve_channel_name_none() {
+        // Arrange: clear env var to ensure None fallback
+        unsafe { std::env::remove_var(CHANNEL_ENV_VAR) };
+
+        // Act & Assert
+        assert_eq!(resolve_channel_name(None), None);
+    }
+
+    // ── read_metadata_from_env ─────────────────────────────────
+
+    #[test]
+    fn test_read_metadata_from_env_empty() {
+        // Arrange
+        unsafe {
+            std::env::remove_var("HALF_WIDTH_NAME");
+            std::env::remove_var("DESCRIPTION");
+            std::env::remove_var("EXTENDED");
+        }
+
+        // Act
+        let meta = read_metadata_from_env();
+
+        // Assert
+        assert!(meta.title.is_empty());
+        assert!(meta.description.is_empty());
+        assert!(meta.extended.is_empty());
+    }
+
+    // ── upsert_filtered_programs ───────────────────────────────
+
+    #[test]
+    fn test_upsert_filtered_programs_filters_by_tid_and_chid() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let conn = dtvmgr_db::open_db(Some(&dir.path().to_path_buf())).unwrap();
+
+        // Insert required FK references
+        dtvmgr_db::upsert_titles(
+            &conn,
+            &[CachedTitle {
+                tid: 10,
+                title: "T10".to_owned(),
+                last_update: "2024-01-01".to_owned(),
+                ..make_cached_title(10, None, None)
+            }],
+        )
+        .unwrap();
+        dtvmgr_db::upsert_channels(
+            &conn,
+            &[dtvmgr_db::channels::CachedChannel {
+                ch_id: 20,
+                ch_gid: None,
+                ch_name: "CH20".to_owned(),
+            }],
+        )
+        .unwrap();
+
+        let programs = vec![
+            make_syoboi_program(1, 10, 20), // valid
+            make_syoboi_program(2, 10, 99), // invalid ch_id
+            make_syoboi_program(3, 99, 20), // invalid tid
+        ];
+        let valid_tids: HashSet<u32> = [10].into();
+        let valid_ch_ids: HashSet<u32> = [20].into();
+        let all_fetched_tids: HashSet<u32> = [10, 99].into();
+
+        // Act
+        let (inserted, _) = upsert_filtered_programs(
+            &conn,
+            &programs,
+            &valid_tids,
+            &valid_ch_ids,
+            &all_fetched_tids,
+        )
+        .unwrap();
+
+        // Assert: only program with valid tid+ch_id passes
+        assert_eq!(inserted, 1);
+    }
+
+    #[test]
+    fn test_upsert_filtered_programs_counts_cat_filtered_and_fk_missing() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let conn = dtvmgr_db::open_db(Some(&dir.path().to_path_buf())).unwrap();
+
+        let programs = vec![
+            make_syoboi_program(1, 50, 20), // tid 50 in all_fetched but not valid → cat filtered
+            make_syoboi_program(2, 77, 20), // tid 77 NOT in all_fetched → fk missing
+        ];
+        let valid_tids: HashSet<u32> = HashSet::new();
+        let valid_ch_ids: HashSet<u32> = [20].into();
+        let all_fetched_tids: HashSet<u32> = [50].into();
+
+        // Act
+        let (inserted, _) = upsert_filtered_programs(
+            &conn,
+            &programs,
+            &valid_tids,
+            &valid_ch_ids,
+            &all_fetched_tids,
+        )
+        .unwrap();
+
+        // Assert
+        assert_eq!(inserted, 0);
+    }
+
+    // ── cleanup_disallowed_cats ────────────────────────────────
+
+    #[test]
+    fn test_cleanup_disallowed_cats_removes_and_cascades() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let conn = dtvmgr_db::open_db(Some(&dir.path().to_path_buf())).unwrap();
+
+        // Insert titles with different cats
+        let titles = vec![
+            CachedTitle {
+                tid: 1,
+                cat: Some(1),
+                title: "Anime".to_owned(),
+                last_update: "2024-01-01".to_owned(),
+                ..make_cached_title(1, None, None)
+            },
+            CachedTitle {
+                tid: 2,
+                cat: Some(99),
+                title: "Other".to_owned(),
+                last_update: "2024-01-01".to_owned(),
+                ..make_cached_title(2, None, None)
+            },
+        ];
+        dtvmgr_db::upsert_titles(&conn, &titles).unwrap();
+
+        // Only allow cat=1
+        let allowed: HashSet<u32> = [1].into();
+
+        // Act
+        cleanup_disallowed_cats(&conn, &allowed).unwrap();
+
+        // Assert
+        let remaining = dtvmgr_db::load_titles(&conn).unwrap();
+        let tids: Vec<u32> = remaining.iter().map(|t| t.tid).collect();
+        assert_eq!(tids, vec![1]);
     }
 }

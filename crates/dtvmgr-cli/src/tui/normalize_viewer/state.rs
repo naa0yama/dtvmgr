@@ -1485,4 +1485,70 @@ mod tests {
         // Assert
         assert_eq!(state.regex_source, RegexSource::Manual);
     }
+
+    #[test]
+    fn test_regex_cursor_home_end() {
+        // Arrange: initial state has REGEX_PLACEHOLDER
+        let mut state = make_state();
+        let initial_len = state.regex_input.chars().count();
+        assert_eq!(state.regex_cursor, initial_len);
+
+        // Act: Home
+        state.regex_cursor_home();
+
+        // Assert
+        assert_eq!(state.regex_cursor, 0);
+
+        // Act: End
+        state.regex_cursor_end();
+        assert_eq!(state.regex_cursor, initial_len);
+    }
+
+    #[test]
+    fn test_regex_delete_back_at_start() {
+        // Arrange
+        let mut state = make_state();
+        state.regex_cursor_home();
+        let original_input = state.regex_input.clone();
+        assert_eq!(state.regex_cursor, 0);
+
+        // Act: delete at position 0 is no-op
+        state.regex_delete_back();
+
+        // Assert
+        assert_eq!(state.regex_cursor, 0);
+        assert_eq!(state.regex_input, original_input);
+    }
+
+    #[test]
+    fn test_toggle_regex_source_back_to_manual_preserves_input() {
+        // Arrange
+        let rows = vec![make_row(1, "タイトル 第2期", Some(1), None)];
+        let regex_titles = vec![String::from(r"第\d+期$")];
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &regex_titles);
+        state.regex_insert_char('x');
+
+        // Act: Manual -> Config -> Manual
+        state.toggle_regex_source();
+        assert_eq!(state.regex_source, RegexSource::Config);
+        state.toggle_regex_source();
+
+        // Assert: back to Manual, input preserved
+        assert_eq!(state.regex_source, RegexSource::Manual);
+    }
+
+    #[test]
+    fn test_build_output_with_selections() {
+        // Arrange
+        let mut state = make_state();
+        state.toggle_select(); // select row 0
+
+        // Act
+        let output = state.build_output();
+
+        // Assert: header + 1 data line
+        assert_eq!(output.len(), 2);
+        assert!(output[0].starts_with("TID\t"));
+        assert!(output[1].starts_with("1\t"));
+    }
 }

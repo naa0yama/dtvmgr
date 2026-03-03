@@ -102,4 +102,60 @@ mod tests {
         assert_eq!(args[4], "-e");
         assert_eq!(args[5], "4");
     }
+
+    #[test]
+    fn test_run_crash_with_output_file_existing() {
+        // Arrange: a "binary" that writes output but exits with failure
+        let dir = tempfile::tempdir().unwrap();
+        let output_file = dir.path().join("chapter_out.txt");
+        let avs_file = dir.path().join("input.avs");
+        std::fs::write(&avs_file, "dummy avs").unwrap();
+
+        let script = dir.path().join("fake_chapter_exe.sh");
+        // Script: write to the output file (arg -o position=7) then exit 1
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\necho 'chapter data' > '{}'\nexit 1",
+                output_file.display()
+            ),
+        )
+        .unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        // Act: should succeed because output file exists after crash
+        let result = run(&script, &avs_file, &output_file);
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_crash_without_output_file() {
+        // Arrange: a "binary" that exits with failure and no output
+        let dir = tempfile::tempdir().unwrap();
+        let output_file = dir.path().join("chapter_out.txt");
+        let avs_file = dir.path().join("input.avs");
+        std::fs::write(&avs_file, "dummy avs").unwrap();
+
+        let script = dir.path().join("fake_chapter_exe.sh");
+        std::fs::write(&script, "#!/bin/sh\nexit 1").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        // Act
+        let result = run(&script, &avs_file, &output_file);
+
+        // Assert: should fail since output doesn't exist
+        assert!(result.is_err());
+    }
 }

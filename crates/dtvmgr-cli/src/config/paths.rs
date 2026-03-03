@@ -132,4 +132,26 @@ mod tests {
         // Assert: no CWD config in test env → None
         assert!(result.is_none());
     }
+
+    #[test]
+    fn test_resolve_config_path_default_contains_config_file() {
+        // Arrange & Act
+        let path = resolve_config_path(None).unwrap();
+
+        // Assert: path ends with the config file name
+        assert!(path.ends_with(CONFIG_FILE_NAME));
+        assert!(path.is_absolute());
+    }
+
+    #[test]
+    fn test_resolve_data_dir_with_dir_returns_same_dir() {
+        // Arrange
+        let dir = PathBuf::from("/custom/data");
+
+        // Act
+        let result = resolve_data_dir(Some(&dir)).unwrap();
+
+        // Assert: returns the exact directory (not joined with filename)
+        assert_eq!(result, Some(PathBuf::from("/custom/data")));
+    }
 }

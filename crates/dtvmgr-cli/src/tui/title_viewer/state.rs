@@ -608,4 +608,84 @@ mod tests {
         assert!(state.filtered_titles().is_empty());
         assert!(state.current_title().is_none());
     }
+
+    #[test]
+    fn test_toggle_tmdb_filter_cycles() {
+        // Arrange
+        let mut state = make_state();
+        assert_eq!(state.tmdb_filter, TmdbFilter::All);
+        assert_eq!(state.filtered_titles().len(), 2);
+
+        // Act & Assert: All -> Unmapped (only tid=2 has no mapping)
+        state.toggle_tmdb_filter();
+        assert_eq!(state.tmdb_filter, TmdbFilter::Unmapped);
+        assert_eq!(state.filtered_titles().len(), 1);
+        assert_eq!(state.current_title().unwrap().tid, 2);
+
+        // Act & Assert: Unmapped -> Mapped (only tid=1 has mapping)
+        state.toggle_tmdb_filter();
+        assert_eq!(state.tmdb_filter, TmdbFilter::Mapped);
+        assert_eq!(state.filtered_titles().len(), 1);
+        assert_eq!(state.current_title().unwrap().tid, 1);
+
+        // Act & Assert: Mapped -> All
+        state.toggle_tmdb_filter();
+        assert_eq!(state.tmdb_filter, TmdbFilter::All);
+        assert_eq!(state.filtered_titles().len(), 2);
+    }
+
+    #[test]
+    fn test_toggle_programs_and_focus_back() {
+        // Arrange
+        let mut state = make_state();
+        state.focus_programs();
+        assert_eq!(state.active_pane, ActivePane::Programs);
+
+        // Act: hide programs pane while focused
+        state.toggle_programs();
+
+        // Assert: should auto-switch to titles
+        assert!(!state.show_programs);
+        assert_eq!(state.active_pane, ActivePane::Titles);
+
+        // Act: show programs again
+        state.toggle_programs();
+        assert!(state.show_programs);
+    }
+
+    #[test]
+    fn test_toggle_select_and_new_excludes() {
+        // Arrange
+        let mut state = make_state();
+        assert!(state.selected_tids.is_empty());
+
+        // Act: select first title (tid=1)
+        state.toggle_select();
+
+        // Assert
+        assert!(state.selected_tids.contains(&1));
+        assert_eq!(state.new_excludes(), vec![1]);
+
+        // Act: deselect
+        state.toggle_select();
+        assert!(!state.selected_tids.contains(&1));
+        assert!(state.new_excludes().is_empty());
+    }
+
+    #[test]
+    fn test_page_up_page_down_programs() {
+        // Arrange
+        let mut state = make_state();
+        state.focus_programs();
+
+        // Act: page down past end
+        state.page_down(100);
+
+        // Assert: clamped to last program
+        assert_eq!(state.program_cursor(), 1);
+
+        // Act: page up past start
+        state.page_up(100);
+        assert_eq!(state.program_cursor(), 0);
+    }
 }
