@@ -387,16 +387,41 @@ mise run zigbuild:all    # Tier 1 targets
 
 ### 6.3 Miri 互換性
 
-以下のテストには `#[cfg_attr(miri, ignore)]` を付与する:
+汎用的な Miri 判断フローは `~/.claude/skills/rust-implementation/references/testing.md` を参照。
+以下はプロジェクト固有のカテゴリ:
 
-1. **ネットワーク I/O**: `wiremock::MockServer` 等のソケット FFI を使用するテスト。
-   Miri はソケット FFI をサポートしない。
-2. **TLS 初期化**: `reqwest::Client::builder().build()` を呼び出すテスト。
-   TLS スタック(rustls)の暗号初期化が Miri 上で極端に遅くなり(1 回あたり約 10 分)、
-   CI タイムアウトの原因となる。
-3. **正規表現コンパイル**: `regex::Regex::new()` を呼び出す(または間接的に呼び出す)テスト。
-   DFA 構築がバイトコード解釈下で極端に遅くなり(1 テストあたり 2〜6 分)、
-   CI タイムアウトの原因となる。
+#### クレートレベル除外
+
+| クレート  | 理由                                            | テスト数 |
+| --------- | ----------------------------------------------- | -------- |
+| dtvmgr-db | 全テストが rusqlite (C FFI) を使用              | 50       |
+| dtvmgr    | バイナリクレート — インテグレーションテストのみ | N/A      |
+
+#### テストレベルスキップカテゴリ
+
+1. **ファイルシステム (tempfile)** — 69 テスト。`tempfile::tempdir()` や実ファイル I/O を使用。
+   Miri のファイルシステムサポートが限定的。dtvmgr-cli (14), dtvmgr-jlse (55)。
+2. **FFI / C バインディング (rusqlite)** — 50 テスト。dtvmgr-db の全テストが
+   SQLite C FFI を使用。クレート全体を Miri CI から除外。
+3. **ネットワーク I/O (reqwest, wiremock)** — 27 テスト。HTTP クライアントと
+   モックサーバーがサポート外のソケット syscall を使用。dtvmgr-api (22), dtvmgr-cli (5)。
+4. **プロセス起動 (Command)** — 19 テスト。`std::process::Command` で
+   外部ツールを実行。dtvmgr-jlse。
+5. **TLS / 暗号 (reqwest + rustls)** — ネットワーク I/O に含む。
+   TLS 初期化が Miri 上で極端に遅い(~10 分/回)。
+6. **正規表現コンパイル** — `regex::Regex::new()` を間接的にトリガーするテスト。
+   DFA 構築がバイトコード解釈下で極端に遅い(~2-6 分/テスト)。
+7. **環境変数** — 3 テスト。`std::env::set_var` や `HOME`/`current_dir` に依存。
+   dtvmgr-cli config/paths。
+
+#### 統計
+
+| 指標                     | 数                             |
+| ------------------------ | ------------------------------ |
+| 総テスト数               | 499                            |
+| Miri 互換                | 329                            |
+| Miri 無視 (テスト単位)   | 170                            |
+| Miri 除外 (クレート単位) | 2 クレート (dtvmgr-db, dtvmgr) |
 
 ```rust
 #[cfg_attr(miri, ignore)]

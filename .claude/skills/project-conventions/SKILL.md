@@ -115,5 +115,5 @@ Enforced by ast-grep rule `no-blocking-in-async`.
 | Topic                    | File                                         |
 | ------------------------ | -------------------------------------------- |
 | ast-grep rules (6 rules) | `references/ast-grep-rules.md`               |
-| Testing patterns         | `references/testing-patterns.md`             |
+| Testing patterns & Miri  | `references/testing-patterns.md`             |
 | Module & project layout  | `references/module-and-project-structure.md` |
