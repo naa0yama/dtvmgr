@@ -8,6 +8,7 @@ members = [
 	"crates/dtvmgr-cli",
 	"crates/dtvmgr-db",
 	"crates/dtvmgr-jlse",
+	"crates/dtvmgr-tsduck",
 ]
 
 [workspace.package]
@@ -65,6 +66,7 @@ wiremock = "0.6"
 dtvmgr-api = { path = "crates/dtvmgr-api" }
 dtvmgr-db = { path = "crates/dtvmgr-db" }
 dtvmgr-jlse = { path = "crates/dtvmgr-jlse" }
+dtvmgr-tsduck = { path = "crates/dtvmgr-tsduck" }
 
 # - -------------------------------------------------------------------------------------------------
 # - Lints
