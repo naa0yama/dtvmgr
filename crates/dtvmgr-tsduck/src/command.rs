@@ -3,10 +3,12 @@
 //! All wrappers in this module use synchronous [`std::process::Command`].
 
 use std::ffi::OsStr;
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
+use tempfile::NamedTempFile;
 use tracing::debug;
 
 /// Spawn a command, inherit stdout/stderr, and check exit status.
@@ -120,6 +122,58 @@ pub fn build_pat_args(input_file: &Path) -> Vec<String> {
         "-".to_owned(),
         input_file.display().to_string(),
     ]
+}
+
+/// Extract EIT p/f XML from a TS file using `tstables`.
+///
+/// Command: `tstables --japan --pid 0x12 --tid 0x4E --max-tables 4 --xml-output - <input>`
+///
+/// Unlike [`extract_eit`], this filters to EIT p/f actual only (`--tid 0x4E`)
+/// and limits the number of tables for early termination.
+///
+/// # Errors
+///
+/// Returns an error if `tstables` cannot be spawned or exits with a
+/// non-zero status code.
+pub fn extract_eit_pf(binary: &Path, input_file: &Path) -> Result<String> {
+    let args = build_eit_pf_args(input_file);
+    let os_args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    run_capture(binary, &os_args)
+}
+
+/// Build the argument list for `tstables` EIT p/f extraction.
+#[must_use]
+pub fn build_eit_pf_args(input_file: &Path) -> Vec<String> {
+    vec![
+        "--japan".to_owned(),
+        "--pid".to_owned(),
+        "0x12".to_owned(),
+        "--tid".to_owned(),
+        "0x4E".to_owned(),
+        "--max-tables".to_owned(),
+        "4".to_owned(),
+        "--xml-output".to_owned(),
+        "-".to_owned(),
+        input_file.display().to_string(),
+    ]
+}
+
+/// Extract EIT p/f XML from an in-memory TS chunk using `tstables`.
+///
+/// Writes `chunk` to a temporary file (since `tstables` requires a file path),
+/// runs [`extract_eit_pf`], and cleans up the temp file automatically.
+///
+/// # Errors
+///
+/// Returns an error if the temp file cannot be created/written, or if
+/// `tstables` fails.
+pub fn extract_eit_from_chunk(binary: &Path, chunk: &[u8]) -> Result<String> {
+    let mut tmp = NamedTempFile::new().context("failed to create temp file for chunk")?;
+    tmp.write_all(chunk)
+        .context("failed to write chunk to temp file")?;
+    tmp.flush().context("failed to flush chunk temp file")?;
+
+    extract_eit_pf(binary, tmp.path())
 }
 
 /// Filter a TS file by service ID using `tsp`.
@@ -320,6 +374,32 @@ mod tests {
     }
 
     #[test]
+    fn test_build_eit_pf_args() {
+        // Arrange
+        let input = Path::new("/rec/chunk.ts");
+
+        // Act
+        let args = build_eit_pf_args(input);
+
+        // Assert
+        assert_eq!(
+            args,
+            vec![
+                "--japan",
+                "--pid",
+                "0x12",
+                "--tid",
+                "0x4E",
+                "--max-tables",
+                "4",
+                "--xml-output",
+                "-",
+                "/rec/chunk.ts",
+            ]
+        );
+    }
+
+    #[test]
     fn test_build_pat_args() {
         // Arrange
         let input = Path::new("/rec/video.ts");
@@ -368,6 +448,72 @@ mod tests {
 
         // Act
         let result = extract_pat(&script, Path::new("/rec/video.ts"));
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_extract_eit_pf_success() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script = write_script(
+            dir.path(),
+            "tstables",
+            "#!/bin/sh\necho '<tsduck></tsduck>'\n",
+        );
+
+        // Act
+        let result = extract_eit_pf(&script, Path::new("/rec/video.ts"));
+
+        // Assert
+        assert_eq!(result.unwrap(), "<tsduck></tsduck>\n");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_extract_eit_pf_failure() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script = write_script(dir.path(), "tstables", "#!/bin/sh\nexit 1\n");
+
+        // Act
+        let result = extract_eit_pf(&script, Path::new("/rec/video.ts"));
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_extract_eit_from_chunk_success() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script = write_script(
+            dir.path(),
+            "tstables",
+            "#!/bin/sh\necho '<tsduck></tsduck>'\n",
+        );
+        let chunk = vec![0x47; 188 * 10];
+
+        // Act
+        let result = extract_eit_from_chunk(&script, &chunk);
+
+        // Assert
+        assert_eq!(result.unwrap(), "<tsduck></tsduck>\n");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_extract_eit_from_chunk_failure() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script = write_script(dir.path(), "tstables", "#!/bin/sh\nexit 1\n");
+        let chunk = vec![0x47; 188 * 10];
+
+        // Act
+        let result = extract_eit_from_chunk(&script, &chunk);
 
         // Assert
         assert!(result.is_err());

@@ -200,6 +200,63 @@ pub fn dedup_programs(programs: Vec<ProgramInfo>) -> Vec<ProgramInfo> {
         .collect()
 }
 
+/// Detected recording target with the method used for detection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordingTarget {
+    /// The program identified as the recording target.
+    pub program: ProgramInfo,
+    /// How the recording target was detected.
+    pub detection_method: DetectionMethod,
+}
+
+/// How the recording target was detected from EIT data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetectionMethod {
+    /// Detected via `running_status == "running"` in a p/f table.
+    RunningStatus,
+    /// First event in a p/f table (no running status found).
+    FirstPfEvent,
+    /// First event overall (no p/f tables found, fallback).
+    FirstEvent,
+}
+
+/// Detect the recording target from middle-of-file EIT programs.
+///
+/// Detection priority:
+/// 1. `table_type == "pf"` and `running_status == "running"` → [`DetectionMethod::RunningStatus`]
+/// 2. First event in a `table_type == "pf"` table → [`DetectionMethod::FirstPfEvent`]
+/// 3. First event overall → [`DetectionMethod::FirstEvent`]
+#[must_use]
+pub fn detect_recording_target(programs: &[ProgramInfo]) -> Option<RecordingTarget> {
+    // Priority 1: running status in p/f table.
+    if let Some(p) = programs
+        .iter()
+        .find(|p| p.table_type.as_deref() == Some("pf") && p.running_status == "running")
+    {
+        return Some(RecordingTarget {
+            program: p.clone(),
+            detection_method: DetectionMethod::RunningStatus,
+        });
+    }
+
+    // Priority 2: first event in any p/f table.
+    if let Some(p) = programs
+        .iter()
+        .find(|p| p.table_type.as_deref() == Some("pf"))
+    {
+        return Some(RecordingTarget {
+            program: p.clone(),
+            detection_method: DetectionMethod::FirstPfEvent,
+        });
+    }
+
+    // Priority 3: first event overall.
+    programs.first().map(|p| RecordingTarget {
+        program: p.clone(),
+        detection_method: DetectionMethod::FirstEvent,
+    })
+}
+
 /// Parse a service ID string, supporting both decimal and hex (`0x...`) formats.
 pub(crate) fn parse_sid(sid_str: &str) -> Result<u32> {
     let trimmed = sid_str.trim();
@@ -614,16 +671,7 @@ mod tests {
     // ── dedup_programs ──
 
     fn make_program(sid: u32, event_id: &str, name: Option<&str>) -> ProgramInfo {
-        ProgramInfo {
-            service_id: sid,
-            event_id: event_id.to_owned(),
-            start_time: "2025-01-01 00:00:00".to_owned(),
-            duration_min: 30,
-            duration_raw: "00:30:00".to_owned(),
-            running_status: "undefined".to_owned(),
-            program_name: name.map(ToOwned::to_owned),
-            table_type: Some("pf".to_owned()),
-        }
+        make_program_full(sid, event_id, name, "undefined", Some("pf"))
     }
 
     #[test]
@@ -666,5 +714,125 @@ mod tests {
 
         // Assert
         assert!(result.is_empty());
+    }
+
+    // ── detect_recording_target ──
+
+    fn make_program_full(
+        sid: u32,
+        event_id: &str,
+        name: Option<&str>,
+        running_status: &str,
+        table_type: Option<&str>,
+    ) -> ProgramInfo {
+        ProgramInfo {
+            service_id: sid,
+            event_id: event_id.to_owned(),
+            start_time: "2025-01-01 00:00:00".to_owned(),
+            duration_min: 30,
+            duration_raw: "00:30:00".to_owned(),
+            running_status: running_status.to_owned(),
+            program_name: name.map(ToOwned::to_owned),
+            table_type: table_type.map(ToOwned::to_owned),
+        }
+    }
+
+    #[test]
+    fn test_detect_target_running_status() {
+        // Arrange — p/f table with one running, one not-running
+        let programs = vec![
+            make_program_full(1024, "100", Some("Prev"), "not-running", Some("pf")),
+            make_program_full(1024, "101", Some("Current"), "running", Some("pf")),
+        ];
+
+        // Act
+        let target = detect_recording_target(&programs);
+
+        // Assert
+        let target = target.unwrap();
+        assert_eq!(target.program.event_id, "101");
+        assert_eq!(target.program.program_name.as_deref(), Some("Current"));
+        assert_eq!(target.detection_method, DetectionMethod::RunningStatus);
+    }
+
+    #[test]
+    fn test_detect_target_first_pf_event() {
+        // Arrange — p/f table but no running status
+        let programs = vec![
+            make_program_full(1024, "100", Some("First"), "undefined", Some("pf")),
+            make_program_full(1024, "101", Some("Second"), "undefined", Some("pf")),
+        ];
+
+        // Act
+        let target = detect_recording_target(&programs);
+
+        // Assert
+        let target = target.unwrap();
+        assert_eq!(target.program.event_id, "100");
+        assert_eq!(target.detection_method, DetectionMethod::FirstPfEvent);
+    }
+
+    #[test]
+    fn test_detect_target_first_event_fallback() {
+        // Arrange — no p/f tables, only schedule
+        let programs = vec![
+            make_program_full(1024, "200", Some("Sched1"), "not-running", Some("schedule")),
+            make_program_full(1024, "201", Some("Sched2"), "not-running", Some("schedule")),
+        ];
+
+        // Act
+        let target = detect_recording_target(&programs);
+
+        // Assert
+        let target = target.unwrap();
+        assert_eq!(target.program.event_id, "200");
+        assert_eq!(target.detection_method, DetectionMethod::FirstEvent);
+    }
+
+    #[test]
+    fn test_detect_target_empty() {
+        // Act
+        let target = detect_recording_target(&[]);
+
+        // Assert
+        assert!(target.is_none());
+    }
+
+    #[test]
+    fn test_detect_target_running_over_not_running_pf() {
+        // Arrange — running in second p/f event takes priority
+        let programs = vec![
+            make_program_full(1024, "100", Some("NotRunning"), "not-running", Some("pf")),
+            make_program_full(1024, "101", Some("Running"), "running", Some("pf")),
+            make_program_full(1024, "200", Some("Schedule"), "running", Some("schedule")),
+        ];
+
+        // Act
+        let target = detect_recording_target(&programs);
+
+        // Assert
+        let target = target.unwrap();
+        assert_eq!(target.program.event_id, "101");
+        assert_eq!(target.detection_method, DetectionMethod::RunningStatus);
+    }
+
+    #[test]
+    fn test_detect_target_no_table_type() {
+        // Arrange — no table_type set at all
+        let programs = vec![make_program_full(
+            1024,
+            "100",
+            Some("NoType"),
+            "running",
+            None,
+        )];
+
+        // Act
+        let target = detect_recording_target(&programs);
+
+        // Assert
+        let target = target.unwrap();
+        assert_eq!(target.program.event_id, "100");
+        assert_eq!(target.detection_method, DetectionMethod::FirstEvent);
     }
 }

@@ -6,7 +6,7 @@ mod config;
 mod tui;
 
 use std::collections::{BTreeSet, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -1710,6 +1710,26 @@ fn read_metadata_from_env() -> FfmpegMetadata {
     }
 }
 
+/// Detect the recording target from the middle of a TS file.
+///
+/// Extracts a chunk from the file's midpoint, runs `tstables` to parse
+/// EIT p/f tables and identifies the recording target using
+/// Amatsukaze-style detection.
+fn detect_target_from_middle(
+    bin: &Path,
+    input: &Path,
+) -> Result<Option<dtvmgr_tsduck::eit::RecordingTarget>> {
+    let chunk =
+        dtvmgr_tsduck::seek::extract_middle_chunk(input, dtvmgr_tsduck::seek::DEFAULT_CHUNK_SIZE)
+            .context("failed to extract middle chunk")?;
+
+    let xml = dtvmgr_tsduck::command::extract_eit_from_chunk(bin, &chunk)
+        .context("failed to extract EIT p/f from chunk")?;
+    let programs =
+        dtvmgr_tsduck::eit::parse_eit_xml(&xml).context("failed to parse mid-file EIT XML")?;
+    Ok(dtvmgr_tsduck::eit::detect_recording_target(&programs))
+}
+
 /// Runs the `jlse tsduck` subcommand.
 ///
 /// Extracts EIT program information from a TS file using `TSDuck`.
@@ -1770,11 +1790,32 @@ fn run_jlse_tsduck(args: &JlseTsduckArgs, dir: Option<&PathBuf>) -> Result<()> {
 
     let programs = dtvmgr_tsduck::eit::dedup_programs(programs);
 
-    for (i, p) in programs.iter().enumerate() {
-        let marker = if p.running_status == "running" {
-            "[running] "
-        } else if i == 0 {
-            "[target] "
+    // Detect recording target from middle-of-file EIT p/f.
+    let recording_target = detect_target_from_middle(&args.tstables_bin, &args.input);
+    let target_event_id = match &recording_target {
+        Ok(Some(target)) => {
+            println!(
+                "=== Recording Target: event_id={} ({:?}) ===",
+                target.program.event_id, target.detection_method
+            );
+            println!();
+            Some(target.program.event_id.clone())
+        }
+        Ok(None) => {
+            println!("=== Recording Target: not detected ===");
+            println!();
+            None
+        }
+        Err(e) => {
+            println!("=== Recording Target: detection failed ({e:#}) ===");
+            println!();
+            None
+        }
+    };
+
+    for p in &programs {
+        let marker = if target_event_id.as_deref() == Some(&p.event_id) {
+            "[recording_target] "
         } else {
             ""
         };

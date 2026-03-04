@@ -9,10 +9,8 @@ description = "TSDuck command wrappers and EIT parser for MPEG-TS files"
 anyhow.workspace = true
 quick-xml = { workspace = true }
 serde = { workspace = true }
-tracing.workspace = true
-
-[dev-dependencies]
 tempfile.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true
