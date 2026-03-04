@@ -25,6 +25,7 @@ crossterm = { workspace = true }
 dtvmgr-api = { workspace = true }
 dtvmgr-db = { workspace = true }
 dtvmgr-jlse = { workspace = true }
+dtvmgr-tsduck = { workspace = true }
 open = { workspace = true }
 ratatui = { workspace = true }
 regex = { workspace = true }

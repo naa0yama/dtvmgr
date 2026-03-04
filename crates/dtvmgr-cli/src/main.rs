@@ -91,6 +91,8 @@ enum JlseSubcommands {
     Param(JlseParamArgs),
     /// Run the full CM detection pipeline.
     Run(JlseRunArgs),
+    /// Extract and display EIT program information via `TSDuck`.
+    Tsduck(JlseTsduckArgs),
 }
 
 /// Encode target AVS selection for CLI.
@@ -171,6 +173,23 @@ struct JlseParamArgs {
     /// Channel name override (env: CHNNELNAME).
     #[arg(short, long)]
     channel: Option<String>,
+}
+
+/// Arguments for `jlse tsduck`.
+#[derive(clap::Args)]
+struct JlseTsduckArgs {
+    /// Path to input .ts or .m2ts file.
+    #[arg(short, long)]
+    input: PathBuf,
+    /// Channel name override (for SID filtering via channel list).
+    #[arg(short, long)]
+    channel: Option<String>,
+    /// Service ID to filter EIT events (decimal or hex `0x...`).
+    #[arg(short, long)]
+    sid: Option<String>,
+    /// Path to `tstables` binary (default: resolved from PATH).
+    #[arg(long, default_value = "tstables")]
+    tstables_bin: PathBuf,
 }
 
 /// Arguments for the `db` subcommand.
@@ -1691,6 +1710,90 @@ fn read_metadata_from_env() -> FfmpegMetadata {
     }
 }
 
+/// Runs the `jlse tsduck` subcommand.
+///
+/// Extracts EIT program information from a TS file using `TSDuck`.
+/// When `--sid` or `-c` is given, filters by that service ID using EIT-only
+/// extraction. Otherwise, extracts all tables (PAT + EIT) and auto-detects
+/// the recording target from PAT's first service ID.
+///
+/// # Errors
+///
+/// Returns an error if `TSDuck` fails or the EIT XML cannot be parsed.
+#[allow(clippy::print_stdout)]
+#[instrument(skip_all)]
+fn run_jlse_tsduck(args: &JlseTsduckArgs, dir: Option<&PathBuf>) -> Result<()> {
+    // --sid takes priority over -c (channel name detection).
+    let explicit_sid = if let Some(ref sid) = args.sid {
+        Some(sid.clone())
+    } else if args.channel.is_some() {
+        let jlse_config = resolve_jlse_config(dir)?;
+        let data = DataPaths::from_config(&jlse_config);
+        let channels = load_jlse_channels(&data.channel_list)?;
+        let channel_name = resolve_channel_name(args.channel.as_deref());
+        let filepath = args.input.to_string_lossy();
+        let ch = detect_channel(&channels, &filepath, channel_name.as_deref());
+        if let Some(ref ch) = ch {
+            println!("=== Channel Detection ===");
+            println!("short: {}", ch.short);
+            println!("service_id: {}", ch.service_id);
+            println!();
+        }
+        ch.map(|c| c.service_id)
+    } else {
+        None
+    };
+
+    let programs = if let Some(ref sid) = explicit_sid {
+        // Explicit SID: extract EIT only (PID 0x12).
+        let xml = dtvmgr_tsduck::command::extract_eit(&args.tstables_bin, &args.input)?;
+        println!("=== EIT Program Information (SID: {sid}) ===");
+        dtvmgr_tsduck::eit::parse_eit_xml_by_sid(&xml, sid)
+            .with_context(|| format!("failed to parse EIT XML for SID {sid}"))?
+    } else {
+        // No explicit SID: extract PAT (PID 0) and EIT (PID 0x12) separately.
+        let pat_xml = dtvmgr_tsduck::command::extract_pat(&args.tstables_bin, &args.input)?;
+        let pat_sid = dtvmgr_tsduck::pat::parse_pat_first_service_id(&pat_xml)
+            .context("failed to parse PAT XML")?;
+
+        let eit_xml = dtvmgr_tsduck::command::extract_eit(&args.tstables_bin, &args.input)?;
+        if let Some(sid) = pat_sid {
+            println!("=== EIT Program Information (SID: {sid} from PAT) ===");
+            let all =
+                dtvmgr_tsduck::eit::parse_eit_xml(&eit_xml).context("failed to parse EIT XML")?;
+            all.into_iter().filter(|p| p.service_id == sid).collect()
+        } else {
+            println!("=== EIT Program Information ===");
+            dtvmgr_tsduck::eit::parse_eit_xml(&eit_xml).context("failed to parse EIT XML")?
+        }
+    };
+
+    let programs = dtvmgr_tsduck::eit::dedup_programs(programs);
+
+    for (i, p) in programs.iter().enumerate() {
+        let marker = if p.running_status == "running" {
+            "[running] "
+        } else if i == 0 {
+            "[target] "
+        } else {
+            ""
+        };
+        println!("--- {marker}event_id: {} ---", p.event_id);
+        println!("  service_id: {}", p.service_id);
+        println!("  start_time: {}", p.start_time);
+        println!("  duration: {} ({} min)", p.duration_raw, p.duration_min);
+        println!("  running_status: {}", p.running_status);
+        if let Some(name) = &p.program_name {
+            println!("  program_name: {name}");
+        }
+        if let Some(tt) = &p.table_type {
+            println!("  table_type: {tt}");
+        }
+        println!();
+    }
+    Ok(())
+}
+
 /// Runs the `jlse channel` subcommand.
 ///
 /// Detects broadcast channel from the input filename.
@@ -2163,6 +2266,7 @@ async fn main() -> Result<()> {
             JlseSubcommands::Channel(args) => run_jlse_channel(&args, cli.dir.as_ref()),
             JlseSubcommands::Param(args) => run_jlse_param(&args, cli.dir.as_ref()),
             JlseSubcommands::Run(args) => run_jlse_run(&args, cli.dir.as_ref()),
+            JlseSubcommands::Tsduck(args) => run_jlse_tsduck(&args, cli.dir.as_ref()),
         },
     }
 }
