@@ -161,13 +161,6 @@ USER root
 #-
 FROM ghcr.io/naa0yama/join_logo_scp_trial:v25.10.00-beta30-ubuntu2404 AS jlse
 
-RUN echo "**** Directory Create ****" && \
-	set -euxo pipefail && \
-	mkdir -p /tmp/lib && \
-	find /usr/lib/x86_64-linux-gnu \( -type f -o -type l \) \
-	\( -name 'libdrm.so*' -o -name 'libmp3lame.so*' \) \
-	-exec cp -av {} /tmp/lib/ \;
-
 
 #- -------------------------------------------------------------------------------------------------
 #- Development
@@ -184,6 +177,38 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	set -euxo pipefail && \
 	apt-get -y install --no-install-recommends \
 	shellcheck
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+	--mount=type=cache,target=/var/lib/apt,sharing=locked \
+	\
+	echo "**** Dependencies | FFmpeg runtime ****" && \
+	rm -f /etc/apt/apt.conf.d/docker-clean && \
+	echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache && \
+	echo "**** Dependencies ****" && \
+	set -euxo pipefail && \
+	apt-get -y update && \
+	apt-get -y upgrade && \
+	apt-get -y install --no-install-recommends \
+	# DRM and mp3lame
+	libdrm2 libmp3lame0 \
+	# FFmpeg filter drawtext
+	libharfbuzz0b libfribidi0 \
+	# tsdivider
+	libboost-program-options1.83.0 libboost-filesystem1.83.0
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+	--mount=type=cache,target=/var/lib/apt,sharing=locked \
+	\
+	echo "**** Dependencies | tsduck ****" && \
+	set -euxo pipefail && \
+	_tsduckdownload_url="$(curl ${CURL_OPTS} -H "User-Agent: builder/1.0" -sfSL https://api.github.com/repos/tsduck/tsduck/releases/latest | \
+	jq -r '.assets[] | select(.name | startswith("tsduck_") and endswith("debian13_amd64.deb")) | .browser_download_url')" && \
+	_tsduck_filename="$(basename "$_tsduckdownload_url")" && \
+	curl ${CURL_OPTS} -o "./${_tsduck_filename}" "${_tsduckdownload_url}" && \
+	ls -lah && \
+	apt-get -y install "./${_tsduck_filename}" && \
+	tsp --version && \
+	rm -rf "./${_tsduck_filename}"
 
 # User level settings
 USER ${USER_NAME}
@@ -240,7 +265,6 @@ ENV PKG_CONFIG_PATH=/opt/ffmpeg/lib/pkgconfig \
 
 COPY --from=jlse 			/join_logo_scp_trial							/join_logo_scp_trial
 COPY --from=jlse 			/opt/ffmpeg										/opt/ffmpeg
-COPY --from=jlse 			/tmp/lib										/usr/lib/x86_64-linux-gnu
 
 RUN echo  "**** FFmpeg | check library ****" && \
 	set -euxo pipefail && \
