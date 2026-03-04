@@ -1,5 +1,5 @@
 [package]
-name = "dtvmgr"
+name = "dtvmgr-cli"
 version.workspace = true
 categories = ["command-line-utilities"]
 edition.workspace = true
@@ -7,6 +7,10 @@ keywords = ["cli", "tool"]
 license.workspace = true
 repository.workspace = true
 description = "A CLI tool built following project rules standards"
+
+[[bin]]
+name = "dtvmgr"
+path = "src/main.rs"
 
 [features]
 default = []

@@ -25,7 +25,7 @@ jobs:
       matrix:
         crate:
           - dtvmgr-api
-          - dtvmgr
+          - dtvmgr-cli
           - dtvmgr-jlse
 
     steps:

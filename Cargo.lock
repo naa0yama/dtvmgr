@@ -500,7 +500,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "dtvmgr"
+name = "dtvmgr-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "quick-xml",
+ "regex",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-mock",
+ "trait-variant",
+ "url",
+ "wiremock",
+]
+
+[[package]]
+name = "dtvmgr-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -529,25 +548,6 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "unicode-normalization",
-]
-
-[[package]]
-name = "dtvmgr-api"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "quick-xml",
- "regex",
- "reqwest 0.13.2",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-mock",
- "trait-variant",
- "url",
- "wiremock",
 ]
 
 [[package]]
