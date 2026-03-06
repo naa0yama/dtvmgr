@@ -8,7 +8,6 @@ pub mod ffmpeg;
 pub mod ffprobe;
 pub mod join_logo_scp;
 pub mod logoframe;
-pub mod tsdivider;
 
 use std::ffi::OsStr;
 use std::path::Path;

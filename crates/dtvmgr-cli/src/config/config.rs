@@ -291,13 +291,6 @@ impl AppConfig {
             );
             Self::write_bin_field(
                 &mut out,
-                "tsdivider",
-                bins.tsdivider.as_ref(),
-                &jl_bin_dir,
-                "tsdivider",
-            );
-            Self::write_bin_field(
-                &mut out,
                 "join_logo_scp",
                 bins.join_logo_scp.as_ref(),
                 &jl_bin_dir,
@@ -326,7 +319,6 @@ impl AppConfig {
             out.push_str("# [jlse.bins]\n");
             out.push_str("# logoframe = \"/path/to/bin/logoframe\"\n");
             out.push_str("# chapter_exe = \"/path/to/bin/chapter_exe\"\n");
-            out.push_str("# tsdivider = \"/path/to/bin/tsdivider\"\n");
             out.push_str("# join_logo_scp = \"/path/to/bin/join_logo_scp\"\n");
             out.push_str("# ffprobe = \"/usr/local/bin/ffprobe\"\n");
             out.push_str("# ffmpeg = \"/usr/local/bin/ffmpeg\"\n");

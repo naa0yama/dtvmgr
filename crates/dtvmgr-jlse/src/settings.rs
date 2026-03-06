@@ -18,8 +18,6 @@ pub struct OutputPaths {
     pub save_dir: PathBuf,
     /// Input AVS file: `in_org.avs`
     pub input_avs: PathBuf,
-    /// tsdivider output: `<filename>_split.ts`
-    pub tsdivider_output: PathBuf,
     /// `chapter_exe` output: `obs_chapterexe.txt`
     pub chapterexe_output: PathBuf,
     /// logoframe text output: `obs_logoframe.txt`
@@ -53,8 +51,6 @@ pub struct BinaryPaths {
     pub logoframe: PathBuf,
     /// `chapter_exe` binary: `<jl_dir>/../bin/chapter_exe`
     pub chapter_exe: PathBuf,
-    /// tsdivider binary: `<jl_dir>/../bin/tsdivider`
-    pub tsdivider: PathBuf,
     /// `join_logo_scp` binary: `<jl_dir>/../bin/join_logo_scp`
     pub join_logo_scp: PathBuf,
     /// ffprobe binary: `/usr/local/bin/ffprobe`
@@ -91,7 +87,6 @@ pub fn init_output_paths(result_dir: &Path, filename: &str) -> Result<OutputPath
 
     Ok(OutputPaths {
         input_avs: save_dir.join("in_org.avs"),
-        tsdivider_output: save_dir.join(format!("{filename}_split.ts")),
         chapterexe_output: save_dir.join("obs_chapterexe.txt"),
         logoframe_txt_output: save_dir.join("obs_logoframe.txt"),
         logoframe_avs_output: save_dir.join("obs_logo_erase.avs"),
@@ -127,10 +122,6 @@ impl BinaryPaths {
                 .chapter_exe
                 .clone()
                 .unwrap_or_else(|| bin_dir.join("chapter_exe")),
-            tsdivider: bins
-                .tsdivider
-                .clone()
-                .unwrap_or_else(|| bin_dir.join("tsdivider")),
             join_logo_scp: bins
                 .join_logo_scp
                 .clone()
@@ -208,7 +199,6 @@ mod tests {
         // Assert
         let all_paths = [
             &paths.input_avs,
-            &paths.tsdivider_output,
             &paths.chapterexe_output,
             &paths.logoframe_txt_output,
             &paths.logoframe_avs_output,
@@ -282,28 +272,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)] // tempdir requires mkdir, unsupported under Miri isolation
-    fn test_init_output_paths_tsdivider_uses_filename() {
-        // Arrange
-        let tmp = tempfile::tempdir().unwrap();
-        let filename = "my_recording";
-
-        // Act
-        let paths = init_output_paths(tmp.path(), filename).unwrap();
-
-        // Assert
-        assert_eq!(
-            paths
-                .tsdivider_output
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            "my_recording_split.ts"
-        );
-    }
-
-    #[test]
     fn test_binary_paths_from_config() {
         // Arrange
         let config = sample_config(PathBuf::from("/opt/module/JL"));
@@ -317,7 +285,6 @@ mod tests {
             bins.chapter_exe,
             PathBuf::from("/opt/module/bin/chapter_exe")
         );
-        assert_eq!(bins.tsdivider, PathBuf::from("/opt/module/bin/tsdivider"));
         assert_eq!(
             bins.join_logo_scp,
             PathBuf::from("/opt/module/bin/join_logo_scp")
@@ -379,7 +346,6 @@ mod tests {
             bins.chapter_exe,
             PathBuf::from("/opt/module/bin/chapter_exe")
         );
-        assert_eq!(bins.tsdivider, PathBuf::from("/opt/module/bin/tsdivider"));
         assert_eq!(
             bins.join_logo_scp,
             PathBuf::from("/opt/module/bin/join_logo_scp")
@@ -410,7 +376,6 @@ mod tests {
         config.bins = JlseBins {
             logoframe: Some(PathBuf::from("/custom/logoframe")),
             chapter_exe: Some(PathBuf::from("/custom/chapter_exe")),
-            tsdivider: Some(PathBuf::from("/custom/tsdivider")),
             join_logo_scp: Some(PathBuf::from("/custom/join_logo_scp")),
             ffprobe: Some(PathBuf::from("/custom/ffprobe")),
             ffmpeg: Some(PathBuf::from("/custom/ffmpeg")),
@@ -422,7 +387,6 @@ mod tests {
         // Assert — all overridden
         assert_eq!(bins.logoframe, PathBuf::from("/custom/logoframe"));
         assert_eq!(bins.chapter_exe, PathBuf::from("/custom/chapter_exe"));
-        assert_eq!(bins.tsdivider, PathBuf::from("/custom/tsdivider"));
         assert_eq!(bins.join_logo_scp, PathBuf::from("/custom/join_logo_scp"));
         assert_eq!(bins.ffprobe, PathBuf::from("/custom/ffprobe"));
         assert_eq!(bins.ffmpeg, PathBuf::from("/custom/ffmpeg"));

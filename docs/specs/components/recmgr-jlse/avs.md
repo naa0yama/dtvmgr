@@ -25,10 +25,9 @@ AudioDub(last,LWLibavAudioSource(TSFilePath, stream_index=<index>, av_sync=true)
 
 ### `stream_index` の決定ロジック
 
-| 条件         | `stream_index` | 理由                               |
-| ------------ | -------------- | ---------------------------------- |
-| 通常         | `1`            | デフォルトの音声ストリーム         |
-| tsdivider 後 | `-1`           | tsdivider がストリームを再構成する |
+| 条件 | `stream_index` | 理由                       |
+| ---- | -------------- | -------------------------- |
+| 通常 | `1`            | デフォルトの音声ストリーム |
 
 ### Rust 実装案
 
@@ -51,7 +50,7 @@ pub fn create_avs(output_path: &Path, input_file: &Path, stream_index: i32) -> R
 ## テスト方針
 
 - テンプレート文字列の正確性: 生成された AVS ファイルが期待するフォーマットと一致すること
-- `stream_index` の反映: 通常時は `1`、tsdivider 後は `-1` が正しく出力されること
+- `stream_index` の反映: 通常時は `1` が正しく出力されること
 
 ## 依存モジュール
 

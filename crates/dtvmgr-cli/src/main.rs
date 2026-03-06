@@ -124,9 +124,6 @@ struct JlseRunArgs {
     /// Channel name override.
     #[arg(short, long)]
     channel: Option<String>,
-    /// Run tsdivider preprocessing.
-    #[arg(long, alias = "tsd")]
-    tsdivider: bool,
     /// Encode target AVS.
     #[arg(short, long, value_enum, default_value_t)]
     target: AvsTargetArg,
@@ -148,8 +145,8 @@ struct JlseRunArgs {
     /// Remove intermediate files after processing.
     #[arg(short, long)]
     remove: bool,
-    /// Add chapter to encoded file.
-    #[arg(long)]
+    /// Disable chapter addition (chapters are added by default).
+    #[arg(long = "no-chapter", action = clap::ArgAction::SetFalse)]
     add_chapter: bool,
 }
 
@@ -1814,25 +1811,56 @@ fn run_jlse_tsduck(args: &JlseTsduckArgs, dir: Option<&PathBuf>) -> Result<()> {
     };
 
     for p in &programs {
-        let marker = if target_event_id.as_deref() == Some(&p.event_id) {
-            "[recording_target] "
-        } else {
-            ""
-        };
-        println!("--- {marker}event_id: {} ---", p.event_id);
-        println!("  service_id: {}", p.service_id);
-        println!("  start_time: {}", p.start_time);
-        println!("  duration: {} ({} min)", p.duration_raw, p.duration_min);
-        println!("  running_status: {}", p.running_status);
-        if let Some(name) = &p.program_name {
-            println!("  program_name: {name}");
-        }
-        if let Some(tt) = &p.table_type {
-            println!("  table_type: {tt}");
-        }
-        println!();
+        print_program_info(p, target_event_id.as_deref());
     }
     Ok(())
+}
+
+/// Print a single program's information to stdout.
+#[allow(clippy::print_stdout)]
+fn print_program_info(p: &dtvmgr_tsduck::eit::ProgramInfo, target_event_id: Option<&str>) {
+    let marker = if target_event_id == Some(&p.event_id) {
+        "[recording_target] "
+    } else {
+        ""
+    };
+    println!("--- {marker}event_id: {} ---", p.event_id);
+    println!("  service_id: {}", p.service_id);
+    println!("  start_time: {}", p.start_time);
+    println!(
+        "  duration: {} ({} min / {} sec)",
+        p.duration_raw,
+        p.duration_min(),
+        p.duration_sec
+    );
+    println!("  running_status: {}", p.running_status);
+    if let Some(name) = &p.program_name {
+        println!("  program_name: {name}");
+    }
+    if let Some(desc) = &p.description {
+        println!("  description: {desc}");
+    }
+    if let Some(tt) = &p.table_type {
+        println!("  table_type: {tt}");
+    }
+    if let Some(ext) = p.extended() {
+        println!("  extended: {ext}");
+    }
+    if !p.raw_extended.is_empty() {
+        for (key, value) in &p.raw_extended {
+            println!("  raw_extended[{key}]: {value}");
+        }
+    }
+    if let Some(g) = p.genre1 {
+        println!("  genre: {g}/{}", p.sub_genre1.unwrap_or(0));
+    }
+    if let Some(r) = p.video_resolution() {
+        println!("  video: {r}");
+    }
+    if let Some(rate) = p.audio_sampling_rate() {
+        println!("  audio: {rate}Hz");
+    }
+    println!();
 }
 
 /// Runs the `jlse channel` subcommand.
@@ -1914,7 +1942,6 @@ fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
     let ctx = PipelineContext {
         input: args.input.clone(),
         channel_name,
-        tsdivider: args.tsdivider,
         config: jlse_config,
         filter: args.filter,
         encode: args.encode,

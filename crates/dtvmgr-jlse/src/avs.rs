@@ -7,11 +7,8 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-/// Default stream index for normal (non-tsdivider) input.
+/// Default stream index for audio.
 pub const STREAM_INDEX_NORMAL: i32 = 1;
-
-/// Stream index used when input has been split by tsdivider.
-pub const STREAM_INDEX_TSDIVIDER: i32 = -1;
 
 /// Create an input AVS script that loads `input_file` with the given
 /// `stream_index`.
@@ -64,23 +61,6 @@ mod tests {
         assert!(content.contains("TSFilePath=\"/rec/video.ts\""));
         assert!(content.contains("LWLibavVideoSource(TSFilePath, repeat=true, dominance=1)"));
         assert!(content.contains("stream_index=1"));
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_create_tsdivider_stream_index() {
-        // Arrange
-        let tmp = tempfile::tempdir().unwrap();
-        let output = tmp.path().join("in_org.avs");
-        let input = Path::new("/rec/video_split.ts");
-
-        // Act
-        create(&output, input, STREAM_INDEX_TSDIVIDER).unwrap();
-
-        // Assert
-        let content = std::fs::read_to_string(&output).unwrap();
-        assert!(content.contains("TSFilePath=\"/rec/video_split.ts\""));
-        assert!(content.contains("stream_index=-1"));
     }
 
     #[test]

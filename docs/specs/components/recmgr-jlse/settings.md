@@ -26,7 +26,6 @@
 |              | `PARAM_LIST_2`       | `<module>/JL/data/ChParamJL2.csv` |
 | バイナリ     | `LOGOFRAME_COMMAND`  | `<module>/bin/logoframe`          |
 |              | `CHAPTEREXE_COMMAND` | `<module>/bin/chapter_exe`        |
-|              | `TSDIVIDER_COMMAND`  | `<module>/bin/tsdivider`          |
 |              | `JLSCP_COMMAND`      | `<module>/bin/join_logo_scp`      |
 |              | `FFPROBE_COMMAND`    | `/usr/local/bin/ffprobe`          |
 |              | `FFMPEG_COMMAND`     | `/usr/local/bin/ffmpeg`           |
@@ -44,8 +43,6 @@ pub struct OutputPaths {
     pub save_dir: PathBuf,
     /// Input AVS file: `in_org.avs`
     pub input_avs: PathBuf,
-    /// tsdivider output: `<filename>_split.ts`
-    pub tsdivider_output: PathBuf,
     /// chapter_exe output: `obs_chapterexe.txt`
     pub chapterexe_output: PathBuf,
     /// logoframe text output: `obs_logoframe.txt`
@@ -107,7 +104,7 @@ result = "/path/to/result" # result/ 出力先
 
 `[jlse.bins]` セクションは省略可能。未指定のフィールドは以下のデフォルト導出を使用する:
 
-- JL 系バイナリ (`logoframe`, `chapter_exe`, `tsdivider`, `join_logo_scp`): `<dirs.jl>/../bin/<name>`
+- JL 系バイナリ (`logoframe`, `chapter_exe`, `join_logo_scp`): `<dirs.jl>/../bin/<name>`
 - `ffprobe`, `ffmpeg`: `/usr/local/bin/<name>`
 
 ## 型定義
@@ -135,7 +132,6 @@ pub struct JlseDirs {
 pub struct JlseBins {
     pub logoframe: Option<PathBuf>,
     pub chapter_exe: Option<PathBuf>,
-    pub tsdivider: Option<PathBuf>,
     pub join_logo_scp: Option<PathBuf>,
     pub ffprobe: Option<PathBuf>,
     pub ffmpeg: Option<PathBuf>,
@@ -145,7 +141,6 @@ pub struct JlseBins {
 pub struct BinaryPaths {
     pub logoframe: PathBuf,
     pub chapter_exe: PathBuf,
-    pub tsdivider: PathBuf,
     pub join_logo_scp: PathBuf,
     pub ffprobe: PathBuf,
     pub ffmpeg: PathBuf,

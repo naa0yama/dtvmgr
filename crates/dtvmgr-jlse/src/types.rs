@@ -99,8 +99,6 @@ pub struct JlseBins {
     pub logoframe: Option<PathBuf>,
     /// `chapter_exe` binary override.
     pub chapter_exe: Option<PathBuf>,
-    /// tsdivider binary override.
-    pub tsdivider: Option<PathBuf>,
     /// `join_logo_scp` binary override.
     pub join_logo_scp: Option<PathBuf>,
     /// ffprobe binary override.

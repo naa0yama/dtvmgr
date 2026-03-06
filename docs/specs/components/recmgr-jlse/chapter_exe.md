@@ -17,7 +17,7 @@
 
 ### 共通コマンド実行パターン
 
-全外部コマンドは以下の共通パターンで実行する。他のコマンドラッパー ([logoframe.md](./logoframe.md), [join_logo_scp.md](./join_logo_scp.md), [tsdivider.md](./tsdivider.md), [ffprobe.md](./ffprobe.md), [ffmpeg.md](./ffmpeg.md)) もこのパターンを参照する。
+全外部コマンドは以下の共通パターンで実行する。他のコマンドラッパー ([logoframe.md](./logoframe.md), [join_logo_scp.md](./join_logo_scp.md), [ffprobe.md](./ffprobe.md), [ffmpeg.md](./ffmpeg.md)) もこのパターンを参照する。
 
 ```rust
 use tokio::process::Command;

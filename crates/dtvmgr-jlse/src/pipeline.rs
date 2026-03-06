@@ -28,8 +28,6 @@ pub struct PipelineContext {
     pub input: PathBuf,
     /// Channel name override.
     pub channel_name: Option<String>,
-    /// Whether to run tsdivider preprocessing.
-    pub tsdivider: bool,
     /// JLSE configuration.
     pub config: JlseConfig,
     /// Generate ffmpeg `filter_complex` file.
@@ -115,20 +113,11 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
     // Step 4: Write obs_param.txt
     write_obs_param(&paths.obs_param_path, detected_channel.as_ref(), &det_param)?;
 
-    // Step 5: (optional) tsdivider
-    let (actual_input, stream_index) = if ctx.tsdivider {
-        info!("running tsdivider");
-        command::tsdivider::run(&bins.tsdivider, &input, &paths.tsdivider_output)?;
-        (paths.tsdivider_output.clone(), avs::STREAM_INDEX_TSDIVIDER)
-    } else {
-        (input.clone(), avs::STREAM_INDEX_NORMAL)
-    };
-
-    // Step 6: AVS generation
-    avs::create(&paths.input_avs, &actual_input, stream_index)?;
+    // Step 5: AVS generation
+    avs::create(&paths.input_avs, &input, avs::STREAM_INDEX_NORMAL)?;
     debug!(path = %paths.input_avs.display(), "created input AVS");
 
-    // Step 7: chapter_exe
+    // Step 6: chapter_exe
     command::chapter_exe::run(
         &bins.chapter_exe,
         &paths.input_avs,
@@ -136,7 +125,7 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
     )?;
     debug!("chapter_exe completed");
 
-    // Step 8: logoframe
+    // Step 7: logoframe
     command::logoframe::run(
         &bins.logoframe,
         &paths.input_avs,
@@ -147,7 +136,7 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
     )?;
     debug!("logoframe completed");
 
-    // Step 9: join_logo_scp
+    // Step 8: join_logo_scp
     let jl_command_file = config_abs.dirs.jl.join(&det_param.jl_run);
     command::join_logo_scp::run(
         &bins.join_logo_scp,
@@ -160,7 +149,7 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
     )?;
     debug!("join_logo_scp completed");
 
-    // Step 10: AVS concatenation
+    // Step 9: AVS concatenation
     output::avs::create_cutcm(
         &paths.output_avs_in_cut,
         &paths.input_avs,
@@ -174,23 +163,24 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
     )?;
     debug!("AVS concatenation completed");
 
-    // Step 11: Chapter generation
+    // Step 10: Chapter generation
     generate_chapters(&paths)?;
 
-    // Step 12: (optional) FFmpeg filter generation
+    // Step 11: (optional) FFmpeg filter generation
     if ctx.filter {
         info!("generating ffmpeg filter");
-        let fps = command::ffprobe::get_frame_rate(&bins.ffprobe, &actual_input)?;
+        let fps = command::ffprobe::get_frame_rate(&bins.ffprobe, &input)?;
         output::ffmpeg_filter::create(&paths.output_avs_cut, &paths.output_filter_cut, &fps)?;
         debug!("ffmpeg filter generation completed");
     }
 
-    // Step 13: (optional) FFmpeg encoding
+    // Step 12: (optional) encoding
     if ctx.encode {
-        info!("running ffmpeg encoding");
         let avs_file = select_avs_file(&paths, ctx.target);
         let output_mp4 =
             resolve_output_path(&input, ctx.out_dir.as_deref(), ctx.out_name.as_deref());
+
+        info!("running ffmpeg encoding");
         let chapter_file = if ctx.add_chapter {
             Some(paths.file_txt_cpt_cut.as_path())
         } else {
@@ -207,7 +197,7 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
         debug!("ffmpeg encoding completed");
     }
 
-    // Step 14: (optional) Remove intermediate files
+    // Step 13: (optional) Remove intermediate files
     if ctx.remove {
         info!(dir = %paths.save_dir.display(), "removing intermediate files");
         std::fs::remove_dir_all(&paths.save_dir).with_context(|| {

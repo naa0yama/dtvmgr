@@ -17,19 +17,18 @@
 
 ### CLI 引数 (yargs → clap マッピング)
 
-| yargs オプション | 短縮   | 型        | デフォルト     | 説明                         | clap 案                 |
-| ---------------- | ------ | --------- | -------------- | ---------------------------- | ----------------------- |
-| `--input`        | `-i`   | `string`  | (必須)         | 入力 TS ファイルパス         | `--input` / `-i`        |
-| `--filter`       | `-f`   | `boolean` | `false`        | ffmpeg フィルタ出力を有効化  | `--filter` / `-f`       |
-| `--addchapter`   | `-ac`  | `boolean` | `false`        | エンコード時にチャプター付与 | `--add-chapter`         |
-| `--channel`      | `-c`   | `boolean` | `false`        | 環境変数 `CHNNELNAME` を参照 | `--channel <name>`      |
-| `--encode`       | `-e`   | `boolean` | `false`        | ffmpeg エンコードを有効化    | `--encode` / `-e`       |
-| `--target`       | `-t`   | `choice`  | `"cutcm_logo"` | エンコード対象 AVS           | `--target <cutcm/logo>` |
-| `--tsdivider`    | `-tsd` | `boolean` | `false`        | tsdivider による前処理       | `--tsdivider`           |
-| `--option`       | `-o`   | `string`  | `""`           | ffmpeg 追加オプション        | `--ffmpeg-option`       |
-| `--outdir`       | `-d`   | `string`  | `""`           | エンコード出力先ディレクトリ | `--outdir`              |
-| `--outname`      | `-n`   | `string`  | `""`           | エンコード出力ファイル名     | `--outname`             |
-| `--remove`       | `-r`   | `boolean` | `false`        | 処理後に中間ファイルを削除   | `--remove` / `-r`       |
+| yargs オプション | 短縮  | 型        | デフォルト     | 説明                         | clap 案                 |
+| ---------------- | ----- | --------- | -------------- | ---------------------------- | ----------------------- |
+| `--input`        | `-i`  | `string`  | (必須)         | 入力 TS ファイルパス         | `--input` / `-i`        |
+| `--filter`       | `-f`  | `boolean` | `false`        | ffmpeg フィルタ出力を有効化  | `--filter` / `-f`       |
+| `--addchapter`   | `-ac` | `boolean` | `false`        | エンコード時にチャプター付与 | `--add-chapter`         |
+| `--channel`      | `-c`  | `boolean` | `false`        | 環境変数 `CHNNELNAME` を参照 | `--channel <name>`      |
+| `--encode`       | `-e`  | `boolean` | `false`        | ffmpeg エンコードを有効化    | `--encode` / `-e`       |
+| `--target`       | `-t`  | `choice`  | `"cutcm_logo"` | エンコード対象 AVS           | `--target <cutcm/logo>` |
+| `--option`       | `-o`  | `string`  | `""`           | ffmpeg 追加オプション        | `--ffmpeg-option`       |
+| `--outdir`       | `-d`  | `string`  | `""`           | エンコード出力先ディレクトリ | `--outdir`              |
+| `--outname`      | `-n`  | `string`  | `""`           | エンコード出力ファイル名     | `--outname`             |
+| `--remove`       | `-r`  | `boolean` | `false`        | 処理後に中間ファイルを削除   | `--remove` / `-r`       |
 
 ### パイプライン実行順序
 
@@ -38,16 +37,15 @@
 1. 入力ファイルの拡張子チェック (`.ts` / `.m2ts`)
 2. チャンネル検出 ([channel.md](./channel.md))
 3. パラメータ検出 ([param.md](./param.md))
-4. (任意) tsdivider ([tsdivider.md](./tsdivider.md))
-5. 入力 AVS 生成 ([avs.md](./avs.md))
-6. chapter_exe ([chapter_exe.md](./chapter_exe.md))
-7. logoframe ([logoframe.md](./logoframe.md))
-8. join_logo_scp ([join_logo_scp.md](./join_logo_scp.md))
-9. AVS 連結 ([output_avs.md](./output_avs.md))
-10. チャプター生成 ([chapter.md](./chapter.md))
-11. (任意) FFmpeg フィルタ生成 ([ffmpeg_filter.md](./ffmpeg_filter.md))
-12. (任意) ffmpeg エンコード ([ffmpeg.md](./ffmpeg.md))
-13. (任意) 中間ファイル削除
+4. 入力 AVS 生成 ([avs.md](./avs.md))
+5. chapter_exe ([chapter_exe.md](./chapter_exe.md))
+6. logoframe ([logoframe.md](./logoframe.md))
+7. join_logo_scp ([join_logo_scp.md](./join_logo_scp.md))
+8. AVS 連結 ([output_avs.md](./output_avs.md))
+9. チャプター生成 ([chapter.md](./chapter.md))
+10. (任意) FFmpeg フィルタ生成 ([ffmpeg_filter.md](./ffmpeg_filter.md))
+11. (任意) ffmpeg エンコード ([ffmpeg.md](./ffmpeg.md))
+12. (任意) 中間ファイル削除
 
 ### CLI サブコマンド
 
@@ -90,7 +88,7 @@ options:
 完全なパイプラインを実行。
 
 ```
-dtvmgr jlse run --input /path/to/recording.ts [--encode] [--filter] [--tsdivider]
+dtvmgr jlse run --input /path/to/recording.ts [--encode] [--filter]
 ```
 
 ## 型定義
@@ -104,7 +102,6 @@ pub struct PipelineArgs {
     pub channel_name: Option<String>,
     pub encode: bool,
     pub target: AvsTarget,
-    pub tsdivider: bool,
     pub ffmpeg_option: Option<String>,
     pub out_dir: Option<PathBuf>,
     pub out_name: Option<String>,

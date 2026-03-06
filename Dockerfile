@@ -192,9 +192,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	# DRM and mp3lame
 	libdrm2 libmp3lame0 \
 	# FFmpeg filter drawtext
-	libharfbuzz0b libfribidi0 \
-	# tsdivider
-	libboost-program-options1.83.0 libboost-filesystem1.83.0
+	libharfbuzz0b libfribidi0
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	--mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -261,7 +259,8 @@ RUN echo "**** Install Claude Code ****" && \
 
 ENV PKG_CONFIG_PATH=/opt/ffmpeg/lib/pkgconfig \
 	LD_LIBRARY_PATH=/opt/ffmpeg/lib \
-	LIBVA_DRIVERS_PATH=/opt/ffmpeg/lib/dri
+	LIBVA_DRIVERS_PATH=/opt/ffmpeg/lib/dri \
+	PATH="/opt/ffmpeg/bin:${PATH}"
 
 COPY --from=jlse 			/join_logo_scp_trial							/join_logo_scp_trial
 COPY --from=jlse 			/opt/ffmpeg										/opt/ffmpeg
