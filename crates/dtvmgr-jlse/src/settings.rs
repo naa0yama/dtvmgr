@@ -176,6 +176,7 @@ mod tests {
                 result: PathBuf::from("/tmp/result"),
             },
             bins: JlseBins::default(),
+            encode: None,
         }
     }
 

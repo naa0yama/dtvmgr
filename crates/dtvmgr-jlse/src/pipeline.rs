@@ -16,8 +16,9 @@ use crate::command;
 use crate::command::ffmpeg::MkvMetadata;
 use crate::output;
 use crate::param;
+use crate::progress::{self, ProgressMode};
 use crate::settings::{BinaryPaths, DataPaths, OutputPaths, init_output_paths};
-use crate::types::{AvsTarget, Channel, DetectionParam, JlseConfig, JlseDirs};
+use crate::types::{AvsTarget, Channel, DetectionParam, JlseConfig, JlseDirs, JlseEncode};
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -47,6 +48,8 @@ pub struct PipelineContext {
     pub out_name: Option<String>,
     /// Remove intermediate files after processing.
     pub remove: bool,
+    /// Progress output mode (e.g. `EPGStation`).
+    pub progress_mode: Option<ProgressMode>,
 }
 
 // ── Pipeline ─────────────────────────────────────────────────
@@ -57,7 +60,11 @@ pub struct PipelineContext {
 ///
 /// Returns an error if any pipeline step fails (validation, file I/O,
 /// external command execution, etc.).
-#[allow(clippy::module_name_repetitions, clippy::too_many_lines)]
+#[allow(
+    clippy::module_name_repetitions,
+    clippy::too_many_lines,
+    clippy::cognitive_complexity
+)]
 pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
     // Step 1: Validate input extension
     validate_input(&ctx.input)?;
@@ -82,6 +89,7 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
     let config_abs = JlseConfig {
         dirs,
         bins: ctx.config.bins.clone(),
+        encode: ctx.config.encode.clone(),
     };
     let bins = BinaryPaths::from_config(&config_abs);
     let data = DataPaths::from_config(&config_abs);
@@ -128,6 +136,9 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
         &paths.chapterexe_output,
     )?;
     debug!("chapter_exe completed");
+    if ctx.progress_mode == Some(ProgressMode::EpgStation) {
+        progress::emit_epgstation(0.0, "(1/3) chapter_exe: completed");
+    }
 
     // Step 7: logoframe
     command::logoframe::run(
@@ -139,6 +150,9 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
         detected_channel.as_ref(),
     )?;
     debug!("logoframe completed");
+    if ctx.progress_mode == Some(ProgressMode::EpgStation) {
+        progress::emit_epgstation(0.0, "(2/3) logoframe: completed");
+    }
 
     // Step 8: join_logo_scp
     let jl_command_file = config_abs.dirs.jl.join(&det_param.jl_run);
@@ -178,6 +192,11 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
         debug!("ffmpeg filter generation completed");
     }
 
+    // Resolve FFmpeg encode args (always logged for visibility)
+    let encode_args =
+        JlseEncode::build_encode_args(ctx.config.encode.as_ref(), ctx.ffmpeg_option.as_deref());
+    info!(args = ?encode_args, "ffmpeg encode args");
+
     // Step 12: (optional) encoding
     if ctx.encode {
         // Step 12a: EIT extraction for MKV metadata
@@ -185,8 +204,20 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
             .context("EIT extraction is required for MKV encoding")?;
 
         let avs_file = select_avs_file(&paths, ctx.target);
-        let output_mkv =
-            resolve_output_path(&input, ctx.out_dir.as_deref(), ctx.out_name.as_deref());
+        let extension = ctx
+            .config
+            .encode
+            .as_ref()
+            .and_then(|e| e.format.as_deref())
+            .unwrap_or("mkv");
+        let output_file = resolve_output_path(
+            &input,
+            ctx.out_dir.as_deref(),
+            ctx.out_name.as_deref(),
+            extension,
+        );
+
+        let extra_options = encode_args.join(" ");
 
         info!("running ffmpeg encoding");
         let chapter_file = if ctx.add_chapter {
@@ -194,14 +225,29 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
         } else {
             None
         };
-        command::ffmpeg::run(
-            &bins.ffmpeg,
-            avs_file,
-            &output_mkv,
-            chapter_file,
-            &mkv_metadata,
-            ctx.ffmpeg_option.as_deref().unwrap_or(""),
-        )?;
+
+        if let Some(mode) = ctx.progress_mode {
+            let duration = command::ffprobe::get_duration(&bins.ffprobe, &input).unwrap_or(0.0);
+            command::ffmpeg::run_with_progress(
+                &bins.ffmpeg,
+                avs_file,
+                &output_file,
+                chapter_file,
+                &mkv_metadata,
+                &extra_options,
+                duration,
+                mode,
+            )?;
+        } else {
+            command::ffmpeg::run(
+                &bins.ffmpeg,
+                avs_file,
+                &output_file,
+                chapter_file,
+                &mkv_metadata,
+                &extra_options,
+            )?;
+        }
         debug!("ffmpeg encoding completed");
     }
 
@@ -379,18 +425,23 @@ fn select_avs_file(paths: &OutputPaths, target: AvsTarget) -> &Path {
     }
 }
 
-/// Resolve the output MKV file path.
+/// Resolve the output file path.
 ///
 /// - `out_dir` overrides the parent directory of the input file.
 /// - `out_name` overrides the file stem.
-/// - Extension is always `.mkv`.
-fn resolve_output_path(input: &Path, out_dir: Option<&Path>, out_name: Option<&str>) -> PathBuf {
+/// - `extension` sets the file extension (e.g. "mkv", "mp4").
+pub fn resolve_output_path(
+    input: &Path,
+    out_dir: Option<&Path>,
+    out_name: Option<&str>,
+    extension: &str,
+) -> PathBuf {
     let dir = out_dir.unwrap_or_else(|| input.parent().unwrap_or_else(|| Path::new(".")));
     let stem = out_name.map_or_else(
         || input.file_stem().unwrap_or_default().to_string_lossy(),
         std::borrow::Cow::Borrowed,
     );
-    dir.join(format!("{stem}.mkv"))
+    dir.join(format!("{stem}.{extension}"))
 }
 
 // ── Tests ────────────────────────────────────────────────────
@@ -517,7 +568,7 @@ mod tests {
         let input = Path::new("/rec/recording.ts");
 
         // Act
-        let result = resolve_output_path(input, None, None);
+        let result = resolve_output_path(input, None, None, "mkv");
 
         // Assert
         assert_eq!(result, PathBuf::from("/rec/recording.mkv"));
@@ -529,7 +580,7 @@ mod tests {
         let input = Path::new("/rec/recording.ts");
 
         // Act
-        let result = resolve_output_path(input, Some(Path::new("/enc")), None);
+        let result = resolve_output_path(input, Some(Path::new("/enc")), None, "mkv");
 
         // Assert
         assert_eq!(result, PathBuf::from("/enc/recording.mkv"));
@@ -541,7 +592,7 @@ mod tests {
         let input = Path::new("/rec/recording.ts");
 
         // Act
-        let result = resolve_output_path(input, None, Some("custom"));
+        let result = resolve_output_path(input, None, Some("custom"), "mkv");
 
         // Assert
         assert_eq!(result, PathBuf::from("/rec/custom.mkv"));
@@ -553,10 +604,22 @@ mod tests {
         let input = Path::new("/rec/recording.ts");
 
         // Act
-        let result = resolve_output_path(input, Some(Path::new("/enc")), Some("custom"));
+        let result = resolve_output_path(input, Some(Path::new("/enc")), Some("custom"), "mkv");
 
         // Assert
         assert_eq!(result, PathBuf::from("/enc/custom.mkv"));
+    }
+
+    #[test]
+    fn test_resolve_output_path_custom_extension() {
+        // Arrange
+        let input = Path::new("/rec/recording.ts");
+
+        // Act
+        let result = resolve_output_path(input, None, None, "mp4");
+
+        // Assert
+        assert_eq!(result, PathBuf::from("/rec/recording.mp4"));
     }
 
     // ── canonicalize_dirs ────────────────────────────────────

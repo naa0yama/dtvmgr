@@ -84,6 +84,23 @@ pub fn parse_frame_rate(s: &str) -> Result<FrameRate> {
     })
 }
 
+/// Query the total duration of `input_file` in seconds using `ffprobe`.
+///
+/// # Errors
+///
+/// Returns an error if `ffprobe` fails or the output cannot be parsed as `f64`.
+pub fn get_duration(binary: &Path, input_file: &Path) -> Result<f64> {
+    let args = build_duration_args(input_file);
+    let os_args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    let stdout = super::run_capture(binary, &os_args)
+        .with_context(|| "failed to get duration via ffprobe")?;
+
+    let trimmed = stdout.trim();
+    trimmed
+        .parse::<f64>()
+        .with_context(|| format!("invalid duration value: {trimmed:?}"))
+}
+
 /// Build ffprobe args for a single stream property query.
 fn build_probe_args(input_file: &Path, stream: &str, entry: &str) -> Vec<String> {
     vec![
@@ -107,6 +124,19 @@ fn build_frame_rate_args(input_file: &Path) -> Vec<String> {
 /// Build args to query audio sample rate.
 fn build_sample_rate_args(input_file: &Path) -> Vec<String> {
     build_probe_args(input_file, "a:0", "stream=sample_rate")
+}
+
+/// Build args to query format duration.
+fn build_duration_args(input_file: &Path) -> Vec<String> {
+    vec![
+        "-v".to_owned(),
+        "error".to_owned(),
+        "-show_entries".to_owned(),
+        "format=duration".to_owned(),
+        "-of".to_owned(),
+        "default=noprint_wrappers=1:nokey=1".to_owned(),
+        input_file.display().to_string(),
+    ]
 }
 
 #[cfg(test)]
@@ -247,5 +277,23 @@ mod tests {
     fn test_parse_frame_rate_negative() {
         // Arrange / Act / Assert: negative numbers fail u32 parse
         assert!(parse_frame_rate("-1/1").is_err());
+    }
+
+    #[test]
+    fn test_build_duration_args() {
+        // Arrange
+        let input = Path::new("/rec/video.ts");
+
+        // Act
+        let args = build_duration_args(input);
+
+        // Assert
+        assert_eq!(args[0], "-v");
+        assert_eq!(args[1], "error");
+        assert_eq!(args[2], "-show_entries");
+        assert_eq!(args[3], "format=duration");
+        assert_eq!(args[4], "-of");
+        assert_eq!(args[5], "default=noprint_wrappers=1:nokey=1");
+        assert_eq!(args[6], "/rec/video.ts");
     }
 }

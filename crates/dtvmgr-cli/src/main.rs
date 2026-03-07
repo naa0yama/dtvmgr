@@ -44,6 +44,7 @@ use dtvmgr_db::{
 use dtvmgr_jlse::channel::{detect_channel, load_channels as load_jlse_channels};
 use dtvmgr_jlse::param::{detect_param, load_params};
 use dtvmgr_jlse::pipeline::{PipelineContext, run_pipeline};
+use dtvmgr_jlse::progress::ProgressMode;
 use dtvmgr_jlse::settings::DataPaths;
 use dtvmgr_jlse::types::{AvsTarget, JlseConfig};
 
@@ -118,8 +119,8 @@ impl From<AvsTargetArg> for AvsTarget {
 #[derive(clap::Args)]
 struct JlseRunArgs {
     /// Path to input .ts or .m2ts file.
-    #[arg(short, long)]
-    input: PathBuf,
+    #[arg(short, long, required_unless_present = "epgstation")]
+    input: Option<PathBuf>,
     /// Channel name override.
     #[arg(short, long)]
     channel: Option<String>,
@@ -150,6 +151,10 @@ struct JlseRunArgs {
     /// Path to `tstables` binary (default: resolved from PATH).
     #[arg(long, default_value = "tstables")]
     tstables_bin: PathBuf,
+    /// Enable EPGStation-compatible progress JSON output.
+    /// Reads `INPUT` and `OUTPUT` from environment variables.
+    #[arg(long)]
+    epgstation: bool,
 }
 
 /// Arguments for `jlse channel`.
@@ -1925,21 +1930,62 @@ fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
 
     let channel_name = resolve_channel_name(args.channel.as_deref());
 
-    let ctx = PipelineContext {
-        input: args.input.clone(),
-        channel_name,
-        config: jlse_config,
-        filter: args.filter,
-        encode: args.encode,
-        target: AvsTarget::from(args.target),
-        add_chapter: args.add_chapter,
-        ffmpeg_option: args.ffmpeg_option.clone(),
-        out_dir: args.outdir.clone(),
-        out_name: args.outname.clone(),
-        remove: args.remove,
-    };
+    if args.epgstation {
+        // EPGStation mode: read INPUT/OUTPUT from environment variables.
+        let input = args
+            .input
+            .clone()
+            .or_else(|| std::env::var("INPUT").ok().map(PathBuf::from))
+            .context("INPUT environment variable is required in --epgstation mode")?;
 
-    run_pipeline(&ctx)
+        let (out_dir, out_name) = std::env::var("OUTPUT").map_or_else(
+            |_| (args.outdir.clone(), args.outname.clone()),
+            |output_str| {
+                let output_path = PathBuf::from(&output_str);
+                let dir = output_path.parent().map(Path::to_path_buf);
+                let name = output_path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned());
+                (dir, name)
+            },
+        );
+
+        let ctx = PipelineContext {
+            input,
+            channel_name,
+            config: jlse_config,
+            filter: args.filter,
+            encode: true, // implicitly enabled
+            target: AvsTarget::from(args.target),
+            add_chapter: args.add_chapter,
+            ffmpeg_option: args.ffmpeg_option.clone(),
+            out_dir,
+            out_name,
+            remove: args.remove,
+            progress_mode: Some(ProgressMode::EpgStation),
+        };
+
+        run_pipeline(&ctx)
+    } else {
+        let input = args.input.clone().context("--input is required")?;
+
+        let ctx = PipelineContext {
+            input,
+            channel_name,
+            config: jlse_config,
+            filter: args.filter,
+            encode: args.encode,
+            target: AvsTarget::from(args.target),
+            add_chapter: args.add_chapter,
+            ffmpeg_option: args.ffmpeg_option.clone(),
+            out_dir: args.outdir.clone(),
+            out_name: args.outname.clone(),
+            remove: args.remove,
+            progress_mode: None,
+        };
+
+        run_pipeline(&ctx)
+    }
 }
 
 // ── Syoboi / TMDB helpers ────────────────────────────────────

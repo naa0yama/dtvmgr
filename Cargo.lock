@@ -570,6 +570,7 @@ dependencies = [
  "regex",
  "serde",
  "tempfile",
+ "toml",
  "tracing",
  "unicode-normalization",
 ]

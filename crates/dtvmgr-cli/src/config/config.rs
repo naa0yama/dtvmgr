@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use dtvmgr_jlse::types::JlseConfig;
+use dtvmgr_jlse::types::{JlseConfig, JlseEncode};
 use serde::{Deserialize, Serialize};
 
 /// Top-level application configuration.
@@ -310,6 +310,8 @@ impl AppConfig {
                 Path::new("/usr/local/bin"),
                 "ffmpeg",
             );
+            // [jlse.encode]
+            Self::write_encode_section(&mut out, jlse.encode.as_ref());
         } else {
             out.push_str("# [jlse.dirs]\n");
             out.push_str("# jl = \"/path/to/JL\"\n");
@@ -322,9 +324,118 @@ impl AppConfig {
             out.push_str("# join_logo_scp = \"/path/to/bin/join_logo_scp\"\n");
             out.push_str("# ffprobe = \"/usr/local/bin/ffprobe\"\n");
             out.push_str("# ffmpeg = \"/usr/local/bin/ffmpeg\"\n");
+            out.push_str("#\n");
+            Self::write_encode_section(&mut out, None);
         }
 
         out
+    }
+
+    /// Write the `[jlse.encode]` section to the output.
+    fn write_encode_section(out: &mut String, encode: Option<&JlseEncode>) {
+        if let Some(enc) = encode {
+            out.push_str("\n[jlse.encode]\n");
+            Self::write_optional_str(out, "format", enc.format.as_deref(), "mkv");
+
+            if let Some(ref input) = enc.input {
+                out.push_str("\n[jlse.encode.input]\n");
+                Self::write_optional_str(
+                    out,
+                    "flags",
+                    input.flags.as_deref(),
+                    "+discardcorrupt+genpts",
+                );
+                Self::write_optional_str(
+                    out,
+                    "analyzeduration",
+                    input.analyzeduration.as_deref(),
+                    "30M",
+                );
+                Self::write_optional_str(out, "probesize", input.probesize.as_deref(), "100M");
+            }
+
+            if let Some(ref video) = enc.video {
+                out.push_str("\n[jlse.encode.video]\n");
+                Self::write_optional_str(out, "codec", video.codec.as_deref(), "libx264");
+                Self::write_optional_str(out, "preset", video.preset.as_deref(), "medium");
+                Self::write_optional_str(out, "profile", video.profile.as_deref(), "main");
+                Self::write_optional_str(out, "pix_fmt", video.pix_fmt.as_deref(), "yuv420p");
+                Self::write_optional_str(out, "aspect", video.aspect.as_deref(), "16:9");
+                Self::write_optional_str(
+                    out,
+                    "filter",
+                    video.filter.as_deref(),
+                    "yadif=mode=send_frame:parity=auto:deint=all,scale=w=1280:h=720",
+                );
+                Self::write_string_list(out, "extra", &video.extra);
+            }
+
+            if let Some(ref audio) = enc.audio {
+                out.push_str("\n[jlse.encode.audio]\n");
+                Self::write_optional_str(out, "codec", audio.codec.as_deref(), "aac");
+                if let Some(rate) = audio.sample_rate {
+                    let _ = writeln!(out, "sample_rate = {rate}");
+                } else {
+                    out.push_str("# sample_rate = 48000\n");
+                }
+                Self::write_optional_str(out, "bitrate", audio.bitrate.as_deref(), "256k");
+                if let Some(channels) = audio.channels {
+                    let _ = writeln!(out, "channels = {channels}");
+                } else {
+                    out.push_str("# channels = 2\n");
+                }
+                Self::write_string_list(out, "extra", &audio.extra);
+            }
+        } else {
+            out.push_str("#\n");
+            out.push_str("# [jlse.encode]\n");
+            out.push_str("# format = \"mkv\"\n");
+            out.push_str("#\n");
+            out.push_str("# [jlse.encode.input]\n");
+            out.push_str("# flags = \"+discardcorrupt+genpts\"\n");
+            out.push_str("# analyzeduration = \"30M\"\n");
+            out.push_str("# probesize = \"100M\"\n");
+            out.push_str("#\n");
+            out.push_str("# [jlse.encode.video]\n");
+            out.push_str("# codec = \"libx264\"\n");
+            out.push_str("# preset = \"medium\"\n");
+            out.push_str("# profile = \"main\"\n");
+            out.push_str("# pix_fmt = \"yuv420p\"\n");
+            out.push_str("# aspect = \"16:9\"\n");
+            out.push_str(
+                "# filter = \"yadif=mode=send_frame:parity=auto:deint=all,scale=w=1280:h=720\"\n",
+            );
+            out.push_str("# extra = []\n");
+            out.push_str("#\n");
+            out.push_str("# [jlse.encode.audio]\n");
+            out.push_str("# codec = \"aac\"\n");
+            out.push_str("# sample_rate = 48000\n");
+            out.push_str("# bitrate = \"256k\"\n");
+            out.push_str("# channels = 2\n");
+            out.push_str("# extra = []\n");
+        }
+    }
+
+    /// Write a string list field as active or commented line.
+    fn write_string_list(out: &mut String, key: &str, values: &[String]) {
+        if values.is_empty() {
+            let _ = writeln!(out, "# {key} = []");
+        } else {
+            let quoted: Vec<String> = values.iter().map(|v| format!("\"{v}\"")).collect();
+            let _ = writeln!(out, "{key} = [{}]", quoted.join(", "));
+        }
+    }
+
+    /// Write an optional string field as active or commented line.
+    fn write_optional_str(out: &mut String, key: &str, value: Option<&str>, hint: &str) {
+        match value {
+            Some(v) => {
+                let _ = writeln!(out, "{key} = \"{v}\"");
+            }
+            None => {
+                let _ = writeln!(out, "# {key} = \"{hint}\"");
+            }
+        }
     }
 
     /// Write a single binary field as active or commented-out line.
@@ -536,6 +647,7 @@ mod tests {
                     result: PathBuf::from("/tmp/result"),
                 },
                 bins: JlseBins::default(),
+                encode: None,
             }),
             ..AppConfig::default()
         };
@@ -568,6 +680,7 @@ mod tests {
                     ffmpeg: Some(PathBuf::from("/usr/bin/ffmpeg")),
                     ..JlseBins::default()
                 },
+                encode: None,
             }),
             ..AppConfig::default()
         };

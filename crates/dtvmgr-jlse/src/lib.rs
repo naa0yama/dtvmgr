@@ -15,6 +15,8 @@ pub mod output;
 pub mod param;
 /// Pipeline orchestration for the CM detection workflow.
 pub mod pipeline;
+/// EPGStation-compatible progress output.
+pub mod progress;
 /// Output paths, binary paths, and data paths for pipeline execution.
 pub mod settings;
 /// Core type definitions.
