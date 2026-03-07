@@ -4,14 +4,14 @@
 //! EIT XML attachment.
 
 use std::ffi::OsStr;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 use tracing::debug;
 
-use crate::progress::{self, FfmpegProgress, ProgressMode};
+use crate::progress::{self, ProgressEvent};
 use crate::types::JlseEncode;
 
 // ── Types ────────────────────────────────────────────────────
@@ -266,42 +266,70 @@ pub fn run_with_progress(
     metadata: &MkvMetadata,
     extra_options: &str,
     duration: f64,
-    mode: ProgressMode,
+    on_progress: &dyn Fn(ProgressEvent),
 ) -> Result<()> {
     let args = build_args(avs_file, output_file, chapter_file, metadata, extra_options);
     debug!(cmd = %binary.display(), ?args, "running ffmpeg with progress");
 
     let mut child = Command::new(binary)
         .args(&args)
-        .stdout(Stdio::inherit())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .with_context(|| format!("failed to spawn {}", binary.display()))?;
 
     // Read stderr for progress parsing.
-    // FFmpeg uses `\r` to overwrite lines, so we split on both `\r` and `\n`.
+    // FFmpeg uses bare `\r` (without `\n`) to overwrite progress lines,
+    // so we treat both `\r` and `\n` as line terminators instead of
+    // using `BufReader::lines()` which only splits on `\n`.
     if let Some(stderr) = child.stderr.take() {
-        let reader = BufReader::new(stderr);
-        for line_result in reader.lines() {
-            let line = line_result.with_context(|| "failed to read ffmpeg stderr")?;
-            // FFmpeg progress lines may contain \r-separated segments
-            for segment in line.split('\r') {
-                let segment = segment.trim();
-                if segment.is_empty() {
-                    continue;
-                }
-                match mode {
-                    ProgressMode::EpgStation => {
-                        if let Some(FfmpegProgress { percent, log }) =
-                            progress::parse_ffmpeg_progress(segment, duration)
-                        {
-                            let prefixed = format!("(3/3) FFmpeg: {log}");
-                            progress::emit_epgstation(percent, &prefixed);
-                        } else {
-                            debug!(line = segment, "ffmpeg stderr");
+        let mut reader = BufReader::new(stderr);
+        let mut line_bytes: Vec<u8> = Vec::new();
+
+        loop {
+            let available = reader.fill_buf().context("failed to read ffmpeg stderr")?;
+            if available.is_empty() {
+                break;
+            }
+
+            // Scan the buffer for `\r` or `\n` line terminators,
+            // copying non-terminator slices in bulk.
+            // Bounds: `pos` <= `len`, `pos + delim` <= `len` because
+            // `delim` comes from `position()` on `available[pos..]`.
+            let buf_len = available.len();
+            #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+            {
+                let mut pos = 0;
+                while pos < buf_len {
+                    if let Some(delim) = available[pos..]
+                        .iter()
+                        .position(|&b| b == b'\r' || b == b'\n')
+                    {
+                        line_bytes.extend_from_slice(&available[pos..pos + delim]);
+                        if !line_bytes.is_empty() {
+                            let segment = String::from_utf8_lossy(&line_bytes);
+                            let segment = segment.trim();
+                            if !segment.is_empty() {
+                                emit_ffmpeg_line(segment, duration, on_progress);
+                            }
+                            line_bytes.clear();
                         }
+                        pos += delim + 1;
+                    } else {
+                        line_bytes.extend_from_slice(&available[pos..]);
+                        break;
                     }
                 }
+            }
+            reader.consume(buf_len);
+        }
+
+        // Flush any remaining bytes.
+        if !line_bytes.is_empty() {
+            let segment = String::from_utf8_lossy(&line_bytes);
+            let segment = segment.trim();
+            if !segment.is_empty() {
+                emit_ffmpeg_line(segment, duration, on_progress);
             }
         }
     }
@@ -321,6 +349,17 @@ pub fn run_with_progress(
     }
 
     Ok(())
+}
+
+/// Process a single `FFmpeg` stderr line and emit progress events.
+fn emit_ffmpeg_line(segment: &str, duration: f64, on_progress: &dyn Fn(ProgressEvent)) {
+    on_progress(ProgressEvent::Log(segment.to_owned()));
+    if let Some(p) = progress::parse_ffmpeg_progress(segment, duration) {
+        on_progress(ProgressEvent::Encoding {
+            percent: p.percent,
+            log: p.log,
+        });
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────
