@@ -40,17 +40,30 @@ struct PatService {
 ///
 /// Returns an error if the XML is malformed or a service ID cannot be parsed.
 pub fn parse_pat_first_service_id(xml: &str) -> Result<Option<u32>> {
+    parse_pat_all_service_ids(xml).map(|sids| sids.into_iter().next())
+}
+
+/// Extract all service IDs from PAT in `TSDuck` XML.
+///
+/// Returns every `service_id` found across all PAT tables in order.
+/// Returns an empty `Vec` if no PAT table or service entry exists.
+///
+/// # Errors
+///
+/// Returns an error if the XML is malformed or a service ID cannot be parsed.
+pub fn parse_pat_all_service_ids(xml: &str) -> Result<Vec<u32>> {
     let doc: TsduckPatXml =
         quick_xml::de::from_str(xml).context("failed to parse TSDuck PAT XML")?;
 
+    let mut sids = Vec::new();
     for table in &doc.pat_tables {
-        if let Some(svc) = table.services.first() {
+        for svc in &table.services {
             let sid = parse_sid(&svc.service_id)
                 .with_context(|| format!("invalid PAT service_id: {}", svc.service_id))?;
-            return Ok(Some(sid));
+            sids.push(sid);
         }
     }
-    Ok(None)
+    Ok(sids)
 }
 
 #[cfg(test)]
@@ -144,6 +157,73 @@ mod tests {
 
         // Assert
         assert_eq!(sid, Some(23608));
+    }
+
+    // ── parse_pat_all_service_ids ──────────────────────────
+
+    #[test]
+    fn test_parse_pat_all_sids_empty() {
+        // Arrange — no PAT at all
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tsduck>
+</tsduck>"#;
+
+        // Act
+        let sids = parse_pat_all_service_ids(xml).unwrap();
+
+        // Assert
+        assert!(sids.is_empty());
+    }
+
+    #[test]
+    fn test_parse_pat_all_sids_single() {
+        // Arrange
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tsduck>
+  <PAT>
+    <service service_id="0x5C38" program_map_PID="0x0101"/>
+  </PAT>
+</tsduck>"#;
+
+        // Act
+        let sids = parse_pat_all_service_ids(xml).unwrap();
+
+        // Assert
+        assert_eq!(sids, vec![0x5C38]);
+    }
+
+    #[test]
+    fn test_parse_pat_all_sids_multiple() {
+        // Arrange
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tsduck>
+  <PAT transport_stream_id="0x7FE9" version="3">
+    <service service_id="0x5C38" program_map_PID="0x0101"/>
+    <service service_id="0x5C39" program_map_PID="0x0102"/>
+  </PAT>
+</tsduck>"#;
+
+        // Act
+        let sids = parse_pat_all_service_ids(xml).unwrap();
+
+        // Assert
+        assert_eq!(sids, vec![0x5C38, 0x5C39]);
+    }
+
+    #[test]
+    fn test_parse_pat_all_sids_no_services() {
+        // Arrange — PAT exists but has no services
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<tsduck>
+  <PAT transport_stream_id="0x7FE9" version="3">
+  </PAT>
+</tsduck>"#;
+
+        // Act
+        let sids = parse_pat_all_service_ids(xml).unwrap();
+
+        // Assert
+        assert!(sids.is_empty());
     }
 
     #[test]
