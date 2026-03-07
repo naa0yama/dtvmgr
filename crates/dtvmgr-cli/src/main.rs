@@ -42,7 +42,6 @@ use dtvmgr_db::{
     upsert_titles,
 };
 use dtvmgr_jlse::channel::{detect_channel, load_channels as load_jlse_channels};
-use dtvmgr_jlse::command::ffmpeg::FfmpegMetadata;
 use dtvmgr_jlse::param::{detect_param, load_params};
 use dtvmgr_jlse::pipeline::{PipelineContext, run_pipeline};
 use dtvmgr_jlse::settings::DataPaths;
@@ -148,6 +147,9 @@ struct JlseRunArgs {
     /// Disable chapter addition (chapters are added by default).
     #[arg(long = "no-chapter", action = clap::ArgAction::SetFalse)]
     add_chapter: bool,
+    /// Path to `tstables` binary (default: resolved from PATH).
+    #[arg(long, default_value = "tstables")]
+    tstables_bin: PathBuf,
 }
 
 /// Arguments for `jlse channel`.
@@ -1698,33 +1700,16 @@ fn resolve_channel_name(arg: Option<&str>) -> Option<String> {
         .or_else(|| std::env::var(CHANNEL_ENV_VAR).ok())
 }
 
-/// Read `FFmpeg` metadata from `EPGStation` environment variables.
-fn read_metadata_from_env() -> FfmpegMetadata {
-    FfmpegMetadata {
-        title: std::env::var("HALF_WIDTH_NAME").unwrap_or_default(),
-        description: std::env::var("DESCRIPTION").unwrap_or_default(),
-        extended: std::env::var("EXTENDED").unwrap_or_default(),
-    }
-}
-
 /// Detect the recording target from the middle of a TS file.
 ///
-/// Extracts a chunk from the file's midpoint, runs `tstables` to parse
-/// EIT p/f tables and identifies the recording target using
-/// Amatsukaze-style detection.
+/// Thin wrapper around [`dtvmgr_tsduck::detect_target_from_middle`] that
+/// discards the raw XML.
 fn detect_target_from_middle(
     bin: &Path,
     input: &Path,
 ) -> Result<Option<dtvmgr_tsduck::eit::RecordingTarget>> {
-    let chunk =
-        dtvmgr_tsduck::seek::extract_middle_chunk(input, dtvmgr_tsduck::seek::DEFAULT_CHUNK_SIZE)
-            .context("failed to extract middle chunk")?;
-
-    let xml = dtvmgr_tsduck::command::extract_eit_from_chunk(bin, &chunk)
-        .context("failed to extract EIT p/f from chunk")?;
-    let programs =
-        dtvmgr_tsduck::eit::parse_eit_xml(&xml).context("failed to parse mid-file EIT XML")?;
-    Ok(dtvmgr_tsduck::eit::detect_recording_target(&programs))
+    let (target, _xml) = dtvmgr_tsduck::detect_target_from_middle(bin, input)?;
+    Ok(target)
 }
 
 /// Runs the `jlse tsduck` subcommand.
@@ -1935,7 +1920,8 @@ fn run_jlse_param(args: &JlseParamArgs, dir: Option<&PathBuf>) -> Result<()> {
 /// Returns an error if the pipeline fails.
 #[instrument(skip_all)]
 fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
-    let jlse_config = resolve_jlse_config(dir)?;
+    let mut jlse_config = resolve_jlse_config(dir)?;
+    jlse_config.bins.tstables = Some(args.tstables_bin.clone());
 
     let channel_name = resolve_channel_name(args.channel.as_deref());
 
@@ -1951,7 +1937,6 @@ fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
         out_dir: args.outdir.clone(),
         out_name: args.outname.clone(),
         remove: args.remove,
-        metadata: read_metadata_from_env(),
     };
 
     run_pipeline(&ctx)
@@ -2881,27 +2866,6 @@ mod tests {
 
         // Act & Assert
         assert_eq!(resolve_channel_name(None), None);
-    }
-
-    // ── read_metadata_from_env ─────────────────────────────────
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_read_metadata_from_env_empty() {
-        // Arrange
-        unsafe {
-            std::env::remove_var("HALF_WIDTH_NAME");
-            std::env::remove_var("DESCRIPTION");
-            std::env::remove_var("EXTENDED");
-        }
-
-        // Act
-        let meta = read_metadata_from_env();
-
-        // Assert
-        assert!(meta.title.is_empty());
-        assert!(meta.description.is_empty());
-        assert!(meta.extended.is_empty());
     }
 
     // ── upsert_filtered_programs ───────────────────────────────
