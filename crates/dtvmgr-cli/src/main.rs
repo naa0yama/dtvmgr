@@ -44,7 +44,7 @@ use dtvmgr_db::{
 use dtvmgr_jlse::channel::{detect_channel, load_channels as load_jlse_channels};
 use dtvmgr_jlse::param::{detect_param, load_params};
 use dtvmgr_jlse::pipeline::{PipelineContext, run_pipeline};
-use dtvmgr_jlse::progress::ProgressMode;
+use dtvmgr_jlse::progress::{ProgressEvent, ProgressMode};
 use dtvmgr_jlse::settings::DataPaths;
 use dtvmgr_jlse::types::{AvsTarget, JlseConfig};
 
@@ -155,6 +155,9 @@ struct JlseRunArgs {
     /// Reads `INPUT` and `OUTPUT` from environment variables.
     #[arg(long)]
     epgstation: bool,
+    /// Interactive TUI progress display.
+    #[arg(long)]
+    tui: bool,
 }
 
 /// Arguments for `jlse channel`.
@@ -1916,6 +1919,24 @@ fn run_jlse_param(args: &JlseParamArgs, dir: Option<&PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// Spawns a pipeline thread and runs the TUI progress viewer.
+///
+/// Suppresses tracing output on the pipeline thread to prevent
+/// log lines from corrupting the TUI alternate screen.
+fn run_pipeline_with_tui(ctx: PipelineContext) -> Result<()> {
+    let (tx, rx) = std::sync::mpsc::channel::<ProgressEvent>();
+    let handle = std::thread::spawn(move || {
+        let noop = tracing::subscriber::NoSubscriber::new();
+        let _guard = tracing::subscriber::set_default(noop);
+        let cb = move |event: ProgressEvent| {
+            // Ignore send errors (receiver may have been dropped on quit)
+            let _ = tx.send(event);
+        };
+        run_pipeline(&ctx, Some(&cb))
+    });
+    crate::tui::progress_viewer::run_progress_viewer(&rx, handle)
+}
+
 /// Runs the `jlse run` subcommand.
 ///
 /// Executes the full CM detection pipeline.
@@ -1965,7 +1986,49 @@ fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
             progress_mode: Some(ProgressMode::EpgStation),
         };
 
-        run_pipeline(&ctx)
+        if args.tui {
+            run_pipeline_with_tui(ctx)
+        } else {
+            // EPGStation callback mode (JSON output)
+            let cb = |event: ProgressEvent| {
+                use dtvmgr_jlse::progress::emit_epgstation;
+                match event {
+                    ProgressEvent::StageStart { stage, total, name } => {
+                        emit_epgstation(0.0, &format!("({stage}/{total}) {name}: starting"));
+                    }
+                    ProgressEvent::StageProgress { percent, log } => {
+                        emit_epgstation(percent, &log);
+                    }
+                    ProgressEvent::Encoding { percent, log } => {
+                        let prefixed = format!("(4/4) FFmpeg: {log}");
+                        emit_epgstation(percent, &prefixed);
+                    }
+                    ProgressEvent::Log(_) | ProgressEvent::Finished => {}
+                }
+            };
+
+            run_pipeline(&ctx, Some(&cb))
+        }
+    } else if args.tui {
+        // Standalone TUI mode
+        let input = args.input.clone().context("--input is required")?;
+
+        let ctx = PipelineContext {
+            input,
+            channel_name,
+            config: jlse_config,
+            filter: args.filter,
+            encode: args.encode,
+            target: AvsTarget::from(args.target),
+            add_chapter: args.add_chapter,
+            ffmpeg_option: args.ffmpeg_option.clone(),
+            out_dir: args.outdir.clone(),
+            out_name: args.outname.clone(),
+            remove: args.remove,
+            progress_mode: None,
+        };
+
+        run_pipeline_with_tui(ctx)
     } else {
         let input = args.input.clone().context("--input is required")?;
 
@@ -1984,7 +2047,7 @@ fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
             progress_mode: None,
         };
 
-        run_pipeline(&ctx)
+        run_pipeline(&ctx, None)
     }
 }
 

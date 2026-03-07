@@ -5,6 +5,8 @@
 mod channel_selector;
 /// Normalize viewer TUI.
 pub mod normalize_viewer;
+/// Progress viewer TUI.
+pub mod progress_viewer;
 /// Channel selector state types.
 pub mod state;
 /// Title/program viewer TUI.
