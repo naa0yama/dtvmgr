@@ -55,11 +55,84 @@ fn normalize(s: &str) -> String {
     s.nfkc().collect()
 }
 
+/// Looks up a channel by a single service ID.
+///
+/// Compares the decimal string representation of `sid` against each
+/// channel's `service_id` field. Returns the first match.
+#[must_use]
+pub fn lookup_channel_by_sid(channels: &[Channel], sid: u32) -> Option<Channel> {
+    let sid_str = sid.to_string();
+    channels.iter().find(|ch| ch.service_id == sid_str).cloned()
+}
+
+/// Looks up a channel by multiple service IDs.
+///
+/// Tries each SID in order and returns the first match found in
+/// `channels`. Useful for multi-service TS files where the PAT
+/// contains several service entries.
+#[must_use]
+pub fn lookup_channel_by_sids(channels: &[Channel], sids: &[u32]) -> Option<Channel> {
+    sids.iter()
+        .find_map(|sid| lookup_channel_by_sid(channels, *sid))
+}
+
+/// Detects the broadcast channel with optional PAT SID lookup.
+///
+/// Priority order:
+/// 1. `channel_name` (explicit `--channel` flag)
+/// 2. PAT SID → `ChList.csv` reverse lookup
+/// 3. Filename pattern matching (fallback)
+///
+/// Returns `None` if no channel matches.
+#[must_use]
+#[allow(clippy::module_name_repetitions)]
+pub fn detect_channel_with_sid(
+    channels: &[Channel],
+    filepath: &str,
+    channel_name: Option<&str>,
+    pat_sids: Option<&[u32]>,
+) -> Option<Channel> {
+    let filename = normalize(
+        &Path::new(filepath)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy(),
+    );
+
+    // Priority 1: explicit channel name
+    if let Some(name) = channel_name
+        && !name.is_empty()
+    {
+        let cn = normalize(name);
+        if let Some(ch) = match_by_channel_name(channels, &cn) {
+            return Some(ch);
+        }
+    }
+
+    // Priority 2: PAT SID reverse lookup
+    if let Some(sids) = pat_sids
+        && let Some(ch) = lookup_channel_by_sids(channels, sids)
+    {
+        debug!(
+            short = %ch.short,
+            service_id = %ch.service_id,
+            "detected channel via PAT SID"
+        );
+        return Some(ch);
+    }
+
+    // Priority 3: filename pattern matching
+    match_by_filename(channels, &filename)
+}
+
 /// Detects the broadcast channel from a filename and channel list.
 ///
 /// When `channel_name` is provided (from `--channel` flag or
 /// `CHNNELNAME` env var), it takes priority. Falls back to filename
 /// detection if the channel name does not match.
+///
+/// This is a convenience wrapper around [`detect_channel_with_sid`]
+/// without PAT SID lookup.
 ///
 /// Returns `None` if no channel matches.
 #[must_use]
@@ -69,25 +142,7 @@ pub fn detect_channel(
     filepath: &str,
     channel_name: Option<&str>,
 ) -> Option<Channel> {
-    let filename = normalize(
-        &Path::new(filepath)
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy(),
-    );
-
-    // Try channel name first if provided and non-empty.
-    if let Some(name) = channel_name
-        && !name.is_empty()
-    {
-        let cn = normalize(name);
-        if let Some(ch) = match_by_channel_name(channels, &cn) {
-            return Some(ch);
-        }
-        // Fall through to filename detection.
-    }
-
-    match_by_filename(channels, &filename)
+    detect_channel_with_sid(channels, filepath, channel_name, None)
 }
 
 /// Matches channel by explicit channel name (priority search).
@@ -407,6 +462,127 @@ mod tests {
 
         // Assert
         assert_eq!(result.unwrap().short, "AT-X");
+    }
+
+    // ── lookup_channel_by_sid ─────────────────────────────
+
+    #[test]
+    fn test_lookup_channel_by_sid_match() {
+        // Arrange
+        let channels = sample_channels();
+
+        // Act
+        let result = lookup_channel_by_sid(&channels, 1024);
+
+        // Assert
+        assert_eq!(result.unwrap().short, "NHK-G");
+    }
+
+    #[test]
+    fn test_lookup_channel_by_sid_no_match() {
+        // Arrange
+        let channels = sample_channels();
+
+        // Act
+        let result = lookup_channel_by_sid(&channels, 9999);
+
+        // Assert
+        assert!(result.is_none());
+    }
+
+    // ── lookup_channel_by_sids ────────────────────────────
+
+    #[test]
+    fn test_lookup_channel_by_sids_first_match() {
+        // Arrange
+        let channels = sample_channels();
+        let sids = vec![211, 1024]; // BS11 matches first
+
+        // Act
+        let result = lookup_channel_by_sids(&channels, &sids);
+
+        // Assert
+        assert_eq!(result.unwrap().short, "BS11");
+    }
+
+    #[test]
+    fn test_lookup_channel_by_sids_second_match() {
+        // Arrange
+        let channels = sample_channels();
+        let sids = vec![9999, 23608]; // first doesn't match, MX matches
+
+        // Act
+        let result = lookup_channel_by_sids(&channels, &sids);
+
+        // Assert
+        assert_eq!(result.unwrap().short, "MX");
+    }
+
+    #[test]
+    fn test_lookup_channel_by_sids_empty() {
+        // Arrange
+        let channels = sample_channels();
+
+        // Act
+        let result = lookup_channel_by_sids(&channels, &[]);
+
+        // Assert
+        assert!(result.is_none());
+    }
+
+    // ── detect_channel_with_sid ───────────────────────────
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_detect_channel_with_sid_channel_name_priority() {
+        // Arrange
+        let channels = sample_channels();
+        let sids = vec![211]; // BS11
+
+        // Act — channel_name should win over PAT SID
+        let result = detect_channel_with_sid(&channels, "something.ts", Some("AT-X"), Some(&sids));
+
+        // Assert
+        assert_eq!(result.unwrap().short, "AT-X");
+    }
+
+    #[test]
+    fn test_detect_channel_with_sid_pat_sid() {
+        // Arrange
+        let channels = sample_channels();
+        let sids = vec![23608]; // MX
+
+        // Act — no channel name, PAT SID should match
+        let result = detect_channel_with_sid(&channels, "unknown_file.ts", None, Some(&sids));
+
+        // Assert
+        assert_eq!(result.unwrap().short, "MX");
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_detect_channel_with_sid_fallback_to_filename() {
+        // Arrange
+        let channels = sample_channels();
+        let sids = vec![9999]; // no match
+
+        // Act — PAT SID doesn't match, falls back to filename
+        let result = detect_channel_with_sid(&channels, "BS11_番組名.ts", None, Some(&sids));
+
+        // Assert
+        assert_eq!(result.unwrap().short, "BS11");
+    }
+
+    #[test]
+    fn test_detect_channel_with_sid_none_sids() {
+        // Arrange
+        let channels = sample_channels();
+
+        // Act — None for pat_sids, equivalent to detect_channel
+        let result = detect_channel_with_sid(&channels, "unknown_file.ts", None, None);
+
+        // Assert
+        assert!(result.is_none());
     }
 
     #[test]
