@@ -57,6 +57,8 @@ pub struct BinaryPaths {
     pub ffprobe: PathBuf,
     /// ffmpeg binary: `/usr/local/bin/ffmpeg`
     pub ffmpeg: PathBuf,
+    /// tstables binary (resolved from PATH by default)
+    pub tstables: PathBuf,
 }
 
 /// Paths to CSV data files under `<jl_dir>/data/`.
@@ -134,6 +136,10 @@ impl BinaryPaths {
                 .ffmpeg
                 .clone()
                 .unwrap_or_else(|| PathBuf::from("/usr/local/bin/ffmpeg")),
+            tstables: bins
+                .tstables
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("tstables")),
         }
     }
 }
@@ -379,6 +385,7 @@ mod tests {
             join_logo_scp: Some(PathBuf::from("/custom/join_logo_scp")),
             ffprobe: Some(PathBuf::from("/custom/ffprobe")),
             ffmpeg: Some(PathBuf::from("/custom/ffmpeg")),
+            tstables: Some(PathBuf::from("/custom/tstables")),
         };
 
         // Act
@@ -390,5 +397,6 @@ mod tests {
         assert_eq!(bins.join_logo_scp, PathBuf::from("/custom/join_logo_scp"));
         assert_eq!(bins.ffprobe, PathBuf::from("/custom/ffprobe"));
         assert_eq!(bins.ffmpeg, PathBuf::from("/custom/ffmpeg"));
+        assert_eq!(bins.tstables, PathBuf::from("/custom/tstables"));
     }
 }

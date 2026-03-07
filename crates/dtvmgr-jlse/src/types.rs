@@ -105,4 +105,6 @@ pub struct JlseBins {
     pub ffprobe: Option<PathBuf>,
     /// ffmpeg binary override.
     pub ffmpeg: Option<PathBuf>,
+    /// `tstables` binary override.
+    pub tstables: Option<PathBuf>,
 }

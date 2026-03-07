@@ -566,6 +566,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "csv",
+ "dtvmgr-tsduck",
  "regex",
  "serde",
  "tempfile",
