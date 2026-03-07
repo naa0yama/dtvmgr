@@ -2,7 +2,7 @@
 //!
 //! Executes all pipeline steps in order: input validation, channel
 //! detection, parameter detection, external command execution, AVS
-//! concatenation, and chapter generation.
+//! concatenation, chapter generation, and optional EIT-based MKV encoding.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -13,6 +13,7 @@ use tracing::{debug, info};
 use crate::avs;
 use crate::channel;
 use crate::command;
+use crate::command::ffmpeg::MkvMetadata;
 use crate::output;
 use crate::param;
 use crate::settings::{BinaryPaths, DataPaths, OutputPaths, init_output_paths};
@@ -46,8 +47,6 @@ pub struct PipelineContext {
     pub out_name: Option<String>,
     /// Remove intermediate files after processing.
     pub remove: bool,
-    /// Metadata for encoded file (title, description, extended).
-    pub metadata: command::ffmpeg::FfmpegMetadata,
 }
 
 // ── Pipeline ─────────────────────────────────────────────────
@@ -88,11 +87,16 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
     let data = DataPaths::from_config(&config_abs);
     let paths = init_output_paths(&config_abs.dirs.result, &filename)?;
 
-    // Step 2: Channel detection
+    // Step 2: Channel detection (with PAT SID reverse lookup)
     let channels = channel::load_channels(&data.channel_list)?;
     let filepath = input.to_string_lossy();
-    let detected_channel =
-        channel::detect_channel(&channels, &filepath, ctx.channel_name.as_deref());
+    let pat_sids = extract_pat_sids(&bins.tstables, &input);
+    let detected_channel = channel::detect_channel_with_sid(
+        &channels,
+        &filepath,
+        ctx.channel_name.as_deref(),
+        pat_sids.as_deref(),
+    );
     if let Some(ref ch) = detected_channel {
         info!(short = %ch.short, "detected channel");
     } else {
@@ -176,8 +180,12 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
 
     // Step 12: (optional) encoding
     if ctx.encode {
+        // Step 12a: EIT extraction for MKV metadata
+        let mkv_metadata = extract_eit_for_mkv(&bins.tstables, &input, &paths.save_dir)
+            .context("EIT extraction is required for MKV encoding")?;
+
         let avs_file = select_avs_file(&paths, ctx.target);
-        let output_mp4 =
+        let output_mkv =
             resolve_output_path(&input, ctx.out_dir.as_deref(), ctx.out_name.as_deref());
 
         info!("running ffmpeg encoding");
@@ -189,9 +197,9 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
         command::ffmpeg::run(
             &bins.ffmpeg,
             avs_file,
-            &output_mp4,
+            &output_mkv,
             chapter_file,
-            &ctx.metadata,
+            &mkv_metadata,
             ctx.ffmpeg_option.as_deref().unwrap_or(""),
         )?;
         debug!("ffmpeg encoding completed");
@@ -211,6 +219,48 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
 
     info!("pipeline completed successfully");
     Ok(())
+}
+
+/// Extract EIT from the middle of a TS file and build MKV metadata.
+///
+/// Steps:
+/// 1. Extract a chunk from the file's midpoint.
+/// 2. Run `tstables` to parse EIT p/f tables.
+/// 3. Detect the recording target program.
+/// 4. Save the raw EIT XML to `save_dir/eit.xml`.
+/// 5. Build `MkvMetadata` from the detected program.
+fn extract_eit_for_mkv(tstables_bin: &Path, input: &Path, save_dir: &Path) -> Result<MkvMetadata> {
+    info!("extracting EIT metadata for MKV");
+
+    let (target, xml) = dtvmgr_tsduck::detect_target_from_middle(tstables_bin, input)
+        .context("failed to detect recording target from EIT")?;
+
+    let target = target.context("no recording target found in EIT data")?;
+
+    // Save EIT XML for attachment
+    let eit_xml_path = save_dir.join("eit.xml");
+    std::fs::write(&eit_xml_path, &xml)
+        .with_context(|| format!("failed to write EIT XML: {}", eit_xml_path.display()))?;
+    debug!(path = %eit_xml_path.display(), "saved EIT XML");
+
+    let program = &target.program;
+    info!(
+        method = ?target.detection_method,
+        program_name = ?program.program_name,
+        "detected recording target"
+    );
+
+    Ok(MkvMetadata {
+        title: program.program_name.clone(),
+        subtitle: program.description.clone(),
+        description: program.extended(),
+        genre: program
+            .genre1
+            .and_then(dtvmgr_tsduck::eit::decode_genre)
+            .map(ToOwned::to_owned),
+        date_recorded: Some(program.start_time.clone()),
+        eit_xml_path: Some(eit_xml_path),
+    })
 }
 
 /// Read `obs_cut.avs` and `obs_jlscp.txt`, generate chapter files.
@@ -233,6 +283,35 @@ fn generate_chapters(paths: &OutputPaths) -> Result<()> {
 
     info!("chapter generation completed");
     Ok(())
+}
+
+/// Extract all service IDs from the PAT of a TS file.
+///
+/// Runs `tstables` to extract PAT XML, then parses all service IDs.
+/// Returns `None` on any failure (non-fatal for the pipeline).
+fn extract_pat_sids(tstables_bin: &Path, input: &Path) -> Option<Vec<u32>> {
+    let xml = match dtvmgr_tsduck::command::extract_pat(tstables_bin, input) {
+        Ok(xml) => xml,
+        Err(e) => {
+            debug!(error = %e, "PAT extraction failed, skipping SID lookup");
+            return None;
+        }
+    };
+
+    match dtvmgr_tsduck::pat::parse_pat_all_service_ids(&xml) {
+        Ok(sids) if sids.is_empty() => {
+            debug!("no service IDs found in PAT");
+            None
+        }
+        Ok(sids) => {
+            debug!(?sids, "extracted service IDs from PAT");
+            Some(sids)
+        }
+        Err(e) => {
+            debug!(error = %e, "PAT XML parsing failed, skipping SID lookup");
+            None
+        }
+    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -300,18 +379,18 @@ fn select_avs_file(paths: &OutputPaths, target: AvsTarget) -> &Path {
     }
 }
 
-/// Resolve the output MP4 file path.
+/// Resolve the output MKV file path.
 ///
 /// - `out_dir` overrides the parent directory of the input file.
 /// - `out_name` overrides the file stem.
-/// - Extension is always `.mp4`.
+/// - Extension is always `.mkv`.
 fn resolve_output_path(input: &Path, out_dir: Option<&Path>, out_name: Option<&str>) -> PathBuf {
     let dir = out_dir.unwrap_or_else(|| input.parent().unwrap_or_else(|| Path::new(".")));
     let stem = out_name.map_or_else(
         || input.file_stem().unwrap_or_default().to_string_lossy(),
         std::borrow::Cow::Borrowed,
     );
-    dir.join(format!("{stem}.mp4"))
+    dir.join(format!("{stem}.mkv"))
 }
 
 // ── Tests ────────────────────────────────────────────────────
@@ -441,7 +520,7 @@ mod tests {
         let result = resolve_output_path(input, None, None);
 
         // Assert
-        assert_eq!(result, PathBuf::from("/rec/recording.mp4"));
+        assert_eq!(result, PathBuf::from("/rec/recording.mkv"));
     }
 
     #[test]
@@ -453,7 +532,7 @@ mod tests {
         let result = resolve_output_path(input, Some(Path::new("/enc")), None);
 
         // Assert
-        assert_eq!(result, PathBuf::from("/enc/recording.mp4"));
+        assert_eq!(result, PathBuf::from("/enc/recording.mkv"));
     }
 
     #[test]
@@ -465,7 +544,7 @@ mod tests {
         let result = resolve_output_path(input, None, Some("custom"));
 
         // Assert
-        assert_eq!(result, PathBuf::from("/rec/custom.mp4"));
+        assert_eq!(result, PathBuf::from("/rec/custom.mkv"));
     }
 
     #[test]
@@ -477,7 +556,7 @@ mod tests {
         let result = resolve_output_path(input, Some(Path::new("/enc")), Some("custom"));
 
         // Assert
-        assert_eq!(result, PathBuf::from("/enc/custom.mp4"));
+        assert_eq!(result, PathBuf::from("/enc/custom.mkv"));
     }
 
     // ── canonicalize_dirs ────────────────────────────────────
