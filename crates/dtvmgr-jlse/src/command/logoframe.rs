@@ -6,7 +6,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use tracing::debug;
 
 use crate::types::Channel;
@@ -28,10 +28,31 @@ pub fn run(
     logo_dir: &Path,
     channel: Option<&Channel>,
 ) -> Result<()> {
-    let logo_path = select_logo(logo_dir, channel);
+    let logo_path = select_logo(logo_dir, channel)?;
     let args = build_args(avs_file, txt_output, avs_output, &logo_path);
     let os_args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
     super::run(binary, &os_args)
+}
+
+/// Run `logoframe` with stderr captured via `on_log` callback.
+///
+/// # Errors
+///
+/// Returns an error if the command cannot be spawned or exits with a
+/// non-zero status code.
+pub fn run_logged(
+    binary: &Path,
+    avs_file: &Path,
+    txt_output: &Path,
+    avs_output: &Path,
+    logo_dir: &Path,
+    channel: Option<&Channel>,
+    on_log: &dyn Fn(&str),
+) -> Result<()> {
+    let logo_path = select_logo(logo_dir, channel)?;
+    let args = build_args(avs_file, txt_output, avs_output, &logo_path);
+    let os_args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    super::run_logged(binary, &os_args, on_log)
 }
 
 /// Select the most appropriate logo file from `logo_dir` for the given channel.
@@ -42,13 +63,14 @@ pub fn run(
 /// 3. `channel.recognize` (if non-empty)
 /// 4. `SID<service_id>`
 ///
-/// Falls back to `logo_dir` itself if no channel is provided or no logo
-/// file is found.
-#[must_use]
-pub fn select_logo(logo_dir: &Path, channel: Option<&Channel>) -> PathBuf {
+/// # Errors
+///
+/// Returns an error if no channel is provided or no matching logo file
+/// is found. Without a logo, `chapter_exe` accuracy degrades
+/// significantly.
+pub fn select_logo(logo_dir: &Path, channel: Option<&Channel>) -> Result<PathBuf> {
     let Some(ch) = channel else {
-        debug!("no channel provided, using logo_dir as fallback");
-        return logo_dir.to_path_buf();
+        bail!("no channel detected; cannot select logo file");
     };
 
     let candidates = [
@@ -64,12 +86,16 @@ pub fn select_logo(logo_dir: &Path, channel: Option<&Channel>) -> PathBuf {
         }
         if let Some(path) = find_logo(logo_dir, name) {
             debug!(logo = %path.display(), name, "found logo file");
-            return path;
+            return Ok(path);
         }
     }
 
-    debug!("no logo found for channel, using logo_dir as fallback");
-    logo_dir.to_path_buf()
+    bail!(
+        "no matching logo file found in {} for channel (short={}, service_id={})",
+        logo_dir.display(),
+        ch.short,
+        ch.service_id,
+    );
 }
 
 /// Search `logo_dir` for a logo file matching `name`.
@@ -271,7 +297,11 @@ mod tests {
         let result = select_logo(logo_dir, None);
 
         // Assert
-        assert_eq!(result, PathBuf::from("/logo"));
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("no channel detected"),
+            "expected 'no channel detected' in: {err}"
+        );
     }
 
     #[test]
@@ -289,7 +319,7 @@ mod tests {
         };
 
         // Act
-        let result = select_logo(tmp.path(), Some(&ch));
+        let result = select_logo(tmp.path(), Some(&ch)).unwrap();
 
         // Assert — install has highest priority
         assert_eq!(result, tmp.path().join("inst.lgd"));
@@ -309,7 +339,7 @@ mod tests {
         };
 
         // Act
-        let result = select_logo(tmp.path(), Some(&ch));
+        let result = select_logo(tmp.path(), Some(&ch)).unwrap();
 
         // Assert
         assert_eq!(result, tmp.path().join("BS1.lgd"));
@@ -329,7 +359,7 @@ mod tests {
         };
 
         // Act
-        let result = select_logo(tmp.path(), Some(&ch));
+        let result = select_logo(tmp.path(), Some(&ch)).unwrap();
 
         // Assert
         assert_eq!(result, tmp.path().join("NHK.lgd"));
@@ -349,7 +379,7 @@ mod tests {
         };
 
         // Act
-        let result = select_logo(tmp.path(), Some(&ch));
+        let result = select_logo(tmp.path(), Some(&ch)).unwrap();
 
         // Assert
         assert_eq!(result, tmp.path().join("SID101-1.lgd"));
@@ -370,7 +400,11 @@ mod tests {
         // Act
         let result = select_logo(tmp.path(), Some(&ch));
 
-        // Assert — falls back to logo_dir
-        assert_eq!(result, tmp.path().to_path_buf());
+        // Assert — returns error when no logo found
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("no matching logo file found"),
+            "expected 'no matching logo file found' in: {err}"
+        );
     }
 }
