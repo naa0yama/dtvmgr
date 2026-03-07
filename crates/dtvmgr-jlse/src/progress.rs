@@ -13,6 +13,39 @@ pub enum ProgressMode {
     EpgStation,
 }
 
+/// Progress event emitted by the pipeline.
+#[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::module_name_repetitions)]
+pub enum ProgressEvent {
+    /// A pipeline stage is starting.
+    StageStart {
+        /// Current stage number (1-indexed).
+        stage: u8,
+        /// Total number of stages.
+        total: u8,
+        /// Stage name.
+        name: String,
+    },
+    /// Intra-stage progress update (0.0 to 1.0) with status text.
+    StageProgress {
+        /// Progress within the current stage.
+        percent: f64,
+        /// Human-readable status text for the stage display.
+        log: String,
+    },
+    /// `FFmpeg` encoding progress update.
+    Encoding {
+        /// Progress percentage (0.0 to 1.0).
+        percent: f64,
+        /// Human-readable log line.
+        log: String,
+    },
+    /// A log line from an external command's stderr.
+    Log(String),
+    /// Pipeline finished successfully.
+    Finished,
+}
+
 /// Emit `EPGStation`-compatible progress JSON to stdout.
 ///
 /// Output format: `{"type":"progress","percent":<f64>,"log":"<string>"}`
@@ -54,16 +87,44 @@ pub fn parse_ffmpeg_progress(line: &str, duration: f64) -> Option<FfmpegProgress
     let current = time_to_seconds(time_str)?;
     let percent = (current / duration).clamp(0.0, 1.0);
 
-    // Build a compact log from available fields.
+    // Extract fields once for both ETA calculation and log building.
+    let speed_str = extract_field(line, "speed=");
+    let speed_value = speed_str
+        .and_then(|s| s.trim_end_matches('x').parse::<f64>().ok())
+        .filter(|&s| s > 0.0);
+    let remaining = duration - current;
+
+    // Build a compact log: "ETA: HH:MM:SS fps=N/s speed=Nx"
     let mut log = String::new();
+    if let Some(speed) = speed_value {
+        if remaining > 0.0 {
+            #[allow(clippy::arithmetic_side_effects)]
+            let eta_secs = remaining / speed;
+            let total = eta_secs.round().max(0.0);
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                clippy::as_conversions
+            )]
+            let total = total as u64;
+            let _ = write!(
+                log,
+                "ETA: {:02}:{:02}:{:02}",
+                total / 3600,
+                (total % 3600) / 60,
+                total % 60
+            );
+        } else {
+            let _ = write!(log, "ETA: 00:00:00");
+        }
+    }
     if let Some(fps) = extract_field(line, "fps=") {
-        let _ = write!(log, "fps={fps}");
+        if !log.is_empty() {
+            log.push(' ');
+        }
+        let _ = write!(log, "fps={fps}/s");
     }
-    if !log.is_empty() {
-        log.push(' ');
-    }
-    let _ = write!(log, "time={time_str}");
-    if let Some(speed) = extract_field(line, "speed=") {
+    if let Some(speed) = speed_str {
         let _ = write!(log, " speed={speed}");
     }
 
@@ -97,6 +158,71 @@ fn time_to_seconds(time: &str) -> Option<f64> {
         (Some(hours), Some(minutes), Some(seconds)) => {
             Some(hours.mul_add(3600.0, minutes.mul_add(60.0, seconds)))
         }
+        _ => None,
+    }
+}
+
+// ── Stage stderr parsers ─────────────────────────────────────
+
+/// Parse `AviSynth` lwi index creation percentage from stderr.
+///
+/// Matches lines containing `Creating lwi index file XX%`.
+#[must_use]
+pub fn parse_lwi_percent(line: &str) -> Option<u32> {
+    let marker = "Creating lwi index file ";
+    let idx = line.find(marker)?;
+    let after = line.get(idx.checked_add(marker.len())?..)?;
+    let pct_str = after.split('%').next()?;
+    pct_str.trim().parse().ok()
+}
+
+/// Parse total video frames from `chapter_exe` stderr.
+///
+/// Matches lines containing `Video Frames: NNNN`.
+#[must_use]
+pub fn parse_video_frames_total(line: &str) -> Option<u32> {
+    let marker = "Video Frames:";
+    let idx = line.find(marker)?;
+    let after = line.get(idx.checked_add(marker.len())?..)?;
+    let num_str = after.split_whitespace().next()?;
+    num_str.parse().ok()
+}
+
+/// Parse current frame position from `chapter_exe` mute detection stderr.
+///
+/// Matches lines like `mute 1: 1234 - 5678フレーム`.
+#[must_use]
+pub fn parse_mute_frame(line: &str) -> Option<u32> {
+    let idx = line.find("mute")?;
+    let after_mute = line.get(idx.checked_add(4)?..)?;
+    let colon_idx = after_mute.find(':')?;
+    let after_colon = after_mute.get(colon_idx.checked_add(1)?..)?;
+    let frame_str = after_colon
+        .trim_start()
+        .split(|c: char| !c.is_ascii_digit())
+        .next()?;
+    if frame_str.is_empty() {
+        return None;
+    }
+    frame_str.parse().ok()
+}
+
+/// Parse `logoframe` checking progress from stderr.
+///
+/// Matches lines like `checking 1234/5678 ended.`.
+#[must_use]
+pub fn parse_logoframe_checking(line: &str) -> Option<(u32, u32)> {
+    let marker = "checking";
+    let idx = line.find(marker)?;
+    let after = line.get(idx.checked_add(marker.len())?..)?;
+    let trimmed = after.trim_start();
+    let (current_str, rest) = trimmed.split_once('/')?;
+    let total_str = rest.split_whitespace().next()?;
+    match (
+        current_str.trim().parse::<u32>(),
+        total_str.trim().parse::<u32>(),
+    ) {
+        (Ok(current), Ok(total)) => Some((current, total)),
         _ => None,
     }
 }
@@ -162,11 +288,12 @@ mod tests {
         // Act
         let progress = parse_ffmpeg_progress(line, duration).unwrap();
 
-        // Assert
+        // Assert — 50% done, ETA = 300s / 2.0x = 150s = 00:02:30
         assert!((progress.percent - 0.5).abs() < 0.001);
-        assert!(progress.log.contains("fps=30.0"));
-        assert!(progress.log.contains("time=00:05:00.00"));
+        assert!(progress.log.contains("ETA: 00:02:30"));
+        assert!(progress.log.contains("fps=30.0/s"));
         assert!(progress.log.contains("speed=2.0x"));
+        assert!(!progress.log.contains("frame="));
     }
 
     #[test]
@@ -228,5 +355,93 @@ mod tests {
             output,
             r#"{"type":"progress","percent":0.5000,"log":"test \"quoted\" value"}"#
         );
+    }
+
+    // ── parse_lwi_percent ──────────────────────────────────
+
+    #[test]
+    fn test_parse_lwi_percent_basic() {
+        assert_eq!(parse_lwi_percent("Creating lwi index file 50%"), Some(50));
+    }
+
+    #[test]
+    fn test_parse_lwi_percent_with_prefix() {
+        assert_eq!(
+            parse_lwi_percent("AviSynth Creating lwi index file 75%"),
+            Some(75)
+        );
+    }
+
+    #[test]
+    fn test_parse_lwi_percent_100() {
+        assert_eq!(parse_lwi_percent("Creating lwi index file 100%"), Some(100));
+    }
+
+    #[test]
+    fn test_parse_lwi_percent_no_match() {
+        assert_eq!(parse_lwi_percent("some other output"), None);
+    }
+
+    // ── parse_video_frames_total ───────────────────────────
+
+    #[test]
+    fn test_parse_video_frames_total() {
+        assert_eq!(
+            parse_video_frames_total("\tVideo Frames: 12345 [29.97fps]"),
+            Some(12345)
+        );
+    }
+
+    #[test]
+    fn test_parse_video_frames_total_with_prefix() {
+        assert_eq!(
+            parse_video_frames_total("chapter_exe \tVideo Frames: 6789 [29.97fps]"),
+            Some(6789)
+        );
+    }
+
+    #[test]
+    fn test_parse_video_frames_total_no_match() {
+        assert_eq!(parse_video_frames_total("some other output"), None);
+    }
+
+    // ── parse_mute_frame ───────────────────────────────────
+
+    #[test]
+    fn test_parse_mute_frame_basic() {
+        assert_eq!(parse_mute_frame("mute 1: 1234 - 5678フレーム"), Some(1234));
+    }
+
+    #[test]
+    fn test_parse_mute_frame_no_space() {
+        assert_eq!(parse_mute_frame("mute0: 500 - 1000フレーム"), Some(500));
+    }
+
+    #[test]
+    fn test_parse_mute_frame_no_match() {
+        assert_eq!(parse_mute_frame("some other output"), None);
+    }
+
+    // ── parse_logoframe_checking ───────────────────────────
+
+    #[test]
+    fn test_parse_logoframe_checking_basic() {
+        assert_eq!(
+            parse_logoframe_checking("checking 1234/5678 ended."),
+            Some((1234, 5678))
+        );
+    }
+
+    #[test]
+    fn test_parse_logoframe_checking_with_prefix() {
+        assert_eq!(
+            parse_logoframe_checking("logoframe checking 100/200 ended."),
+            Some((100, 200))
+        );
+    }
+
+    #[test]
+    fn test_parse_logoframe_checking_no_match() {
+        assert_eq!(parse_logoframe_checking("some other output"), None);
     }
 }

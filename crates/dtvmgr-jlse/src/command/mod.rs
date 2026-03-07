@@ -10,8 +10,9 @@ pub mod join_logo_scp;
 pub mod logoframe;
 
 use std::ffi::OsStr;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 use tracing::debug;
@@ -29,6 +30,53 @@ pub fn run(program: &Path, args: &[&OsStr]) -> Result<()> {
         .args(args)
         .status()
         .with_context(|| format!("failed to spawn {}", program.display()))?;
+
+    if !status.success() {
+        bail!(
+            "{} exited with {}",
+            program.display(),
+            status
+                .code()
+                .map_or_else(|| "signal".to_owned(), |c| c.to_string()),
+        );
+    }
+
+    Ok(())
+}
+
+/// Spawn a command, capture stderr line-by-line via callback, and check
+/// exit status.
+///
+/// Stdout is suppressed. Each stderr line is forwarded to `on_log`.
+/// Used by TUI mode to display command output without corrupting the
+/// alternate screen.
+///
+/// # Errors
+///
+/// Returns an error if the command cannot be spawned or exits with a
+/// non-zero status code.
+pub fn run_logged(program: &Path, args: &[&OsStr], on_log: &dyn Fn(&str)) -> Result<()> {
+    debug!(cmd = %program.display(), ?args, "running command (logged)");
+
+    let mut child = Command::new(program)
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("failed to spawn {}", program.display()))?;
+
+    if let Some(stderr) = child.stderr.take() {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            let line =
+                line.with_context(|| format!("failed to read stderr from {}", program.display()))?;
+            on_log(&line);
+        }
+    }
+
+    let status = child
+        .wait()
+        .with_context(|| format!("failed to wait for {}", program.display()))?;
 
     if !status.success() {
         bail!(

@@ -39,6 +39,35 @@ pub fn run(binary: &Path, avs_file: &Path, output_file: &Path) -> Result<()> {
     }
 }
 
+/// Run `chapter_exe` with stderr captured via `on_log` callback.
+///
+/// # Errors
+///
+/// Returns an error if the command cannot be spawned, exits with a
+/// non-zero exit code, or crashes without producing an output file.
+pub fn run_logged(
+    binary: &Path,
+    avs_file: &Path,
+    output_file: &Path,
+    on_log: &dyn Fn(&str),
+) -> Result<()> {
+    let args = build_args(avs_file, output_file);
+    let os_args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+
+    match super::run_logged(binary, &os_args, on_log) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // Tolerate signal-killed exits when the output was written.
+            if output_file.metadata().is_ok_and(|m| m.len() > 0) {
+                tracing::warn!("chapter_exe crashed but output file exists; continuing");
+                Ok(())
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
 /// Build the argument list for `chapter_exe`.
 #[must_use]
 pub fn build_args(avs_file: &Path, output_file: &Path) -> Vec<String> {

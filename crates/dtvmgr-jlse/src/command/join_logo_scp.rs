@@ -37,6 +37,35 @@ pub fn run(
     super::run(binary, &os_args)
 }
 
+/// Run `join_logo_scp` with stderr captured via `on_log` callback.
+///
+/// # Errors
+///
+/// Returns an error if the command cannot be spawned or exits with a
+/// non-zero status code.
+#[allow(clippy::too_many_arguments)]
+pub fn run_logged(
+    binary: &Path,
+    logoframe_txt: &Path,
+    chapterexe_txt: &Path,
+    jl_command_file: &Path,
+    output_avs_cut: &Path,
+    jlscp_output: &Path,
+    param: &DetectionParam,
+    on_log: &dyn Fn(&str),
+) -> Result<()> {
+    let args = build_args(
+        logoframe_txt,
+        chapterexe_txt,
+        jl_command_file,
+        output_avs_cut,
+        jlscp_output,
+        param,
+    );
+    let os_args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    super::run_logged(binary, &os_args, on_log)
+}
+
 /// Build the argument list for `join_logo_scp`.
 ///
 /// The `-flags` argument is omitted when `param.flags` is empty.
