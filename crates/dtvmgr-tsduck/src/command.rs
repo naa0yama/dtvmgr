@@ -63,8 +63,17 @@ fn run_capture(program: &Path, args: &[&OsStr]) -> Result<String> {
         );
     }
 
-    String::from_utf8(output.stdout)
-        .with_context(|| format!("{} produced non-UTF-8 stdout", program.display()))
+    let stdout = String::from_utf8(output.stdout)
+        .with_context(|| format!("{} produced non-UTF-8 stdout", program.display()))?;
+
+    if stdout.trim().is_empty() {
+        bail!(
+            "{} produced no output (input may not be a valid TS file)",
+            program.display(),
+        );
+    }
+
+    Ok(stdout)
 }
 
 /// Extract EIT XML from a TS file using `tstables`.
@@ -339,6 +348,24 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_capture_empty_output() {
+        // Arrange — script succeeds but produces no output
+        let dir = tempfile::tempdir().unwrap();
+        let script = write_script(dir.path(), "empty.sh", "#!/bin/sh\nexit 0\n");
+
+        // Act
+        let result = run_capture(&script, &[]);
+
+        // Assert
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("produced no output"),
+            "expected 'produced no output' in: {err}"
+        );
     }
 
     #[test]

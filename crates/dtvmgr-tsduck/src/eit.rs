@@ -517,6 +517,29 @@ pub const fn decode_video_resolution(component_type: u8) -> Option<&'static str>
     }
 }
 
+/// Decode ARIB STD-B10 major genre code (content nibble level 1) to English name.
+#[must_use]
+pub const fn decode_genre(nibble1: u8) -> Option<&'static str> {
+    match nibble1 {
+        0x0 => Some("News/Report"),
+        0x1 => Some("Sports"),
+        0x2 => Some("Information/Tabloid"),
+        0x3 => Some("Drama"),
+        0x4 => Some("Music"),
+        0x5 => Some("Variety"),
+        0x6 => Some("Movie"),
+        0x7 => Some("Animation/Special Effects"),
+        0x8 => Some("Documentary/Education"),
+        0x9 => Some("Theater/Performance"),
+        0xA => Some("Hobby/Education"),
+        0xB => Some("Welfare"),
+        0xC | 0xD => Some("Reserved"),
+        0xE => Some("Extended"),
+        0xF => Some("Other"),
+        _ => None,
+    }
+}
+
 /// Build ordered key-value pairs from extended event descriptors.
 ///
 /// When an item has an empty `description`, its value is appended to the
