@@ -4,6 +4,7 @@
 //! detection, parameter detection, external command execution, AVS
 //! concatenation, chapter generation, and optional EIT-based MKV encoding.
 
+use std::cell::Cell;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -16,7 +17,7 @@ use crate::command;
 use crate::command::ffmpeg::MkvMetadata;
 use crate::output;
 use crate::param;
-use crate::progress::{self, ProgressMode};
+use crate::progress::{self, ProgressEvent, ProgressMode};
 use crate::settings::{BinaryPaths, DataPaths, OutputPaths, init_output_paths};
 use crate::types::{AvsTarget, Channel, DetectionParam, JlseConfig, JlseDirs, JlseEncode};
 
@@ -65,7 +66,10 @@ pub struct PipelineContext {
     clippy::too_many_lines,
     clippy::cognitive_complexity
 )]
-pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
+pub fn run_pipeline(
+    ctx: &PipelineContext,
+    on_progress: Option<&dyn Fn(ProgressEvent)>,
+) -> Result<()> {
     // Step 1: Validate input extension
     validate_input(&ctx.input)?;
 
@@ -129,42 +133,134 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
     avs::create(&paths.input_avs, &input, avs::STREAM_INDEX_NORMAL)?;
     debug!(path = %paths.input_avs.display(), "created input AVS");
 
-    // Step 6: chapter_exe
-    command::chapter_exe::run(
-        &bins.chapter_exe,
-        &paths.input_avs,
-        &paths.chapterexe_output,
-    )?;
+    // Step 6: chapter_exe (stages 1-2: lwi index + mute detection)
+    if let Some(cb) = on_progress {
+        cb(ProgressEvent::StageStart {
+            stage: 1,
+            total: 4,
+            name: "lwi index".to_owned(),
+        });
+        let in_mute_phase = Cell::new(false);
+        let total_frames = Cell::new(0u32);
+        let enter_mute_phase = || {
+            if !in_mute_phase.get() {
+                in_mute_phase.set(true);
+                cb(ProgressEvent::StageStart {
+                    stage: 2,
+                    total: 4,
+                    name: "chapter_exe".to_owned(),
+                });
+            }
+        };
+        let on_log = |line: &str| {
+            cb(ProgressEvent::Log(line.to_owned()));
+            if let Some(pct) = progress::parse_lwi_percent(line) {
+                let stage_pct = f64::from(pct.min(100)) / 100.0;
+                cb(ProgressEvent::StageProgress {
+                    percent: stage_pct,
+                    log: line.to_owned(),
+                });
+            } else if let Some(total) = progress::parse_video_frames_total(line) {
+                total_frames.set(total);
+                enter_mute_phase();
+            } else if let Some(current) = progress::parse_mute_frame(line) {
+                enter_mute_phase();
+                let total = total_frames.get();
+                if total > 0 {
+                    let pct = f64::from(current.min(total)) / f64::from(total);
+                    cb(ProgressEvent::StageProgress {
+                        percent: pct,
+                        log: line.to_owned(),
+                    });
+                }
+            }
+        };
+        command::chapter_exe::run_logged(
+            &bins.chapter_exe,
+            &paths.input_avs,
+            &paths.chapterexe_output,
+            &on_log,
+        )?;
+    } else {
+        command::chapter_exe::run(
+            &bins.chapter_exe,
+            &paths.input_avs,
+            &paths.chapterexe_output,
+        )?;
+    }
     debug!("chapter_exe completed");
-    if ctx.progress_mode == Some(ProgressMode::EpgStation) {
-        progress::emit_epgstation(0.0, "(1/3) chapter_exe: completed");
-    }
 
-    // Step 7: logoframe
-    command::logoframe::run(
-        &bins.logoframe,
-        &paths.input_avs,
-        &paths.logoframe_txt_output,
-        &paths.logoframe_avs_output,
-        &config_abs.dirs.logo,
-        detected_channel.as_ref(),
-    )?;
-    debug!("logoframe completed");
-    if ctx.progress_mode == Some(ProgressMode::EpgStation) {
-        progress::emit_epgstation(0.0, "(2/3) logoframe: completed");
+    // Step 7: logoframe (stage 3)
+    if let Some(cb) = on_progress {
+        cb(ProgressEvent::StageStart {
+            stage: 3,
+            total: 4,
+            name: "logoframe".to_owned(),
+        });
+        let on_log = |line: &str| {
+            cb(ProgressEvent::Log(line.to_owned()));
+            if let Some(pct) = progress::parse_lwi_percent(line) {
+                let stage_pct = f64::from(pct.min(100)) / 100.0 * 0.2;
+                cb(ProgressEvent::StageProgress {
+                    percent: stage_pct,
+                    log: line.to_owned(),
+                });
+            } else if let Some((current, total)) = progress::parse_logoframe_checking(line)
+                && total > 0
+            {
+                let pct = f64::from(current.min(total)) / f64::from(total);
+                cb(ProgressEvent::StageProgress {
+                    percent: pct.mul_add(0.8, 0.2),
+                    log: format!("checking {current}/{total}"),
+                });
+            }
+        };
+        command::logoframe::run_logged(
+            &bins.logoframe,
+            &paths.input_avs,
+            &paths.logoframe_txt_output,
+            &paths.logoframe_avs_output,
+            &config_abs.dirs.logo,
+            detected_channel.as_ref(),
+            &on_log,
+        )?;
+    } else {
+        command::logoframe::run(
+            &bins.logoframe,
+            &paths.input_avs,
+            &paths.logoframe_txt_output,
+            &paths.logoframe_avs_output,
+            &config_abs.dirs.logo,
+            detected_channel.as_ref(),
+        )?;
     }
+    debug!("logoframe completed");
 
     // Step 8: join_logo_scp
     let jl_command_file = config_abs.dirs.jl.join(&det_param.jl_run);
-    command::join_logo_scp::run(
-        &bins.join_logo_scp,
-        &paths.logoframe_txt_output,
-        &paths.chapterexe_output,
-        &jl_command_file,
-        &paths.output_avs_cut,
-        &paths.jlscp_output,
-        &det_param,
-    )?;
+    if let Some(cb) = on_progress {
+        let on_log = |line: &str| cb(ProgressEvent::Log(line.to_owned()));
+        command::join_logo_scp::run_logged(
+            &bins.join_logo_scp,
+            &paths.logoframe_txt_output,
+            &paths.chapterexe_output,
+            &jl_command_file,
+            &paths.output_avs_cut,
+            &paths.jlscp_output,
+            &det_param,
+            &on_log,
+        )?;
+    } else {
+        command::join_logo_scp::run(
+            &bins.join_logo_scp,
+            &paths.logoframe_txt_output,
+            &paths.chapterexe_output,
+            &jl_command_file,
+            &paths.output_avs_cut,
+            &paths.jlscp_output,
+            &det_param,
+        )?;
+    }
     debug!("join_logo_scp completed");
 
     // Step 9: AVS concatenation
@@ -226,8 +322,13 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
             None
         };
 
-        if let Some(mode) = ctx.progress_mode {
-            let duration = command::ffprobe::get_duration(&bins.ffprobe, &input).unwrap_or(0.0);
+        if let Some(cb) = on_progress {
+            cb(ProgressEvent::StageStart {
+                stage: 4,
+                total: 4,
+                name: "FFmpeg".to_owned(),
+            });
+            let duration = command::ffprobe::get_duration(&bins.ffprobe, avs_file).unwrap_or(0.0);
             command::ffmpeg::run_with_progress(
                 &bins.ffmpeg,
                 avs_file,
@@ -236,7 +337,7 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
                 &mkv_metadata,
                 &extra_options,
                 duration,
-                mode,
+                cb,
             )?;
         } else {
             command::ffmpeg::run(
@@ -261,6 +362,10 @@ pub fn run_pipeline(ctx: &PipelineContext) -> Result<()> {
             )
         })?;
         debug!("intermediate files removed");
+    }
+
+    if let Some(cb) = on_progress {
+        cb(ProgressEvent::Finished);
     }
 
     info!("pipeline completed successfully");
