@@ -61,6 +61,20 @@ pub struct JlseConfig {
     pub encode: Option<JlseEncode>,
 }
 
+/// Duration check rule for pre-encode validation.
+///
+/// Defines the minimum acceptable content ratio for a program
+/// length range. Used in `[jlse.encode.duration_check]` config.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DurationCheckRule {
+    /// Minimum program duration in minutes (inclusive).
+    pub min_min: u32,
+    /// Maximum program duration in minutes (inclusive).
+    pub max_min: u32,
+    /// Minimum acceptable content percent (e.g. 70 = 70%).
+    pub min_percent: u32,
+}
+
 /// Encode configuration for the `FFmpeg` step.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JlseEncode {
@@ -75,6 +89,9 @@ pub struct JlseEncode {
     /// Audio encoding settings.
     #[serde(default)]
     pub audio: Option<EncodeAudio>,
+    /// Duration check rules. Uses defaults if omitted.
+    #[serde(default)]
+    pub duration_check: Option<Vec<DurationCheckRule>>,
 }
 
 impl Default for JlseEncode {
@@ -84,6 +101,7 @@ impl Default for JlseEncode {
             input: Some(EncodeInput::default()),
             video: Some(EncodeVideo::default()),
             audio: Some(EncodeAudio::default()),
+            duration_check: None,
         }
     }
 }

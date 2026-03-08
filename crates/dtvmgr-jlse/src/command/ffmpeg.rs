@@ -769,6 +769,7 @@ mod tests {
                 channels: Some(2),
                 extra: vec![],
             }),
+            duration_check: None,
         };
 
         // Act

@@ -21,3 +21,5 @@ pub mod progress;
 pub mod settings;
 /// Core type definitions.
 pub mod types;
+/// Pre-encode duration validation.
+pub mod validate;
