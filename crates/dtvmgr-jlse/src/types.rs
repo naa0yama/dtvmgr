@@ -51,6 +51,7 @@ pub struct DetectionParam {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JlseConfig {
     /// Directory paths (JL, logo, result).
+    #[serde(default)]
     pub dirs: JlseDirs,
     /// Binary path overrides. Omit to use defaults.
     #[serde(default)]
@@ -61,7 +62,7 @@ pub struct JlseConfig {
 }
 
 /// Encode configuration for the `FFmpeg` step.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JlseEncode {
     /// Output container format extension (default: `"mkv"`).
     pub format: Option<String>,
@@ -76,8 +77,19 @@ pub struct JlseEncode {
     pub audio: Option<EncodeAudio>,
 }
 
+impl Default for JlseEncode {
+    fn default() -> Self {
+        Self {
+            format: Some("mkv".to_owned()),
+            input: Some(EncodeInput::default()),
+            video: Some(EncodeVideo::default()),
+            audio: Some(EncodeAudio::default()),
+        }
+    }
+}
+
 /// `FFmpeg` input processing flags.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EncodeInput {
     /// `-fflags` value (e.g. `"+discardcorrupt+genpts"`).
     pub flags: Option<String>,
@@ -85,10 +97,29 @@ pub struct EncodeInput {
     pub analyzeduration: Option<String>,
     /// `-probesize` value (e.g. `"100M"`).
     pub probesize: Option<String>,
+    /// `-hwaccel` value (e.g. `"qsv"`, `"cuda"`, `"vaapi"`).
+    pub hwaccel: Option<String>,
+    /// `-hwaccel_output_format` value (e.g. `"qsv"`).
+    pub hwaccel_output_format: Option<String>,
+    /// `-c:v` input decoder (e.g. `"mpeg2_qsv"`). Placed before `-i`.
+    pub decoder: Option<String>,
+}
+
+impl Default for EncodeInput {
+    fn default() -> Self {
+        Self {
+            flags: Some("+discardcorrupt+genpts".to_owned()),
+            analyzeduration: Some("30M".to_owned()),
+            probesize: Some("100M".to_owned()),
+            hwaccel: None,
+            hwaccel_output_format: None,
+            decoder: None,
+        }
+    }
 }
 
 /// `FFmpeg` video encoding settings.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EncodeVideo {
     /// `-c:v` codec name (e.g. `"hevc_nvenc"`).
     pub codec: Option<String>,
@@ -108,8 +139,39 @@ pub struct EncodeVideo {
     pub extra: Vec<String>,
 }
 
+impl Default for EncodeVideo {
+    fn default() -> Self {
+        Self {
+            codec: Some("libx264".to_owned()),
+            preset: Some("medium".to_owned()),
+            profile: Some("main".to_owned()),
+            pix_fmt: Some("yuv420p".to_owned()),
+            aspect: Some("16:9".to_owned()),
+            filter: Some(
+                "yadif=mode=send_frame:parity=auto:deint=all,scale=w=1280:h=720".to_owned(),
+            ),
+            extra: vec![
+                "-crf".to_owned(),
+                "23".to_owned(),
+                "-color_range".to_owned(),
+                "tv".to_owned(),
+                "-color_primaries".to_owned(),
+                "bt709".to_owned(),
+                "-color_trc".to_owned(),
+                "bt709".to_owned(),
+                "-colorspace".to_owned(),
+                "bt709".to_owned(),
+                "-max_muxing_queue_size".to_owned(),
+                "4000".to_owned(),
+                "-movflags".to_owned(),
+                "faststart".to_owned(),
+            ],
+        }
+    }
+}
+
 /// `FFmpeg` audio encoding settings.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EncodeAudio {
     /// `-c:a` codec name (e.g. `"aac"`).
     pub codec: Option<String>,
@@ -125,7 +187,21 @@ pub struct EncodeAudio {
     pub extra: Vec<String>,
 }
 
+impl Default for EncodeAudio {
+    fn default() -> Self {
+        Self {
+            codec: Some("aac".to_owned()),
+            sample_rate: Some(48000),
+            bitrate: Some("256k".to_owned()),
+            channels: Some(2),
+            extra: Vec::new(),
+        }
+    }
+}
+
 /// Required directory paths for the pipeline.
+///
+/// Call [`is_configured`](Self::is_configured) to verify paths are set.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JlseDirs {
     /// Path to JL directory containing command files and `data/`.
@@ -136,7 +212,25 @@ pub struct JlseDirs {
     pub result: PathBuf,
 }
 
+impl Default for JlseDirs {
+    fn default() -> Self {
+        Self {
+            jl: PathBuf::from("/join_logo_scp_trial/JL"),
+            logo: PathBuf::from("/join_logo_scp_trial/logo"),
+            result: PathBuf::from("/join_logo_scp_trial/result"),
+        }
+    }
+}
+
 impl JlseDirs {
+    /// Returns `true` if all directory paths are non-empty.
+    #[must_use]
+    pub fn is_configured(&self) -> bool {
+        !self.jl.as_os_str().is_empty()
+            && !self.logo.as_os_str().is_empty()
+            && !self.result.as_os_str().is_empty()
+    }
+
     /// Derive the default binary directory from the JL path.
     ///
     /// Returns `<jl_parent>/bin/` — the conventional location for
@@ -219,11 +313,14 @@ channels = 2
 
     #[test]
     fn test_jlse_encode_deserialize_empty() {
-        // Arrange / Act
+        // Arrange / Act — empty TOML gives None for all Option fields
         let encode: JlseEncode = toml::from_str("").unwrap();
 
         // Assert
-        assert_eq!(encode, JlseEncode::default());
+        assert!(encode.format.is_none());
+        assert!(encode.input.is_none());
+        assert!(encode.video.is_none());
+        assert!(encode.audio.is_none());
     }
 
     #[test]
@@ -275,19 +372,35 @@ sample_rate = 44100
     }
 }
 
-/// Optional binary path overrides. `None` fields use default derivation.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+/// Binary path overrides for pipeline tools.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JlseBins {
-    /// logoframe binary override.
+    /// logoframe binary path.
     pub logoframe: Option<PathBuf>,
-    /// `chapter_exe` binary override.
+    /// `chapter_exe` binary path.
     pub chapter_exe: Option<PathBuf>,
-    /// `join_logo_scp` binary override.
+    /// `tsdivider` binary path.
+    pub tsdivider: Option<PathBuf>,
+    /// `join_logo_scp` binary path.
     pub join_logo_scp: Option<PathBuf>,
-    /// ffprobe binary override.
-    pub ffprobe: Option<PathBuf>,
-    /// ffmpeg binary override.
+    /// ffmpeg binary path.
     pub ffmpeg: Option<PathBuf>,
-    /// `tstables` binary override.
+    /// ffprobe binary path.
+    pub ffprobe: Option<PathBuf>,
+    /// `tstables` binary path.
     pub tstables: Option<PathBuf>,
+}
+
+impl Default for JlseBins {
+    fn default() -> Self {
+        Self {
+            logoframe: Some(PathBuf::from("/join_logo_scp_trial/bin/logoframe")),
+            chapter_exe: Some(PathBuf::from("/join_logo_scp_trial/bin/chapter_exe")),
+            tsdivider: Some(PathBuf::from("/join_logo_scp_trial/bin/tsdivider")),
+            join_logo_scp: Some(PathBuf::from("/join_logo_scp_trial/bin/join_logo_scp")),
+            ffmpeg: Some(PathBuf::from("/opt/ffmpeg/bin/ffmpeg")),
+            ffprobe: Some(PathBuf::from("/opt/ffmpeg/bin/ffprobe")),
+            tstables: None,
+        }
+    }
 }

@@ -280,35 +280,47 @@ mod tests {
 
     #[test]
     fn test_binary_paths_from_config() {
-        // Arrange
+        // Arrange — JlseBins::default() provides standard paths
         let config = sample_config(PathBuf::from("/opt/module/JL"));
 
         // Act
         let bins = BinaryPaths::from_config(&config);
 
-        // Assert
-        assert_eq!(bins.logoframe, PathBuf::from("/opt/module/bin/logoframe"));
+        // Assert — defaults from JlseBins::default()
+        assert_eq!(
+            bins.logoframe,
+            PathBuf::from("/join_logo_scp_trial/bin/logoframe")
+        );
         assert_eq!(
             bins.chapter_exe,
-            PathBuf::from("/opt/module/bin/chapter_exe")
+            PathBuf::from("/join_logo_scp_trial/bin/chapter_exe")
         );
         assert_eq!(
             bins.join_logo_scp,
-            PathBuf::from("/opt/module/bin/join_logo_scp")
+            PathBuf::from("/join_logo_scp_trial/bin/join_logo_scp")
         );
-        assert_eq!(bins.ffprobe, PathBuf::from("/usr/local/bin/ffprobe"));
-        assert_eq!(bins.ffmpeg, PathBuf::from("/usr/local/bin/ffmpeg"));
+        assert_eq!(bins.ffprobe, PathBuf::from("/opt/ffmpeg/bin/ffprobe"));
+        assert_eq!(bins.ffmpeg, PathBuf::from("/opt/ffmpeg/bin/ffmpeg"));
     }
 
     #[test]
-    fn test_binary_paths_jl_bundled_relative_to_jl_dir_parent() {
-        // Arrange
-        let config = sample_config(PathBuf::from("/srv/recmgr/JL"));
+    fn test_binary_paths_none_falls_back_to_bin_dir() {
+        // Arrange — explicitly set all bins to None to test fallback
+        let mut config = sample_config(PathBuf::from("/srv/recmgr/JL"));
+        config.bins = JlseBins {
+            logoframe: None,
+            chapter_exe: None,
+            tsdivider: None,
+            join_logo_scp: None,
+            ffmpeg: None,
+            ffprobe: None,
+            tstables: None,
+        };
 
         // Act
         let bins = BinaryPaths::from_config(&config);
 
-        // Assert
+        // Assert — falls back to bin_dir derivation
         assert_eq!(bins.logoframe, PathBuf::from("/srv/recmgr/bin/logoframe"));
         assert_eq!(
             bins.chapter_exe,
@@ -340,25 +352,28 @@ mod tests {
     }
 
     #[test]
-    fn test_binary_paths_defaults_when_bins_empty() {
-        // Arrange
+    fn test_binary_paths_with_defaults() {
+        // Arrange — JlseBins::default() provides standard paths
         let config = sample_config(PathBuf::from("/opt/module/JL"));
 
         // Act
         let bins = BinaryPaths::from_config(&config);
 
-        // Assert — all defaults, same as legacy behavior
-        assert_eq!(bins.logoframe, PathBuf::from("/opt/module/bin/logoframe"));
+        // Assert — defaults from JlseBins::default()
+        assert_eq!(
+            bins.logoframe,
+            PathBuf::from("/join_logo_scp_trial/bin/logoframe")
+        );
         assert_eq!(
             bins.chapter_exe,
-            PathBuf::from("/opt/module/bin/chapter_exe")
+            PathBuf::from("/join_logo_scp_trial/bin/chapter_exe")
         );
         assert_eq!(
             bins.join_logo_scp,
-            PathBuf::from("/opt/module/bin/join_logo_scp")
+            PathBuf::from("/join_logo_scp_trial/bin/join_logo_scp")
         );
-        assert_eq!(bins.ffprobe, PathBuf::from("/usr/local/bin/ffprobe"));
-        assert_eq!(bins.ffmpeg, PathBuf::from("/usr/local/bin/ffmpeg"));
+        assert_eq!(bins.ffprobe, PathBuf::from("/opt/ffmpeg/bin/ffprobe"));
+        assert_eq!(bins.ffmpeg, PathBuf::from("/opt/ffmpeg/bin/ffmpeg"));
     }
 
     #[test]
@@ -370,10 +385,13 @@ mod tests {
         // Act
         let bins = BinaryPaths::from_config(&config);
 
-        // Assert — only ffmpeg overridden, rest default
+        // Assert — only ffmpeg overridden, rest from JlseBins::default()
         assert_eq!(bins.ffmpeg, PathBuf::from("/usr/bin/ffmpeg"));
-        assert_eq!(bins.ffprobe, PathBuf::from("/usr/local/bin/ffprobe"));
-        assert_eq!(bins.logoframe, PathBuf::from("/opt/module/bin/logoframe"));
+        assert_eq!(bins.ffprobe, PathBuf::from("/opt/ffmpeg/bin/ffprobe"));
+        assert_eq!(
+            bins.logoframe,
+            PathBuf::from("/join_logo_scp_trial/bin/logoframe")
+        );
     }
 
     #[test]
@@ -383,6 +401,7 @@ mod tests {
         config.bins = JlseBins {
             logoframe: Some(PathBuf::from("/custom/logoframe")),
             chapter_exe: Some(PathBuf::from("/custom/chapter_exe")),
+            tsdivider: Some(PathBuf::from("/custom/tsdivider")),
             join_logo_scp: Some(PathBuf::from("/custom/join_logo_scp")),
             ffprobe: Some(PathBuf::from("/custom/ffprobe")),
             ffmpeg: Some(PathBuf::from("/custom/ffmpeg")),
