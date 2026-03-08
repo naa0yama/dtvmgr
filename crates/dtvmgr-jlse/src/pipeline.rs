@@ -20,6 +20,7 @@ use crate::param;
 use crate::progress::{self, ProgressEvent, ProgressMode};
 use crate::settings::{BinaryPaths, DataPaths, OutputPaths, init_output_paths};
 use crate::types::{AvsTarget, Channel, DetectionParam, JlseConfig, JlseDirs, JlseEncode};
+use crate::validate;
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -51,6 +52,8 @@ pub struct PipelineContext {
     pub remove: bool,
     /// Progress output mode (e.g. `EPGStation`).
     pub progress_mode: Option<ProgressMode>,
+    /// Skip pre-encode duration validation.
+    pub skip_duration_check: bool,
 }
 
 // ── Pipeline ─────────────────────────────────────────────────
@@ -300,6 +303,22 @@ pub fn run_pipeline(
             .context("EIT extraction is required for MKV encoding")?;
 
         let avs_file = select_avs_file(&paths, ctx.target);
+
+        // Pre-encode duration validation (also returns AVS duration for progress)
+        let avs_duration = if ctx.skip_duration_check {
+            info!("skipping pre-encode duration check");
+            None
+        } else {
+            let rules = ctx
+                .config
+                .encode
+                .as_ref()
+                .and_then(|e| e.duration_check.as_deref());
+            let dur = validate::check_pre_encode_duration(&bins.ffprobe, &input, avs_file, rules)
+                .context("pre-encode duration check failed")?;
+            Some(dur)
+        };
+
         let extension = ctx
             .config
             .encode
@@ -329,7 +348,9 @@ pub fn run_pipeline(
                 total: 4,
                 name: "FFmpeg".to_owned(),
             });
-            let duration = command::ffprobe::get_duration(&bins.ffprobe, avs_file).unwrap_or(0.0);
+            let duration = avs_duration.unwrap_or_else(|| {
+                command::ffprobe::get_duration(&bins.ffprobe, avs_file).unwrap_or(0.0)
+            });
             command::ffmpeg::run_with_progress(
                 &bins.ffmpeg,
                 avs_file,
