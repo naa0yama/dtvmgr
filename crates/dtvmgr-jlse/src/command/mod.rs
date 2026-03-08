@@ -123,12 +123,25 @@ pub fn run_capture(program: &Path, args: &[&OsStr]) -> Result<String> {
 #[cfg(test)]
 pub(crate) mod test_utils {
     /// Creates a temporary executable shell script with the given body.
+    ///
+    /// Serialises file creation to avoid `ETXTBSY` on overlay
+    /// filesystems where concurrent `close` + `execve` can race.
     #[cfg(unix)]
     pub fn write_script(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+        use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
+        use std::sync::Mutex;
+
+        static LOCK: Mutex<()> = Mutex::new(());
+        let _guard = LOCK.lock().unwrap();
+
         let script = dir.join(name);
-        std::fs::write(&script, body).unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut f = std::fs::File::create(&script).unwrap();
+        f.write_all(body.as_bytes()).unwrap();
+        f.set_permissions(std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        f.sync_all().unwrap();
+        drop(f);
         script
     }
 }
