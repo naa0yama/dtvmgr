@@ -1,0 +1,16 @@
+[package]
+name = "dtvmgr-tsduck"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "TSDuck command wrappers and EIT parser for MPEG-TS files"
+
+[dependencies]
+anyhow.workspace = true
+quick-xml = { workspace = true }
+serde = { workspace = true }
+tempfile.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

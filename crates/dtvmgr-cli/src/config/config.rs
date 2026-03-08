@@ -1,0 +1,846 @@
+//! `AppConfig` struct and TOML read/write.
+
+use std::fmt::Write as _;
+use std::path::Path;
+
+use anyhow::{Context, Result};
+use dtvmgr_jlse::types::{DurationCheckRule, JlseBins, JlseConfig, JlseDirs, JlseEncode};
+use dtvmgr_jlse::validate::DEFAULT_RULES;
+use serde::{Deserialize, Serialize};
+
+/// Top-level application configuration.
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct AppConfig {
+    /// Syoboi Calendar settings.
+    #[serde(default)]
+    pub syoboi: SyoboiConfig,
+    /// TMDB settings.
+    #[serde(default)]
+    pub tmdb: TmdbConfig,
+    /// Normalize viewer settings.
+    #[serde(default)]
+    pub normalize: NormalizeConfig,
+    /// CM detection pipeline settings.
+    #[serde(default)]
+    pub jlse: Option<JlseConfig>,
+}
+
+/// Syoboi Calendar settings.
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct SyoboiConfig {
+    /// Channel selection settings.
+    #[serde(default)]
+    pub channels: ChannelsConfig,
+    /// Title settings.
+    #[serde(default)]
+    pub titles: TitlesConfig,
+}
+
+/// Default category codes to include.
+fn default_cat() -> Vec<u32> {
+    vec![1, 7, 8, 10]
+}
+
+/// Default movie category codes.
+fn default_cat_movie() -> Vec<u32> {
+    vec![8]
+}
+
+/// Default TIDs excluded from display in the title viewer.
+fn default_excludes() -> Vec<u32> {
+    vec![
+        5, 44, 46, 92, 93, 385, 399, 414, 438, 464, 604, 620, 635, 679, 700, 706, 727, 811, 842,
+        855, 868, 871, 894, 913, 967, 1003, 1112, 1192, 1235, 1245, 1363, 1387, 1447, 1511, 1512,
+        1640, 1647, 1726, 1764, 1775, 1786, 1803, 1829, 1850, 1865, 1910, 2102, 2103, 2179, 2181,
+        2232, 2300, 2319, 2415, 2440, 2710, 2871, 2950, 2956, 2976, 3007, 3154, 3291, 3350, 3384,
+        3407, 3476, 3519, 3520, 3533, 3547, 3721, 3732, 3880, 3908, 3940, 4062, 4202, 4243, 4272,
+        4290, 4317, 4349, 4357, 4391, 4397, 4457, 4459, 4534, 4564, 4599, 4608, 4653, 4720, 4744,
+        4812, 4879, 4909, 5083, 5104, 5109, 5173, 5189, 5268, 5301, 5318, 5405, 5446, 5478, 5486,
+        5645, 5727, 5771, 5807, 5987, 6019, 6122, 6169, 6347, 6496, 6507, 6514, 6605, 6696, 6698,
+        6984, 6993, 7059, 7264, 7345, 7537, 7586, 7605, 7617,
+    ]
+}
+
+/// Title configuration.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TitlesConfig {
+    /// Syoboi category codes to include during sync.
+    #[serde(default = "default_cat")]
+    pub cat: Vec<u32>,
+    /// Category codes that map to TMDB "movie" media type.
+    #[serde(default = "default_cat_movie")]
+    pub cat_movie: Vec<u32>,
+    /// TIDs excluded from display in the title viewer.
+    #[serde(default = "default_excludes")]
+    pub excludes: Vec<u32>,
+}
+
+impl Default for TitlesConfig {
+    fn default() -> Self {
+        Self {
+            cat: default_cat(),
+            cat_movie: default_cat_movie(),
+            excludes: default_excludes(),
+        }
+    }
+}
+
+/// Channel selection configuration.
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ChannelsConfig {
+    /// Selected channel IDs (Syoboi `ChID`).
+    #[serde(default)]
+    pub selected: Vec<u32>,
+}
+
+/// TMDB settings.
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct TmdbConfig {
+    /// Default language (e.g. "ja-JP"). Used when `--language` is not specified.
+    #[serde(default)]
+    pub language: Option<String>,
+    /// API credentials.
+    #[serde(default)]
+    pub api: TmdbApiConfig,
+}
+
+/// TMDB API credentials.
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct TmdbApiConfig {
+    /// API bearer token. Falls back when `TMDB_API_TOKEN` env var is not set.
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
+
+/// Default regex pattern history.
+fn default_regex_history() -> Vec<String> {
+    vec![r"\(.*\)$".to_owned(), r"\s?\(.*\)$".to_owned()]
+}
+
+/// Default regex patterns for title normalization.
+fn default_regex_titles() -> Vec<String> {
+    vec![
+        r"\s*\(第\d+(?:期|クール|シリーズ)\)".to_owned(),
+        r"\s*第\d+(?:期|クール|シリーズ)".to_owned(),
+        r"(?i:\s*\d+(?:st|nd|rd|th)\s+season)".to_owned(),
+        r"(?i:\s*season\s*\d+(?:\s+part\.?\s*\d+)?)".to_owned(),
+        r"(?i:\s*(?:the\s+)?final\s+season)".to_owned(),
+        r"\s*\(シーズン\d+\)".to_owned(),
+        r"\s*シーズン\s*\d+".to_owned(),
+        r"\s*\(\d\d?\)".to_owned(),
+        r"\s*~(.*)~$".to_owned(),
+        r"^映画\s?".to_owned(),
+        r"\(TVシリーズ\)".to_owned(),
+    ]
+}
+
+/// Normalize viewer settings.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NormalizeConfig {
+    /// Regex pattern history for the normalize viewer.
+    #[serde(default = "default_regex_history")]
+    pub regex_history: Vec<String>,
+    /// Regex patterns for title normalization (combined with `|`).
+    #[serde(default = "default_regex_titles")]
+    pub regex_titles: Vec<String>,
+}
+
+impl Default for NormalizeConfig {
+    fn default() -> Self {
+        Self {
+            regex_history: default_regex_history(),
+            regex_titles: default_regex_titles(),
+        }
+    }
+}
+
+impl AppConfig {
+    /// Loads config from a TOML file.
+    ///
+    /// If the file does not exist, returns `Self::default()` and attempts to
+    /// write a commented template to `path` so users can discover all options.
+    /// Template write failure is logged but does not cause an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file exists but cannot be read or parsed.
+    pub fn load(path: &Path) -> Result<Self> {
+        match std::fs::read_to_string(path) {
+            Ok(content) => toml::from_str(&content)
+                .with_context(|| format!("failed to parse {}", path.display())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let config = Self::default();
+                let content = config.to_commented_toml();
+                // Best-effort write so users can discover all options.
+                if let Err(save_err) = Self::write_toml(path, &content) {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %save_err,
+                        "could not write default config template"
+                    );
+                }
+                // Parse the generated template directly (avoids re-reading
+                // from disk) so active sections like jlse are included.
+                toml::from_str(&content)
+                    .with_context(|| "failed to parse default config template".to_owned())
+            }
+            Err(e) => Err(e).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    /// Saves config to a TOML file, creating parent directories if needed.
+    ///
+    /// Unset optional values are written as commented-out lines so users can
+    /// see all available options.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if directory creation or file write fails.
+    pub fn save(&self, path: &Path) -> Result<()> {
+        let content = self.to_commented_toml();
+        Self::write_toml(path, &content)
+    }
+
+    /// Write TOML content to `path`, creating parent directories as needed.
+    pub(crate) fn write_toml(path: &Path, content: &str) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create directory {}", parent.display()))?;
+        }
+        std::fs::write(path, content).with_context(|| format!("failed to write {}", path.display()))
+    }
+
+    /// Renders config as TOML with commented-out hints for unset options.
+    #[allow(clippy::too_many_lines)]
+    pub(crate) fn to_commented_toml(&self) -> String {
+        let mut out = String::new();
+
+        // [syoboi.channels]
+        out.push_str("[syoboi.channels]\n");
+        out.push_str("# Selected channel IDs (Syoboi ChID).\n");
+        if self.syoboi.channels.selected.is_empty() {
+            out.push_str("# selected = []\n");
+        } else {
+            let ids: Vec<String> = self
+                .syoboi
+                .channels
+                .selected
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            let _ = writeln!(out, "selected = [{}]", ids.join(", "));
+        }
+
+        // [syoboi.titles]
+        out.push_str("\n[syoboi.titles]\n");
+        out.push_str("# Syoboi category codes to include.\n");
+        out.push_str(
+            "# 0: その他, 1: アニメ, 2: ラジオ, 3: テレビ, 4: 特撮,\n\
+             # 5: アニメ関連, 6: メモ, 7: OVA, 8: 映画, 10: アニメ(終了/再放送)\n",
+        );
+        if self.syoboi.titles.cat.is_empty() {
+            out.push_str("# cat = []\n");
+        } else {
+            let ids: Vec<String> = self
+                .syoboi
+                .titles
+                .cat
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            let _ = writeln!(out, "cat = [{}]", ids.join(", "));
+        }
+        out.push_str("# Category codes that map to TMDB \"movie\" media type.\n");
+        if self.syoboi.titles.cat_movie.is_empty() {
+            out.push_str("# cat_movie = []\n");
+        } else {
+            let ids: Vec<String> = self
+                .syoboi
+                .titles
+                .cat_movie
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            let _ = writeln!(out, "cat_movie = [{}]", ids.join(", "));
+        }
+        out.push_str("# TIDs excluded from display in the title viewer.\n");
+        if self.syoboi.titles.excludes.is_empty() {
+            out.push_str("# excludes = []\n");
+        } else {
+            let mut sorted: Vec<u32> = self.syoboi.titles.excludes.clone();
+            sorted.sort_unstable();
+            let ids: Vec<String> = sorted.iter().map(ToString::to_string).collect();
+            let _ = writeln!(out, "excludes = [{}]", ids.join(", "));
+        }
+
+        // [tmdb]
+        out.push_str("\n[tmdb]\n");
+        out.push_str(
+            "# Default language (e.g. \"ja-JP\"). Used when --language is not specified.\n",
+        );
+        let lang = self.tmdb.language.as_deref().unwrap_or("ja-JP");
+        let _ = writeln!(out, "language = \"{lang}\"");
+
+        // [tmdb.api]
+        out.push_str("\n[tmdb.api]\n");
+        out.push_str("# API bearer token. Falls back when TMDB_API_TOKEN env var is not set.\n");
+        match &self.tmdb.api.api_key {
+            Some(key) => {
+                let _ = writeln!(out, "api_key = \"{key}\"");
+            }
+            None => out.push_str("# api_key = \"\"\n"),
+        }
+
+        // [normalize]
+        out.push_str("\n[normalize]\n");
+        out.push_str("# Regex pattern history for the normalize viewer.\n");
+        if self.normalize.regex_history.is_empty() {
+            out.push_str("# regex_history = []\n");
+        } else {
+            // Use TOML literal strings (single quotes) to avoid backslash escaping
+            // issues with regex patterns like `\d+` and `\s+`.
+            let patterns: Vec<String> = self
+                .normalize
+                .regex_history
+                .iter()
+                .map(|p| format!("'{p}'"))
+                .collect();
+            let _ = writeln!(out, "regex_history = [{}]", patterns.join(", "));
+        }
+        out.push_str("# Regex patterns for title normalization (combined with `|`).\n");
+        if self.normalize.regex_titles.is_empty() {
+            out.push_str("# regex_titles = []\n");
+        } else {
+            let patterns: Vec<String> = self
+                .normalize
+                .regex_titles
+                .iter()
+                .map(|p| format!("'{p}'"))
+                .collect();
+            let _ = writeln!(out, "regex_titles = [{}]", patterns.join(", "));
+        }
+
+        // [jlse] — all sections always active with defaults
+        out.push_str("\n# CM detection pipeline settings.\n");
+        let default_jlse = JlseConfig {
+            dirs: JlseDirs::default(),
+            bins: JlseBins::default(),
+            encode: Some(JlseEncode::default()),
+        };
+        let jlse = self.jlse.as_ref().unwrap_or(&default_jlse);
+
+        out.push_str("[jlse.dirs]\n");
+        let _ = writeln!(out, "jl = \"{}\"", jlse.dirs.jl.display());
+        let _ = writeln!(out, "logo = \"{}\"", jlse.dirs.logo.display());
+        let _ = writeln!(out, "result = \"{}\"", jlse.dirs.result.display());
+
+        Self::write_bins_active(&mut out, &jlse.bins, &default_jlse.bins);
+
+        let default_enc = JlseEncode::default();
+        let enc = jlse.encode.as_ref().unwrap_or(&default_enc);
+        out.push_str(&Self::write_encode_active(enc));
+
+        out
+    }
+
+    /// Render encode config as active (uncommented) TOML lines.
+    fn write_encode_active(enc: &JlseEncode) -> String {
+        let mut out = String::new();
+        out.push_str("\n[jlse.encode]\n");
+        Self::write_optional_str(&mut out, "format", enc.format.as_deref(), "mkv");
+
+        if let Some(ref input) = enc.input {
+            out.push_str("\n[jlse.encode.input]\n");
+            Self::write_optional_str(
+                &mut out,
+                "flags",
+                input.flags.as_deref(),
+                "+discardcorrupt+genpts",
+            );
+            Self::write_optional_str(
+                &mut out,
+                "analyzeduration",
+                input.analyzeduration.as_deref(),
+                "30M",
+            );
+            Self::write_optional_str(&mut out, "probesize", input.probesize.as_deref(), "100M");
+            Self::write_optional_str(&mut out, "hwaccel", input.hwaccel.as_deref(), "qsv");
+            Self::write_optional_str(
+                &mut out,
+                "hwaccel_output_format",
+                input.hwaccel_output_format.as_deref(),
+                "qsv",
+            );
+            Self::write_optional_str(&mut out, "decoder", input.decoder.as_deref(), "mpeg2_qsv");
+        }
+
+        if let Some(ref video) = enc.video {
+            out.push_str("\n[jlse.encode.video]\n");
+            Self::write_optional_str(&mut out, "codec", video.codec.as_deref(), "libx264");
+            Self::write_optional_str(&mut out, "preset", video.preset.as_deref(), "medium");
+            Self::write_optional_str(&mut out, "profile", video.profile.as_deref(), "main");
+            Self::write_optional_str(&mut out, "pix_fmt", video.pix_fmt.as_deref(), "yuv420p");
+            Self::write_optional_str(&mut out, "aspect", video.aspect.as_deref(), "16:9");
+            Self::write_optional_str(
+                &mut out,
+                "filter",
+                video.filter.as_deref(),
+                "yadif=mode=send_frame:parity=auto:deint=all,scale=w=1280:h=720",
+            );
+            Self::write_string_list(&mut out, "extra", &video.extra);
+        }
+
+        if let Some(ref audio) = enc.audio {
+            out.push_str("\n[jlse.encode.audio]\n");
+            Self::write_optional_str(&mut out, "codec", audio.codec.as_deref(), "aac");
+            if let Some(rate) = audio.sample_rate {
+                let _ = writeln!(out, "sample_rate = {rate}");
+            } else {
+                out.push_str("# sample_rate = 48000\n");
+            }
+            Self::write_optional_str(&mut out, "bitrate", audio.bitrate.as_deref(), "256k");
+            if let Some(channels) = audio.channels {
+                let _ = writeln!(out, "channels = {channels}");
+            } else {
+                out.push_str("# channels = 2\n");
+            }
+            Self::write_string_list(&mut out, "extra", &audio.extra);
+        }
+
+        Self::write_duration_check(&mut out, enc.duration_check.as_deref());
+
+        out
+    }
+
+    /// Write `[[jlse.encode.duration_check]]` section.
+    ///
+    /// When the user has configured custom rules, they are written as active
+    /// TOML array-of-tables entries. Otherwise, defaults are written as
+    /// comments so users can see the available fields and their values.
+    fn write_duration_check(out: &mut String, rules: Option<&[DurationCheckRule]>) {
+        out.push_str(
+            "\n# Pre-encode duration validation rules.\n\
+             # Each entry defines the minimum acceptable content ratio\n\
+             # for a program length range (in minutes).\n",
+        );
+        match rules {
+            Some(entries) if !entries.is_empty() => {
+                for r in entries {
+                    out.push_str("\n[[jlse.encode.duration_check]]\n");
+                    let _ = writeln!(out, "min_min = {}", r.min_min);
+                    let _ = writeln!(out, "max_min = {}", r.max_min);
+                    let _ = writeln!(out, "min_percent = {}", r.min_percent);
+                }
+            }
+            _ => {
+                for r in DEFAULT_RULES {
+                    out.push_str("# [[jlse.encode.duration_check]]\n");
+                    let _ = writeln!(out, "# min_min = {}", r.min_min);
+                    let _ = writeln!(out, "# max_min = {}", r.max_min);
+                    let _ = writeln!(out, "# min_percent = {}", r.min_percent);
+                }
+            }
+        }
+    }
+
+    /// Write a string list field as active or commented line.
+    fn write_string_list(out: &mut String, key: &str, values: &[String]) {
+        if values.is_empty() {
+            let _ = writeln!(out, "# {key} = []");
+        } else {
+            let quoted: Vec<String> = values.iter().map(|v| format!("\"{v}\"")).collect();
+            let _ = writeln!(out, "{key} = [{}]", quoted.join(", "));
+        }
+    }
+
+    /// Write an optional string field as active or commented line.
+    fn write_optional_str(out: &mut String, key: &str, value: Option<&str>, hint: &str) {
+        match value {
+            Some(v) => {
+                let _ = writeln!(out, "{key} = \"{v}\"");
+            }
+            None => {
+                let _ = writeln!(out, "# {key} = \"{hint}\"");
+            }
+        }
+    }
+
+    /// Write `[jlse.bins]` section with all binary paths.
+    fn write_bins_active(out: &mut String, bins: &JlseBins, defaults: &JlseBins) {
+        out.push_str("\n[jlse.bins]\n");
+        let entries: &[(&str, Option<&Path>, Option<&Path>)] = &[
+            (
+                "logoframe",
+                bins.logoframe.as_deref(),
+                defaults.logoframe.as_deref(),
+            ),
+            (
+                "chapter_exe",
+                bins.chapter_exe.as_deref(),
+                defaults.chapter_exe.as_deref(),
+            ),
+            (
+                "tsdivider",
+                bins.tsdivider.as_deref(),
+                defaults.tsdivider.as_deref(),
+            ),
+            (
+                "join_logo_scp",
+                bins.join_logo_scp.as_deref(),
+                defaults.join_logo_scp.as_deref(),
+            ),
+            ("ffmpeg", bins.ffmpeg.as_deref(), defaults.ffmpeg.as_deref()),
+            (
+                "ffprobe",
+                bins.ffprobe.as_deref(),
+                defaults.ffprobe.as_deref(),
+            ),
+            (
+                "tstables",
+                bins.tstables.as_deref(),
+                defaults.tstables.as_deref(),
+            ),
+        ];
+        for (key, value, hint) in entries {
+            Self::write_optional_path(out, key, *value, *hint);
+        }
+    }
+
+    /// Write an optional path field as active or commented-out line.
+    fn write_optional_path(out: &mut String, key: &str, value: Option<&Path>, hint: Option<&Path>) {
+        match value {
+            Some(p) => {
+                let _ = writeln!(out, "{key} = \"{}\"", p.display());
+            }
+            None => {
+                if let Some(h) = hint {
+                    let _ = writeln!(out, "# {key} = \"{}\"", h.display());
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::path::PathBuf;
+
+    use super::*;
+
+    #[test]
+    fn test_default_config() {
+        // Arrange & Act
+        let config = AppConfig::default();
+
+        // Assert
+        assert!(config.syoboi.channels.selected.is_empty());
+        assert!(config.tmdb.language.is_none());
+        assert!(config.tmdb.api.api_key.is_none());
+        assert_eq!(config.normalize.regex_history, default_regex_history());
+        assert_eq!(config.normalize.regex_titles, default_regex_titles());
+    }
+
+    #[test]
+    fn test_serialize_deserialize_roundtrip() {
+        // Arrange
+        let config = AppConfig {
+            syoboi: SyoboiConfig {
+                channels: ChannelsConfig {
+                    selected: vec![1, 2, 3, 7, 19],
+                },
+                ..SyoboiConfig::default()
+            },
+            tmdb: TmdbConfig {
+                language: Some(String::from("ja-JP")),
+                api: TmdbApiConfig {
+                    api_key: Some(String::from("test-key")),
+                },
+            },
+            normalize: NormalizeConfig {
+                regex_history: vec![
+                    String::from(r"第(?P<SeasonNum>\d+)期"),
+                    String::from(r"Season\s+(?P<SeasonNum>\d+)"),
+                ],
+                regex_titles: vec![String::from(r"第\d+期$"), String::from(r"\s*Season\s*\d+")],
+            },
+            jlse: None,
+        };
+
+        // Act — encode is always active, so jlse becomes Some after roundtrip
+        let toml_str = config.to_commented_toml();
+        let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
+
+        // Assert — non-jlse fields match exactly
+        assert_eq!(parsed.syoboi, config.syoboi);
+        assert_eq!(parsed.tmdb, config.tmdb);
+        assert_eq!(parsed.normalize, config.normalize);
+        // jlse gains defaults after roundtrip
+        let jlse = parsed.jlse.unwrap();
+        assert_eq!(jlse.dirs, JlseDirs::default());
+        assert_eq!(jlse.bins, JlseBins::default());
+        assert_eq!(jlse.encode, Some(JlseEncode::default()));
+    }
+
+    #[test]
+    fn test_serialize_deserialize_roundtrip_with_hwaccel() {
+        use dtvmgr_jlse::types::{EncodeInput, JlseBins, JlseDirs};
+
+        // Arrange
+        let config = AppConfig {
+            tmdb: TmdbConfig {
+                language: Some(String::from("ja-JP")),
+                ..TmdbConfig::default()
+            },
+            jlse: Some(JlseConfig {
+                dirs: JlseDirs {
+                    jl: PathBuf::from("/opt/JL"),
+                    logo: PathBuf::from("/opt/logo"),
+                    result: PathBuf::from("/tmp/result"),
+                },
+                bins: JlseBins::default(),
+                encode: Some(JlseEncode {
+                    format: Some(String::from("mkv")),
+                    input: Some(EncodeInput {
+                        flags: Some(String::from("+discardcorrupt+genpts")),
+                        analyzeduration: Some(String::from("30M")),
+                        probesize: Some(String::from("100M")),
+                        hwaccel: Some(String::from("qsv")),
+                        hwaccel_output_format: Some(String::from("qsv")),
+                        decoder: Some(String::from("mpeg2_qsv")),
+                    }),
+                    video: None,
+                    audio: None,
+                    duration_check: None,
+                }),
+            }),
+            ..AppConfig::default()
+        };
+
+        // Act
+        let toml_str = config.to_commented_toml();
+        let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
+
+        // Assert
+        assert_eq!(parsed, config);
+    }
+
+    #[test]
+    fn test_commented_toml_default() {
+        // Arrange
+        let config = AppConfig::default();
+
+        // Act
+        let output = config.to_commented_toml();
+
+        // Assert — unset options are commented out, language defaults to "ja-JP"
+        assert!(output.contains("# selected = []"));
+        assert!(output.contains("cat = [1, 7, 8, 10]"));
+        assert!(output.contains("cat_movie = [8]"));
+        assert!(output.contains("excludes = [5, 44, 46,"));
+        assert!(output.contains("language = \"ja-JP\""));
+        assert!(!output.contains("# language"));
+        assert!(output.contains("# api_key = \"\""));
+        assert!(output.contains(r"regex_history = ['\(.*\)$'"));
+        assert!(output.contains(r"regex_titles = ['\s*\(第\d+(?:期|クール|シリーズ)\)'"));
+        // hwaccel fields are commented out (None in default)
+        assert!(output.contains("# hwaccel = \"qsv\""));
+        assert!(output.contains("# hwaccel_output_format = \"qsv\""));
+        assert!(output.contains("# decoder = \"mpeg2_qsv\""));
+        // Encode section headers are active (not commented)
+        assert!(output.contains("[jlse.encode]\n"));
+        assert!(output.contains("[jlse.encode.input]\n"));
+        assert!(output.contains("[jlse.encode.video]\n"));
+        assert!(output.contains("[jlse.encode.audio]\n"));
+        // Parsed config gets "ja-JP" from the active line
+        let parsed: AppConfig = toml::from_str(&output).unwrap();
+        assert_eq!(parsed.tmdb.language, Some(String::from("ja-JP")));
+        assert_eq!(parsed.syoboi.titles.cat, vec![1, 7, 8, 10]);
+        assert_eq!(parsed.syoboi.titles.cat_movie, vec![8]);
+    }
+
+    #[test]
+    fn test_commented_toml_with_values() {
+        // Arrange
+        let config = AppConfig {
+            syoboi: SyoboiConfig {
+                channels: ChannelsConfig {
+                    selected: vec![1, 7],
+                },
+                ..SyoboiConfig::default()
+            },
+            tmdb: TmdbConfig {
+                language: Some(String::from("en-US")),
+                api: TmdbApiConfig {
+                    api_key: Some(String::from("my-token")),
+                },
+            },
+            normalize: NormalizeConfig {
+                regex_history: vec![String::from(r"第(?P<SeasonNum>\d+)期")],
+                regex_titles: vec![String::from(r"第\d+期$"), String::from(r"\s*Season\s*\d+")],
+            },
+            jlse: None,
+        };
+
+        // Act
+        let output = config.to_commented_toml();
+
+        // Assert — active values are not commented
+        assert!(output.contains("selected = [1, 7]"));
+        assert!(!output.contains("# selected"));
+        assert!(output.contains("cat = [1, 7, 8, 10]"));
+        assert!(output.contains("cat_movie = [8]"));
+        assert!(output.contains("language = \"en-US\""));
+        assert!(output.contains("api_key = \"my-token\""));
+        assert!(output.contains(r"regex_history = ['第(?P<SeasonNum>\d+)期']"));
+        assert!(output.contains(r"regex_titles = ['第\d+期$', '\s*Season\s*\d+']"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_load_nonexistent_creates_template() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new_config.toml");
+        assert!(!path.exists());
+
+        // Act
+        let config = AppConfig::load(&path).unwrap();
+
+        // Assert — template file created and re-read includes active jlse
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("[jlse.dirs]"));
+        assert!(content.contains("[jlse.bins]"));
+        assert!(content.contains("[jlse.encode]"));
+        // Re-read parses active sections, so jlse is Some
+        assert!(config.jlse.is_some());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_save_and_load() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dtvmgr.toml");
+        let config = AppConfig {
+            syoboi: SyoboiConfig {
+                channels: ChannelsConfig {
+                    selected: vec![1, 3, 7],
+                },
+                ..SyoboiConfig::default()
+            },
+            ..AppConfig::default()
+        };
+
+        // Act
+        config.save(&path).unwrap();
+        let loaded = AppConfig::load(&path).unwrap();
+
+        // Assert — channels preserved, language gets "ja-JP" from default output
+        assert_eq!(loaded.syoboi.channels.selected, vec![1, 3, 7]);
+        assert_eq!(loaded.tmdb.language, Some(String::from("ja-JP")));
+        assert!(loaded.tmdb.api.api_key.is_none());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_load_partial_config() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "").unwrap();
+
+        // Act
+        let config = AppConfig::load(&path).unwrap();
+
+        // Assert
+        assert_eq!(config, AppConfig::default());
+    }
+
+    #[test]
+    fn test_jlse_roundtrip() {
+        use dtvmgr_jlse::types::{JlseBins, JlseDirs};
+
+        // Arrange
+        let config = AppConfig {
+            tmdb: TmdbConfig {
+                language: Some(String::from("ja-JP")),
+                ..TmdbConfig::default()
+            },
+            jlse: Some(JlseConfig {
+                dirs: JlseDirs {
+                    jl: PathBuf::from("/opt/module/JL"),
+                    logo: PathBuf::from("/opt/module/logo"),
+                    result: PathBuf::from("/tmp/result"),
+                },
+                bins: JlseBins::default(),
+                encode: None,
+            }),
+            ..AppConfig::default()
+        };
+
+        // Act — encode: None is written as active defaults
+        let toml_str = config.to_commented_toml();
+        let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
+
+        // Assert — encode becomes Some(default) after roundtrip
+        assert_eq!(
+            parsed.jlse.as_ref().unwrap().dirs,
+            config.jlse.as_ref().unwrap().dirs
+        );
+        assert_eq!(
+            parsed.jlse.as_ref().unwrap().bins,
+            config.jlse.as_ref().unwrap().bins
+        );
+        assert_eq!(
+            parsed.jlse.as_ref().unwrap().encode,
+            Some(JlseEncode::default())
+        );
+    }
+
+    #[test]
+    fn test_jlse_with_bins_override_roundtrip() {
+        use dtvmgr_jlse::types::{JlseBins, JlseDirs};
+
+        // Arrange
+        let config = AppConfig {
+            tmdb: TmdbConfig {
+                language: Some(String::from("ja-JP")),
+                ..TmdbConfig::default()
+            },
+            jlse: Some(JlseConfig {
+                dirs: JlseDirs {
+                    jl: PathBuf::from("/opt/module/JL"),
+                    logo: PathBuf::from("/opt/module/logo"),
+                    result: PathBuf::from("/tmp/result"),
+                },
+                bins: JlseBins {
+                    ffmpeg: Some(PathBuf::from("/usr/bin/ffmpeg")),
+                    ..JlseBins::default()
+                },
+                encode: None,
+            }),
+            ..AppConfig::default()
+        };
+
+        // Act
+        let toml_str = config.to_commented_toml();
+        let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
+
+        // Assert — bins override preserved, encode becomes Some(default)
+        assert_eq!(
+            parsed.jlse.as_ref().unwrap().dirs,
+            config.jlse.as_ref().unwrap().dirs
+        );
+        assert_eq!(
+            parsed.jlse.as_ref().unwrap().bins,
+            config.jlse.as_ref().unwrap().bins
+        );
+        assert_eq!(
+            parsed.jlse.as_ref().unwrap().encode,
+            Some(JlseEncode::default())
+        );
+    }
+}

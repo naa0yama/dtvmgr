@@ -18,10 +18,8 @@ ARG CACHE_VERSION=0.8.3
 ARG MODULES_VERSION=v0.25.0
 ## renovate: datasource=github-releases packageName=mozilla/sccache versioning=semver automerge=true
 ARG SCCACHE_VERSION=v0.14.0
-## renovate: datasource=github-releases packageName=ziglang/zig versioning=semver automerge=true
-ARG ZIG_VERSION=0.15.1
-## renovate: datasource=github-releases packageName=rust-cross/cargo-zigbuild versioning=semver automerge=true
-ARG ZIGBUILD_VERSION=v0.22.0
+## renovate: datasource=github-tags packageName=holmgr/cargo-sweep versioning=semver automerge=true
+ARG SWEEP_VERSION=0.8.0
 
 # retry dns and some http codes that might be transient errors
 ARG CURL_OPTS="-sfSL --retry 3 --retry-delay 2 --retry-connrefused"
@@ -30,21 +28,20 @@ ARG CURL_OPTS="-sfSL --retry 3 --retry-delay 2 --retry-connrefused"
 #- -------------------------------------------------------------------------------------------------
 #- Builder Base
 #-
-FROM rust:1.92.0-trixie@sha256:f58923369ba295ae1f60bc49d03f2c955a5c93a0b7d49acfb2b2a65bebaf350d AS builder-base
+FROM rust:1.93.0-trixie@sha256:bbde3ca426faeebab3eb58b8005d3d6da70607817a14bb92a55c94611d4d905f AS builder-base
 ARG CACHE_VERSION \
 	CURL_OPTS \
 	DEBIAN_FRONTEND \
 	MODULES_VERSION \
 	MOLD_VERSION \
 	SCCACHE_VERSION \
-	ZIG_VERSION \
-	ZIGBUILD_VERSION \
+	SWEEP_VERSION \
 	USER_NAME \
 	USER_UID \
 	USER_GID \
 	TZ
 
-ENV LANG=C.utf8 LC_ALL=C.utf8
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 SHELL [ "/bin/bash", "-c" ]
 
@@ -72,6 +69,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	jq \
 	musl-tools \
 	nano \
+	sqlite3 \
 	sudo \
 	wget
 
@@ -115,32 +113,6 @@ RUN echo "**** Rust tool sccache ****" && \
 	type -p sccache && \
 	rm -rf "./${_filename}" "${_tmpdir}"
 
-RUN echo "**** Rust tool zig ****" && \
-	set -euxo pipefail && \
-	_filename="zig-x86_64-linux-${ZIG_VERSION}.tar.xz" && \
-	_tmpdir=$(mktemp -q -d) && \
-	mkdir -p /usr/local/zig && \
-	curl ${CURL_OPTS} -H 'User-Agent: builder/1.0' -o "./${_filename}" \
-	"https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" && \
-	tar -xf "./${_filename}" --strip-components 1 -C "/usr/local/zig/" && \
-	ls -lah /usr/local/zig && \
-	rm -rf "./${_filename}" "${_tmpdir}"
-
-RUN echo "**** Rust tool cargo-zigbuild ****" && \
-	set -euxo pipefail && \
-	_release_data="$(curl ${CURL_OPTS} -H 'User-Agent: builder/1.0' \
-	https://api.github.com/repos/rust-cross/cargo-zigbuild/releases/tags/${ZIGBUILD_VERSION})" && \
-	_asset="$(echo "$_release_data" | jq -r '.assets[] | select(.name | endswith("x86_64-unknown-linux-musl.tar.xz"))')" && \
-	_download_url="$(echo "$_asset" | jq -r '.browser_download_url')" && \
-	_digest="$(echo "$_asset" | jq -r '.digest')" && \
-	_sha256="${_digest#sha256:}" && \
-	_filename="$(basename "$_download_url")" && \
-	curl ${CURL_OPTS} -H 'User-Agent: builder/1.0' -o "./${_filename}" "${_download_url}" && \
-	echo "${_sha256}  ${_filename}" | sha256sum -c - && \
-	tar -xvf "./${_filename}" --strip-components 1 -C /usr/local/bin/ && \
-	type -p cargo-zigbuild && \
-	rm -rf "./${_filename}"
-
 RUN --mount=type=bind,source=rust-toolchain.toml,target=/rust-toolchain.toml \
 	\
 	echo "**** Rust component ****" && \
@@ -151,11 +123,9 @@ RUN --mount=type=bind,source=rust-toolchain.toml,target=/rust-toolchain.toml \
 USER ${USER_NAME}
 ENV CARGO_HOME=/home/${USER_NAME}/.cargo
 
-RUN echo "**** PATH add zig ****" && \
+RUN echo "**** Directory Create ****" && \
 	set -euxo pipefail && \
-	echo -e "# Add PATH ziglang\nexport PATH="/usr/local/zig:\$PATH"" >> ~/.bashrc && \
-	exec ${SHELL} -l && \
-	zig version
+	mkdir -p ~/.local ~/.config
 
 RUN echo "**** Create ${CARGO_HOME} ****" && \
 	set -euxo pipefail && \
@@ -169,9 +139,11 @@ RUN --mount=type=cache,target=/home/cuser/.cache/sccache,sharing=locked,uid=${US
 	cargo install --locked \
 	cargo-cache@${CACHE_VERSION} \
 	cargo-modules@${MODULES_VERSION#v} \
+	cargo-sweep@${SWEEP_VERSION#v} \
 	&& \
 	cargo cache --version && \
-	cargo modules --version
+	cargo modules --version && \
+	cargo sweep --version
 
 RUN echo "**** Rust bash-completion ****" && \
 	set -euxo pipefail && \
@@ -182,6 +154,12 @@ RUN echo "**** Rust bash-completion ****" && \
 	rustup completions bash rustup > /home/${USER_NAME}/.local/share/bash-completion/completions/rustup
 
 USER root
+
+
+#- -------------------------------------------------------------------------------------------------
+#- Copy libs
+#-
+FROM ghcr.io/naa0yama/join_logo_scp_trial:v26.03.08.01-ubuntu2404 AS jlse
 
 
 #- -------------------------------------------------------------------------------------------------
@@ -200,6 +178,36 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	apt-get -y install --no-install-recommends \
 	shellcheck
 
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+	--mount=type=cache,target=/var/lib/apt,sharing=locked \
+	\
+	echo "**** Dependencies | FFmpeg runtime ****" && \
+	rm -f /etc/apt/apt.conf.d/docker-clean && \
+	echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache && \
+	echo "**** Dependencies ****" && \
+	set -euxo pipefail && \
+	apt-get -y update && \
+	apt-get -y upgrade && \
+	apt-get -y install --no-install-recommends \
+	# DRM and mp3lame
+	libdrm2 libmp3lame0 \
+	# FFmpeg filter drawtext
+	libharfbuzz0b libfribidi0
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+	--mount=type=cache,target=/var/lib/apt,sharing=locked \
+	\
+	echo "**** Dependencies | tsduck ****" && \
+	set -euxo pipefail && \
+	_tsduckdownload_url="$(curl ${CURL_OPTS} -H "User-Agent: builder/1.0" -sfSL https://api.github.com/repos/tsduck/tsduck/releases/latest | \
+	jq -r '.assets[] | select(.name | startswith("tsduck_") and endswith("debian13_amd64.deb")) | .browser_download_url')" && \
+	_tsduck_filename="$(basename "$_tsduckdownload_url")" && \
+	curl ${CURL_OPTS} -o "./${_tsduck_filename}" "${_tsduckdownload_url}" && \
+	ls -lah && \
+	apt-get -y install "./${_tsduck_filename}" && \
+	tsp --version && \
+	rm -rf "./${_tsduck_filename}"
+
 # User level settings
 USER ${USER_NAME}
 RUN echo "**** Install mise ****" && \
@@ -208,8 +216,11 @@ RUN echo "**** Install mise ****" && \
 	~/.local/bin/mise --version
 
 COPY --chown=${USER_NAME}:${USER_NAME} mise.toml /tmp/mise.toml
-RUN echo "**** Install tools via mise ****" && \
+RUN --mount=type=secret,id=MISE_GITHUB_TOKEN,mode=0444 \
+	\
+	echo "**** Install tools via mise ****" && \
 	set -euxo pipefail && \
+	{ set +x; if [ -f /run/secrets/MISE_GITHUB_TOKEN ] && [ -s /run/secrets/MISE_GITHUB_TOKEN ]; then export MISE_GITHUB_TOKEN=$(cat /run/secrets/MISE_GITHUB_TOKEN); echo "MISE_GITHUB_TOKEN loaded from secret"; fi; set -x; } && \
 	cd /tmp && \
 	~/.local/bin/mise trust -y /tmp/mise.toml && \
 	~/.local/bin/mise install -y && \
@@ -246,32 +257,18 @@ RUN echo "**** Install Claude Code ****" && \
 	claude --version && \
 	type cc
 
+ENV PKG_CONFIG_PATH=/opt/ffmpeg/lib/pkgconfig \
+	LD_LIBRARY_PATH=/opt/ffmpeg/lib \
+	LIBVA_DRIVERS_PATH=/opt/ffmpeg/lib/dri \
+	PATH="/opt/ffmpeg/bin:${PATH}"
 
-#- -------------------------------------------------------------------------------------------------
-#- Production
-#-
-#FROM debian:bullseye-slim
-#ARG DEBIAN_FRONTEND \
-#	TZ
-#
-#SHELL [ "/bin/bash", "-c" ]
-#
-#RUN echo "**** set Timezone ****" && \
-#	set -euxo pipefail && \
-#	ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime && echo ${TZ} > /etc/timezone
-#
-#RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-#	--mount=type=cache,target=/var/lib/apt,sharing=locked \
-#	\
-#	echo "**** Dependencies ****" && \
-#	set -euxo pipefail && \
-#	apt-get -y install --no-install-recommends \
-#	bash \
-#	ca-certificates
-#
-##COPY --from=development /usr/local/cargo/bin/myapp /usr/local/bin/myapp
-#
-#SHELL [ "/bin/sh", "-c" ]
-##CMD ["myapp"]
+COPY --from=jlse 			/join_logo_scp_trial							/join_logo_scp_trial
+COPY --from=jlse 			/opt/ffmpeg										/opt/ffmpeg
 
-# vim: set filetype=dockerfile:
+RUN echo  "**** FFmpeg | check library ****" && \
+	set -euxo pipefail && \
+	find /usr/lib/x86_64-linux-gnu -name 'libdrm.so*' -or -name 'libmp3lame.so*' && \
+	/opt/ffmpeg/bin/ffmpeg -hide_banner -hwaccels && \
+	/opt/ffmpeg/bin/ffmpeg -hide_banner -buildconf && \
+	for i in decoders encoders; do echo ${i}:; /opt/ffmpeg/bin/ffmpeg -hide_banner -${i} | \
+	egrep -i "[x|h]264|[x|h]265|av1|cuvid|hevc|libmfx|nv[dec|enc]|qsv|vaapi|vp9"; done

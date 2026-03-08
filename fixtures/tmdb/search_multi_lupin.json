@@ -1,0 +1,41 @@
+{
+	"page": 1,
+	"results": [
+		{
+			"adult": false,
+			"backdrop_path": "/abc123.jpg",
+			"id": 31572,
+			"media_type": "tv",
+			"name": "Lupin the Third",
+			"original_language": "ja",
+			"original_name": "ルパン三世",
+			"origin_country": ["JP"],
+			"overview": "The adventures of master thief Lupin III.",
+			"popularity": 55.0,
+			"poster_path": "/lupin_poster.jpg",
+			"first_air_date": "1971-10-24",
+			"vote_average": 8.1,
+			"vote_count": 200,
+			"genre_ids": [16, 28, 35]
+		},
+		{
+			"adult": false,
+			"backdrop_path": "/def456.jpg",
+			"id": 916224,
+			"media_type": "movie",
+			"original_language": "ja",
+			"original_title": "ルパン三世 THE FIRST",
+			"overview": "Lupin III movie.",
+			"popularity": 40.0,
+			"poster_path": "/lupin_movie.jpg",
+			"release_date": "2019-12-06",
+			"title": "Lupin III: The First",
+			"video": false,
+			"vote_average": 7.2,
+			"vote_count": 500,
+			"genre_ids": [16, 28]
+		}
+	],
+	"total_pages": 1,
+	"total_results": 2
+}
