@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ChGroupLookupResponse>
+    <Result>
+        <Code>200</Code>
+        <Message></Message>
+    </Result>
+    <ChGroupItems>
+        <ChGroupItem id="1">
+            <LastUpdate>2010-01-15 21:46:14</LastUpdate>
+            <ChGID>1</ChGID>
+            <ChGroupName>テレビ 関東</ChGroupName>
+            <ChGroupComment></ChGroupComment>
+            <ChGroupOrder>1200</ChGroupOrder>
+        </ChGroupItem>
+        <ChGroupItem id="2">
+            <LastUpdate>2010-01-15 21:44:11</LastUpdate>
+            <ChGID>2</ChGID>
+            <ChGroupName>BSデジタル</ChGroupName>
+            <ChGroupComment></ChGroupComment>
+            <ChGroupOrder>3000</ChGroupOrder>
+        </ChGroupItem>
+        <ChGroupItem id="11">
+            <LastUpdate>2019-09-10 12:00:00</LastUpdate>
+            <ChGID>11</ChGID>
+            <ChGroupName>テレビ 全国</ChGroupName>
+            <ChGroupComment></ChGroupComment>
+            <ChGroupOrder>1100</ChGroupOrder>
+        </ChGroupItem>
+    </ChGroupItems>
+</ChGroupLookupResponse>

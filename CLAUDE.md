@@ -8,21 +8,25 @@
 
 All tasks use `mise run <task>`:
 
-| Task                  | Command                       |
-| --------------------- | ----------------------------- |
-| Build                 | `mise run build`              |
-| Test                  | `mise run test`               |
-| TDD watch             | `mise run test:watch`         |
-| Doc tests             | `mise run test:doc`           |
-| Format                | `mise run fmt`                |
-| Format check          | `mise run fmt:check`          |
-| Lint (clippy)         | `mise run clippy`             |
-| Lint strict           | `mise run clippy:strict`      |
-| AST rules             | `mise run ast-grep`           |
-| Pre-commit (required) | `mise run pre-commit`         |
-| Coverage              | `mise run coverage`           |
-| Deny (licenses/deps)  | `mise run deny`               |
-| Build (OTel)          | `cargo build --features otel` |
+| Task                  | Command                                     |
+| --------------------- | ------------------------------------------- |
+| Build                 | `mise run build`                            |
+| Test                  | `mise run test`                             |
+| TDD watch             | `mise run test:watch`                       |
+| Doc tests             | `mise run test:doc`                         |
+| Format                | `mise run fmt`                              |
+| Format check          | `mise run fmt:check`                        |
+| Lint (clippy)         | `mise run clippy`                           |
+| Lint strict           | `mise run clippy:strict`                    |
+| AST rules             | `mise run ast-grep`                         |
+| Pre-commit (required) | `mise run pre-commit`                       |
+| Coverage              | `mise run coverage`                         |
+| Deny (licenses/deps)  | `mise run deny`                             |
+| Miri (UB detection)   | `mise run miri`                             |
+| Build (OTel)          | `cargo build -p dtvmgr-cli --features otel` |
+| Clean (full)          | `mise run clean`                            |
+| Clean (sweep)         | `mise run clean:sweep`                      |
+| Clean (cache)         | `mise run clean:cache`                      |
 
 ## Commit Convention
 
@@ -36,8 +40,12 @@ Allowed types: feat, update, fix, style, refactor, docs, perf, test, build, ci, 
 2. Implement
 3. Run `mise run test` — all tests must pass
 4. Stage only the relevant files
-5. Run `mise run pre-commit` (runs fmt:check, clippy:strict, ast-grep)
+5. Run `mise run pre-commit` (runs fmt:check, clippy:strict, ast-grep, lint:gh)
 6. If errors, fix → re-stage → re-run `mise run pre-commit`
+
+## Code Comments
+
+- Write all code comments (doc comments, inline comments) in concise English.
 
 ## Key Coding Rules
 
@@ -46,3 +54,7 @@ Allowed types: feat, update, fix, style, refactor, docs, perf, test, build, ci, 
 - **Logging**: Use `tracing` crate, not `println!` / `dbg!`. For container/OTel support, build with `--features otel` and set `OTEL_EXPORTER_OTLP_ENDPOINT` env var.
 - **Tests**: Arrange / Act / Assert pattern. Unit tests in `#[cfg(test)] mod tests`, integration tests in `tests/`. `#![allow(clippy::unwrap_used)]` is permitted in test code.
 - See [docs/project_rules.md](./docs/project_rules.md) for full details.
+
+## Skill Maintenance
+
+- When modifying coding rules, workflow, or project conventions in `CLAUDE.md` or `docs/project_rules.md`, also update the corresponding `.claude/skills/` files to keep them in sync.

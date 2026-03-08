@@ -262,7 +262,7 @@ project-name/
 
 ## 5. テスト戦略
 
-### 4.1 テストの種類
+### 5.1 テストの種類
 
 #### 単体テスト
 
@@ -316,7 +316,7 @@ fn cli_version_flag() {
 }
 ```
 
-### 4.2 テストユーティリティ
+### 5.2 テストユーティリティ
 
 ```rust
 // テストでのtracing出力モック
@@ -354,7 +354,7 @@ mod tests {
 
 ## 6. CI/CD
 
-### 5.1 必須チェック(`mise run` 経由)
+### 6.1 必須チェック(`mise run` 経由)
 
 ```bash
 # フォーマットチェック
@@ -379,13 +379,67 @@ mise run coverage        # code coverage report
 mise run zigbuild:all    # Tier 1 targets
 ```
 
-### 5.2 品質基準
+### 6.2 品質基準
 
 - **Warning一切禁止**
 - **フォーマット違反禁止**
 - **カバレッジ目標**: 80%以上
 
-### 5.3 クロスコンパイル対応
+### 6.3 Miri 互換性
+
+汎用的な Miri 判断フローは `~/.claude/skills/rust-implementation/references/testing.md` を参照。
+以下はプロジェクト固有のカテゴリ:
+
+#### クレートレベル除外
+
+| クレート  | 理由                                            | テスト数 |
+| --------- | ----------------------------------------------- | -------- |
+| dtvmgr-db | 全テストが rusqlite (C FFI) を使用              | 50       |
+| dtvmgr    | バイナリクレート — インテグレーションテストのみ | N/A      |
+
+#### テストレベルスキップカテゴリ
+
+1. **ファイルシステム (tempfile)** — 69 テスト。`tempfile::tempdir()` や実ファイル I/O を使用。
+   Miri のファイルシステムサポートが限定的。dtvmgr-cli (14), dtvmgr-jlse (55)。
+2. **FFI / C バインディング (rusqlite)** — 50 テスト。dtvmgr-db の全テストが
+   SQLite C FFI を使用。クレート全体を Miri CI から除外。
+3. **ネットワーク I/O (reqwest, wiremock)** — 27 テスト。HTTP クライアントと
+   モックサーバーがサポート外のソケット syscall を使用。dtvmgr-api (22), dtvmgr-cli (5)。
+4. **プロセス起動 (Command)** — 19 テスト。`std::process::Command` で
+   外部ツールを実行。dtvmgr-jlse。
+5. **TLS / 暗号 (reqwest + rustls)** — ネットワーク I/O に含む。
+   TLS 初期化が Miri 上で極端に遅い(~10 分/回)。
+6. **正規表現コンパイル** — `regex::Regex::new()` を間接的にトリガーするテスト。
+   DFA 構築がバイトコード解釈下で極端に遅い(~2-6 分/テスト)。
+7. **環境変数** — 3 テスト。`std::env::set_var` や `HOME`/`current_dir` に依存。
+   dtvmgr-cli config/paths。
+
+#### 統計
+
+| 指標                     | 数                             |
+| ------------------------ | ------------------------------ |
+| 総テスト数               | 499                            |
+| Miri 互換                | 329                            |
+| Miri 無視 (テスト単位)   | 170                            |
+| Miri 除外 (クレート単位) | 2 クレート (dtvmgr-db, dtvmgr) |
+
+```rust
+#[cfg_attr(miri, ignore)]
+#[tokio::test]
+async fn test_something_via_http() {
+    let mock_server = wiremock::MockServer::start().await;
+    // ...
+}
+
+#[cfg_attr(miri, ignore)]
+#[test]
+fn test_builder_succeeds() {
+    let client = MyClient::builder().build().unwrap();
+    // ...
+}
+```
+
+### 6.4 クロスコンパイル対応
 
 ```bash
 # Tier 1 targets（全て対応）
@@ -399,7 +453,7 @@ mise run zigbuild:all
 TARGET=x86_64-pc-windows-gnu mise run zigbuild
 ```
 
-### 5.4 Git フック(`.githooks/` + `mise`)
+### 6.5 Git フック(`.githooks/` + `mise`)
 
 #### 事前チェック(pre-commit)
 
@@ -415,7 +469,7 @@ mise run pre-commit
 
 ## 7. ドキュメント
 
-### 6.1 コメント規約
+### 7.1 コメント規約
 
 #### ドキュメントコメント
 
@@ -444,7 +498,7 @@ pub fn function(param: Type) -> Result<ReturnType> {
 }
 ````
 
-### 6.2 README必須項目(CLIプロジェクト)
+### 7.2 README必須項目(CLIプロジェクト)
 
 - プロジェクト概要(CLIツールの目的)
 - Dev Container を使ったセットアップ手順
@@ -555,14 +609,14 @@ println!("cargo:rustc-env=GIT_HASH={}", git_hash.trim());
 
 ## 10. パフォーマンス最適化
 
-### 9.1 最適化の原則
+### 10.1 最適化の原則
 
 - **計測なき最適化は悪**
 - まず動くものを作る
 - ボトルネックを`cargo build --timings`で特定
 - 必要な箇所のみ最適化
 
-### 9.2 メモリ管理
+### 10.2 メモリ管理
 
 ```rust
 // 開発速度優先
