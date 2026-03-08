@@ -1,10 +1,10 @@
 //! `AppConfig` struct and TOML read/write.
 
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
-use dtvmgr_jlse::types::{JlseConfig, JlseEncode};
+use dtvmgr_jlse::types::{JlseBins, JlseConfig, JlseDirs, JlseEncode};
 use serde::{Deserialize, Serialize};
 
 /// Top-level application configuration.
@@ -111,30 +111,80 @@ pub struct TmdbApiConfig {
     pub api_key: Option<String>,
 }
 
+/// Default regex pattern history.
+fn default_regex_history() -> Vec<String> {
+    vec![r"\(.*\)$".to_owned(), r"\s?\(.*\)$".to_owned()]
+}
+
+/// Default regex patterns for title normalization.
+fn default_regex_titles() -> Vec<String> {
+    vec![
+        r"\s*\(第\d+(?:期|クール|シリーズ)\)".to_owned(),
+        r"\s*第\d+(?:期|クール|シリーズ)".to_owned(),
+        r"(?i:\s*\d+(?:st|nd|rd|th)\s+season)".to_owned(),
+        r"(?i:\s*season\s*\d+(?:\s+part\.?\s*\d+)?)".to_owned(),
+        r"(?i:\s*(?:the\s+)?final\s+season)".to_owned(),
+        r"\s*\(シーズン\d+\)".to_owned(),
+        r"\s*シーズン\s*\d+".to_owned(),
+        r"\s*\(\d\d?\)".to_owned(),
+        r"\s*~(.*)~$".to_owned(),
+        r"^映画\s?".to_owned(),
+        r"\(TVシリーズ\)".to_owned(),
+    ]
+}
+
 /// Normalize viewer settings.
-#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NormalizeConfig {
     /// Regex pattern history for the normalize viewer.
-    #[serde(default)]
+    #[serde(default = "default_regex_history")]
     pub regex_history: Vec<String>,
     /// Regex patterns for title normalization (combined with `|`).
-    #[serde(default)]
+    #[serde(default = "default_regex_titles")]
     pub regex_titles: Vec<String>,
 }
 
+impl Default for NormalizeConfig {
+    fn default() -> Self {
+        Self {
+            regex_history: default_regex_history(),
+            regex_titles: default_regex_titles(),
+        }
+    }
+}
+
 impl AppConfig {
-    /// Loads config from a TOML file. Returns default if file does not exist.
+    /// Loads config from a TOML file.
+    ///
+    /// If the file does not exist, returns `Self::default()` and attempts to
+    /// write a commented template to `path` so users can discover all options.
+    /// Template write failure is logged but does not cause an error.
     ///
     /// # Errors
     ///
     /// Returns an error if the file exists but cannot be read or parsed.
     pub fn load(path: &Path) -> Result<Self> {
-        if !path.exists() {
-            return Ok(Self::default());
+        match std::fs::read_to_string(path) {
+            Ok(content) => toml::from_str(&content)
+                .with_context(|| format!("failed to parse {}", path.display())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let config = Self::default();
+                let content = config.to_commented_toml();
+                // Best-effort write so users can discover all options.
+                if let Err(save_err) = Self::write_toml(path, &content) {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %save_err,
+                        "could not write default config template"
+                    );
+                }
+                // Parse the generated template directly (avoids re-reading
+                // from disk) so active sections like jlse are included.
+                toml::from_str(&content)
+                    .with_context(|| "failed to parse default config template".to_owned())
+            }
+            Err(e) => Err(e).with_context(|| format!("failed to read {}", path.display())),
         }
-        let content = std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        toml::from_str(&content).with_context(|| format!("failed to parse {}", path.display()))
     }
 
     /// Saves config to a TOML file, creating parent directories if needed.
@@ -146,11 +196,16 @@ impl AppConfig {
     ///
     /// Returns an error if directory creation or file write fails.
     pub fn save(&self, path: &Path) -> Result<()> {
+        let content = self.to_commented_toml();
+        Self::write_toml(path, &content)
+    }
+
+    /// Write TOML content to `path`, creating parent directories as needed.
+    fn write_toml(path: &Path, content: &str) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create directory {}", parent.display()))?;
         }
-        let content = self.to_commented_toml();
         std::fs::write(path, content).with_context(|| format!("failed to write {}", path.display()))
     }
 
@@ -264,156 +319,94 @@ impl AppConfig {
             let _ = writeln!(out, "regex_titles = [{}]", patterns.join(", "));
         }
 
-        // [jlse.dirs] + [jlse.bins]
+        // [jlse] — all sections always active with defaults
         out.push_str("\n# CM detection pipeline settings.\n");
-        if let Some(jlse) = &self.jlse {
-            out.push_str("[jlse.dirs]\n");
-            let _ = writeln!(out, "jl = \"{}\"", jlse.dirs.jl.display());
-            let _ = writeln!(out, "logo = \"{}\"", jlse.dirs.logo.display());
-            let _ = writeln!(out, "result = \"{}\"", jlse.dirs.result.display());
+        let default_jlse = JlseConfig {
+            dirs: JlseDirs::default(),
+            bins: JlseBins::default(),
+            encode: Some(JlseEncode::default()),
+        };
+        let jlse = self.jlse.as_ref().unwrap_or(&default_jlse);
 
-            out.push_str("\n[jlse.bins]\n");
-            let bins = &jlse.bins;
-            let jl_bin_dir = jlse.dirs.bin_dir();
-            Self::write_bin_field(
-                &mut out,
-                "logoframe",
-                bins.logoframe.as_ref(),
-                &jl_bin_dir,
-                "logoframe",
-            );
-            Self::write_bin_field(
-                &mut out,
-                "chapter_exe",
-                bins.chapter_exe.as_ref(),
-                &jl_bin_dir,
-                "chapter_exe",
-            );
-            Self::write_bin_field(
-                &mut out,
-                "join_logo_scp",
-                bins.join_logo_scp.as_ref(),
-                &jl_bin_dir,
-                "join_logo_scp",
-            );
-            Self::write_bin_field(
-                &mut out,
-                "ffprobe",
-                bins.ffprobe.as_ref(),
-                Path::new("/usr/local/bin"),
-                "ffprobe",
-            );
-            Self::write_bin_field(
-                &mut out,
-                "ffmpeg",
-                bins.ffmpeg.as_ref(),
-                Path::new("/usr/local/bin"),
-                "ffmpeg",
-            );
-            // [jlse.encode]
-            Self::write_encode_section(&mut out, jlse.encode.as_ref());
-        } else {
-            out.push_str("# [jlse.dirs]\n");
-            out.push_str("# jl = \"/path/to/JL\"\n");
-            out.push_str("# logo = \"/path/to/logo\"\n");
-            out.push_str("# result = \"/path/to/result\"\n");
-            out.push_str("#\n");
-            out.push_str("# [jlse.bins]\n");
-            out.push_str("# logoframe = \"/path/to/bin/logoframe\"\n");
-            out.push_str("# chapter_exe = \"/path/to/bin/chapter_exe\"\n");
-            out.push_str("# join_logo_scp = \"/path/to/bin/join_logo_scp\"\n");
-            out.push_str("# ffprobe = \"/usr/local/bin/ffprobe\"\n");
-            out.push_str("# ffmpeg = \"/usr/local/bin/ffmpeg\"\n");
-            out.push_str("#\n");
-            Self::write_encode_section(&mut out, None);
-        }
+        out.push_str("[jlse.dirs]\n");
+        let _ = writeln!(out, "jl = \"{}\"", jlse.dirs.jl.display());
+        let _ = writeln!(out, "logo = \"{}\"", jlse.dirs.logo.display());
+        let _ = writeln!(out, "result = \"{}\"", jlse.dirs.result.display());
+
+        Self::write_bins_active(&mut out, &jlse.bins, &default_jlse.bins);
+
+        let default_enc = JlseEncode::default();
+        let enc = jlse.encode.as_ref().unwrap_or(&default_enc);
+        out.push_str(&Self::write_encode_active(enc));
 
         out
     }
 
-    /// Write the `[jlse.encode]` section to the output.
-    fn write_encode_section(out: &mut String, encode: Option<&JlseEncode>) {
-        if let Some(enc) = encode {
-            out.push_str("\n[jlse.encode]\n");
-            Self::write_optional_str(out, "format", enc.format.as_deref(), "mkv");
+    /// Render encode config as active (uncommented) TOML lines.
+    fn write_encode_active(enc: &JlseEncode) -> String {
+        let mut out = String::new();
+        out.push_str("\n[jlse.encode]\n");
+        Self::write_optional_str(&mut out, "format", enc.format.as_deref(), "mkv");
 
-            if let Some(ref input) = enc.input {
-                out.push_str("\n[jlse.encode.input]\n");
-                Self::write_optional_str(
-                    out,
-                    "flags",
-                    input.flags.as_deref(),
-                    "+discardcorrupt+genpts",
-                );
-                Self::write_optional_str(
-                    out,
-                    "analyzeduration",
-                    input.analyzeduration.as_deref(),
-                    "30M",
-                );
-                Self::write_optional_str(out, "probesize", input.probesize.as_deref(), "100M");
-            }
-
-            if let Some(ref video) = enc.video {
-                out.push_str("\n[jlse.encode.video]\n");
-                Self::write_optional_str(out, "codec", video.codec.as_deref(), "libx264");
-                Self::write_optional_str(out, "preset", video.preset.as_deref(), "medium");
-                Self::write_optional_str(out, "profile", video.profile.as_deref(), "main");
-                Self::write_optional_str(out, "pix_fmt", video.pix_fmt.as_deref(), "yuv420p");
-                Self::write_optional_str(out, "aspect", video.aspect.as_deref(), "16:9");
-                Self::write_optional_str(
-                    out,
-                    "filter",
-                    video.filter.as_deref(),
-                    "yadif=mode=send_frame:parity=auto:deint=all,scale=w=1280:h=720",
-                );
-                Self::write_string_list(out, "extra", &video.extra);
-            }
-
-            if let Some(ref audio) = enc.audio {
-                out.push_str("\n[jlse.encode.audio]\n");
-                Self::write_optional_str(out, "codec", audio.codec.as_deref(), "aac");
-                if let Some(rate) = audio.sample_rate {
-                    let _ = writeln!(out, "sample_rate = {rate}");
-                } else {
-                    out.push_str("# sample_rate = 48000\n");
-                }
-                Self::write_optional_str(out, "bitrate", audio.bitrate.as_deref(), "256k");
-                if let Some(channels) = audio.channels {
-                    let _ = writeln!(out, "channels = {channels}");
-                } else {
-                    out.push_str("# channels = 2\n");
-                }
-                Self::write_string_list(out, "extra", &audio.extra);
-            }
-        } else {
-            out.push_str("#\n");
-            out.push_str("# [jlse.encode]\n");
-            out.push_str("# format = \"mkv\"\n");
-            out.push_str("#\n");
-            out.push_str("# [jlse.encode.input]\n");
-            out.push_str("# flags = \"+discardcorrupt+genpts\"\n");
-            out.push_str("# analyzeduration = \"30M\"\n");
-            out.push_str("# probesize = \"100M\"\n");
-            out.push_str("#\n");
-            out.push_str("# [jlse.encode.video]\n");
-            out.push_str("# codec = \"libx264\"\n");
-            out.push_str("# preset = \"medium\"\n");
-            out.push_str("# profile = \"main\"\n");
-            out.push_str("# pix_fmt = \"yuv420p\"\n");
-            out.push_str("# aspect = \"16:9\"\n");
-            out.push_str(
-                "# filter = \"yadif=mode=send_frame:parity=auto:deint=all,scale=w=1280:h=720\"\n",
+        if let Some(ref input) = enc.input {
+            out.push_str("\n[jlse.encode.input]\n");
+            Self::write_optional_str(
+                &mut out,
+                "flags",
+                input.flags.as_deref(),
+                "+discardcorrupt+genpts",
             );
-            out.push_str("# extra = []\n");
-            out.push_str("#\n");
-            out.push_str("# [jlse.encode.audio]\n");
-            out.push_str("# codec = \"aac\"\n");
-            out.push_str("# sample_rate = 48000\n");
-            out.push_str("# bitrate = \"256k\"\n");
-            out.push_str("# channels = 2\n");
-            out.push_str("# extra = []\n");
+            Self::write_optional_str(
+                &mut out,
+                "analyzeduration",
+                input.analyzeduration.as_deref(),
+                "30M",
+            );
+            Self::write_optional_str(&mut out, "probesize", input.probesize.as_deref(), "100M");
+            Self::write_optional_str(&mut out, "hwaccel", input.hwaccel.as_deref(), "qsv");
+            Self::write_optional_str(
+                &mut out,
+                "hwaccel_output_format",
+                input.hwaccel_output_format.as_deref(),
+                "qsv",
+            );
+            Self::write_optional_str(&mut out, "decoder", input.decoder.as_deref(), "mpeg2_qsv");
         }
+
+        if let Some(ref video) = enc.video {
+            out.push_str("\n[jlse.encode.video]\n");
+            Self::write_optional_str(&mut out, "codec", video.codec.as_deref(), "libx264");
+            Self::write_optional_str(&mut out, "preset", video.preset.as_deref(), "medium");
+            Self::write_optional_str(&mut out, "profile", video.profile.as_deref(), "main");
+            Self::write_optional_str(&mut out, "pix_fmt", video.pix_fmt.as_deref(), "yuv420p");
+            Self::write_optional_str(&mut out, "aspect", video.aspect.as_deref(), "16:9");
+            Self::write_optional_str(
+                &mut out,
+                "filter",
+                video.filter.as_deref(),
+                "yadif=mode=send_frame:parity=auto:deint=all,scale=w=1280:h=720",
+            );
+            Self::write_string_list(&mut out, "extra", &video.extra);
+        }
+
+        if let Some(ref audio) = enc.audio {
+            out.push_str("\n[jlse.encode.audio]\n");
+            Self::write_optional_str(&mut out, "codec", audio.codec.as_deref(), "aac");
+            if let Some(rate) = audio.sample_rate {
+                let _ = writeln!(out, "sample_rate = {rate}");
+            } else {
+                out.push_str("# sample_rate = 48000\n");
+            }
+            Self::write_optional_str(&mut out, "bitrate", audio.bitrate.as_deref(), "256k");
+            if let Some(channels) = audio.channels {
+                let _ = writeln!(out, "channels = {channels}");
+            } else {
+                out.push_str("# channels = 2\n");
+            }
+            Self::write_string_list(&mut out, "extra", &audio.extra);
+        }
+
+        out
     }
 
     /// Write a string list field as active or commented line.
@@ -438,24 +431,57 @@ impl AppConfig {
         }
     }
 
-    /// Write a single binary field as active or commented-out line.
-    fn write_bin_field(
-        out: &mut String,
-        key: &str,
-        value: Option<&PathBuf>,
-        default_dir: &Path,
-        default_name: &str,
-    ) {
+    /// Write `[jlse.bins]` section with all binary paths.
+    fn write_bins_active(out: &mut String, bins: &JlseBins, defaults: &JlseBins) {
+        out.push_str("\n[jlse.bins]\n");
+        let entries: &[(&str, Option<&Path>, Option<&Path>)] = &[
+            (
+                "logoframe",
+                bins.logoframe.as_deref(),
+                defaults.logoframe.as_deref(),
+            ),
+            (
+                "chapter_exe",
+                bins.chapter_exe.as_deref(),
+                defaults.chapter_exe.as_deref(),
+            ),
+            (
+                "tsdivider",
+                bins.tsdivider.as_deref(),
+                defaults.tsdivider.as_deref(),
+            ),
+            (
+                "join_logo_scp",
+                bins.join_logo_scp.as_deref(),
+                defaults.join_logo_scp.as_deref(),
+            ),
+            ("ffmpeg", bins.ffmpeg.as_deref(), defaults.ffmpeg.as_deref()),
+            (
+                "ffprobe",
+                bins.ffprobe.as_deref(),
+                defaults.ffprobe.as_deref(),
+            ),
+            (
+                "tstables",
+                bins.tstables.as_deref(),
+                defaults.tstables.as_deref(),
+            ),
+        ];
+        for (key, value, hint) in entries {
+            Self::write_optional_path(out, key, *value, *hint);
+        }
+    }
+
+    /// Write an optional path field as active or commented-out line.
+    fn write_optional_path(out: &mut String, key: &str, value: Option<&Path>, hint: Option<&Path>) {
         match value {
             Some(p) => {
                 let _ = writeln!(out, "{key} = \"{}\"", p.display());
             }
             None => {
-                let _ = writeln!(
-                    out,
-                    "# {key} = \"{}\"",
-                    default_dir.join(default_name).display()
-                );
+                if let Some(h) = hint {
+                    let _ = writeln!(out, "# {key} = \"{}\"", h.display());
+                }
             }
         }
     }
@@ -464,6 +490,8 @@ impl AppConfig {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+
+    use std::path::PathBuf;
 
     use super::*;
 
@@ -476,8 +504,8 @@ mod tests {
         assert!(config.syoboi.channels.selected.is_empty());
         assert!(config.tmdb.language.is_none());
         assert!(config.tmdb.api.api_key.is_none());
-        assert!(config.normalize.regex_history.is_empty());
-        assert!(config.normalize.regex_titles.is_empty());
+        assert_eq!(config.normalize.regex_history, default_regex_history());
+        assert_eq!(config.normalize.regex_titles, default_regex_titles());
     }
 
     #[test]
@@ -506,6 +534,55 @@ mod tests {
             jlse: None,
         };
 
+        // Act — encode is always active, so jlse becomes Some after roundtrip
+        let toml_str = config.to_commented_toml();
+        let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
+
+        // Assert — non-jlse fields match exactly
+        assert_eq!(parsed.syoboi, config.syoboi);
+        assert_eq!(parsed.tmdb, config.tmdb);
+        assert_eq!(parsed.normalize, config.normalize);
+        // jlse gains defaults after roundtrip
+        let jlse = parsed.jlse.unwrap();
+        assert_eq!(jlse.dirs, JlseDirs::default());
+        assert_eq!(jlse.bins, JlseBins::default());
+        assert_eq!(jlse.encode, Some(JlseEncode::default()));
+    }
+
+    #[test]
+    fn test_serialize_deserialize_roundtrip_with_hwaccel() {
+        use dtvmgr_jlse::types::{EncodeInput, JlseBins, JlseDirs};
+
+        // Arrange
+        let config = AppConfig {
+            tmdb: TmdbConfig {
+                language: Some(String::from("ja-JP")),
+                ..TmdbConfig::default()
+            },
+            jlse: Some(JlseConfig {
+                dirs: JlseDirs {
+                    jl: PathBuf::from("/opt/JL"),
+                    logo: PathBuf::from("/opt/logo"),
+                    result: PathBuf::from("/tmp/result"),
+                },
+                bins: JlseBins::default(),
+                encode: Some(JlseEncode {
+                    format: Some(String::from("mkv")),
+                    input: Some(EncodeInput {
+                        flags: Some(String::from("+discardcorrupt+genpts")),
+                        analyzeduration: Some(String::from("30M")),
+                        probesize: Some(String::from("100M")),
+                        hwaccel: Some(String::from("qsv")),
+                        hwaccel_output_format: Some(String::from("qsv")),
+                        decoder: Some(String::from("mpeg2_qsv")),
+                    }),
+                    video: None,
+                    audio: None,
+                }),
+            }),
+            ..AppConfig::default()
+        };
+
         // Act
         let toml_str = config.to_commented_toml();
         let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
@@ -530,8 +607,17 @@ mod tests {
         assert!(output.contains("language = \"ja-JP\""));
         assert!(!output.contains("# language"));
         assert!(output.contains("# api_key = \"\""));
-        assert!(output.contains("# regex_history = []"));
-        assert!(output.contains("# regex_titles = []"));
+        assert!(output.contains(r"regex_history = ['\(.*\)$'"));
+        assert!(output.contains(r"regex_titles = ['\s*\(第\d+(?:期|クール|シリーズ)\)'"));
+        // hwaccel fields are commented out (None in default)
+        assert!(output.contains("# hwaccel = \"qsv\""));
+        assert!(output.contains("# hwaccel_output_format = \"qsv\""));
+        assert!(output.contains("# decoder = \"mpeg2_qsv\""));
+        // Encode section headers are active (not commented)
+        assert!(output.contains("[jlse.encode]\n"));
+        assert!(output.contains("[jlse.encode.input]\n"));
+        assert!(output.contains("[jlse.encode.video]\n"));
+        assert!(output.contains("[jlse.encode.audio]\n"));
         // Parsed config gets "ja-JP" from the active line
         let parsed: AppConfig = toml::from_str(&output).unwrap();
         assert_eq!(parsed.tmdb.language, Some(String::from("ja-JP")));
@@ -578,15 +664,23 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_load_nonexistent_returns_default() {
+    fn test_load_nonexistent_creates_template() {
         // Arrange
-        let path = Path::new("/tmp/dtvmgr_test_nonexistent_config.toml");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new_config.toml");
+        assert!(!path.exists());
 
         // Act
-        let config = AppConfig::load(path).unwrap();
+        let config = AppConfig::load(&path).unwrap();
 
-        // Assert
-        assert_eq!(config, AppConfig::default());
+        // Assert — template file created and re-read includes active jlse
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("[jlse.dirs]"));
+        assert!(content.contains("[jlse.bins]"));
+        assert!(content.contains("[jlse.encode]"));
+        // Re-read parses active sections, so jlse is Some
+        assert!(config.jlse.is_some());
     }
 
     #[test]
@@ -652,12 +746,23 @@ mod tests {
             ..AppConfig::default()
         };
 
-        // Act
+        // Act — encode: None is written as active defaults
         let toml_str = config.to_commented_toml();
         let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
 
-        // Assert
-        assert_eq!(parsed, config);
+        // Assert — encode becomes Some(default) after roundtrip
+        assert_eq!(
+            parsed.jlse.as_ref().unwrap().dirs,
+            config.jlse.as_ref().unwrap().dirs
+        );
+        assert_eq!(
+            parsed.jlse.as_ref().unwrap().bins,
+            config.jlse.as_ref().unwrap().bins
+        );
+        assert_eq!(
+            parsed.jlse.as_ref().unwrap().encode,
+            Some(JlseEncode::default())
+        );
     }
 
     #[test]
@@ -689,7 +794,18 @@ mod tests {
         let toml_str = config.to_commented_toml();
         let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
 
-        // Assert
-        assert_eq!(parsed, config);
+        // Assert — bins override preserved, encode becomes Some(default)
+        assert_eq!(
+            parsed.jlse.as_ref().unwrap().dirs,
+            config.jlse.as_ref().unwrap().dirs
+        );
+        assert_eq!(
+            parsed.jlse.as_ref().unwrap().bins,
+            config.jlse.as_ref().unwrap().bins
+        );
+        assert_eq!(
+            parsed.jlse.as_ref().unwrap().encode,
+            Some(JlseEncode::default())
+        );
     }
 }

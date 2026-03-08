@@ -1692,9 +1692,14 @@ async fn run_tmdb_tv_season(args: &TmdbTvSeasonArgs, dir: Option<&PathBuf>) -> R
 fn resolve_jlse_config(dir: Option<&PathBuf>) -> Result<JlseConfig> {
     let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
     let config = AppConfig::load(&config_path).context("failed to load config")?;
-    config
+    let jlse = config
         .jlse
-        .context("jlse config not found in dtvmgr.toml; add [jlse.dirs] with jl, logo, result")
+        .context("jlse config not found in dtvmgr.toml; add [jlse.dirs] with jl, logo, result")?;
+    anyhow::ensure!(
+        jlse.dirs.is_configured(),
+        "jlse.dirs is not configured in dtvmgr.toml; set jl, logo, result paths"
+    );
+    Ok(jlse)
 }
 
 /// Environment variable name for channel name override.
@@ -3144,11 +3149,11 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_resolve_tmdb_language_fallback_default() {
-        // Act: no CLI arg, nonexistent dir → config load fails → "en-US"
+        // Act: no CLI arg, nonexistent dir → template parse gives "ja-JP"
         let lang = resolve_tmdb_language(None, Some(&PathBuf::from("/nonexistent/path")));
 
         // Assert
-        assert_eq!(lang, "en-US");
+        assert_eq!(lang, "ja-JP");
     }
 
     // ── build_tui_groups ─────────────────────────────────────
