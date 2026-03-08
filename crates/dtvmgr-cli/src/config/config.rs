@@ -4,7 +4,8 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use dtvmgr_jlse::types::{JlseBins, JlseConfig, JlseDirs, JlseEncode};
+use dtvmgr_jlse::types::{DurationCheckRule, JlseBins, JlseConfig, JlseDirs, JlseEncode};
+use dtvmgr_jlse::validate::DEFAULT_RULES;
 use serde::{Deserialize, Serialize};
 
 /// Top-level application configuration.
@@ -201,7 +202,7 @@ impl AppConfig {
     }
 
     /// Write TOML content to `path`, creating parent directories as needed.
-    fn write_toml(path: &Path, content: &str) -> Result<()> {
+    pub(crate) fn write_toml(path: &Path, content: &str) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create directory {}", parent.display()))?;
@@ -211,7 +212,7 @@ impl AppConfig {
 
     /// Renders config as TOML with commented-out hints for unset options.
     #[allow(clippy::too_many_lines)]
-    fn to_commented_toml(&self) -> String {
+    pub(crate) fn to_commented_toml(&self) -> String {
         let mut out = String::new();
 
         // [syoboi.channels]
@@ -406,7 +407,40 @@ impl AppConfig {
             Self::write_string_list(&mut out, "extra", &audio.extra);
         }
 
+        Self::write_duration_check(&mut out, enc.duration_check.as_deref());
+
         out
+    }
+
+    /// Write `[[jlse.encode.duration_check]]` section.
+    ///
+    /// When the user has configured custom rules, they are written as active
+    /// TOML array-of-tables entries. Otherwise, defaults are written as
+    /// comments so users can see the available fields and their values.
+    fn write_duration_check(out: &mut String, rules: Option<&[DurationCheckRule]>) {
+        out.push_str(
+            "\n# Pre-encode duration validation rules.\n\
+             # Each entry defines the minimum acceptable content ratio\n\
+             # for a program length range (in minutes).\n",
+        );
+        match rules {
+            Some(entries) if !entries.is_empty() => {
+                for r in entries {
+                    out.push_str("\n[[jlse.encode.duration_check]]\n");
+                    let _ = writeln!(out, "min_min = {}", r.min_min);
+                    let _ = writeln!(out, "max_min = {}", r.max_min);
+                    let _ = writeln!(out, "min_percent = {}", r.min_percent);
+                }
+            }
+            _ => {
+                for r in DEFAULT_RULES {
+                    out.push_str("# [[jlse.encode.duration_check]]\n");
+                    let _ = writeln!(out, "# min_min = {}", r.min_min);
+                    let _ = writeln!(out, "# max_min = {}", r.max_min);
+                    let _ = writeln!(out, "# min_percent = {}", r.min_percent);
+                }
+            }
+        }
     }
 
     /// Write a string list field as active or commented line.
@@ -578,6 +612,7 @@ mod tests {
                     }),
                     video: None,
                     audio: None,
+                    duration_check: None,
                 }),
             }),
             ..AppConfig::default()

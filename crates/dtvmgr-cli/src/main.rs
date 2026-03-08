@@ -6,6 +6,7 @@ mod config;
 mod tui;
 
 use std::collections::{BTreeSet, HashSet};
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -72,6 +73,8 @@ enum Commands {
     Db(DbCommand),
     /// CM detection pipeline (`join_logo_scp`).
     Jlse(JlseCommand),
+    /// Initialize config file with default template.
+    Init,
 }
 
 /// Arguments for the `jlse` subcommand.
@@ -158,6 +161,9 @@ struct JlseRunArgs {
     /// Interactive TUI progress display.
     #[arg(long)]
     tui: bool,
+    /// Skip pre-encode duration validation.
+    #[arg(long)]
+    skip_duration_check: bool,
 }
 
 /// Arguments for `jlse channel`.
@@ -1989,6 +1995,7 @@ fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
             out_name,
             remove: args.remove,
             progress_mode: Some(ProgressMode::EpgStation),
+            skip_duration_check: args.skip_duration_check,
         };
 
         if args.tui {
@@ -2031,6 +2038,7 @@ fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
             out_name: args.outname.clone(),
             remove: args.remove,
             progress_mode: None,
+            skip_duration_check: args.skip_duration_check,
         };
 
         run_pipeline_with_tui(ctx)
@@ -2050,6 +2058,7 @@ fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
             out_name: args.outname.clone(),
             remove: args.remove,
             progress_mode: None,
+            skip_duration_check: args.skip_duration_check,
         };
 
         run_pipeline(&ctx, None)
@@ -2435,7 +2444,49 @@ async fn main() -> Result<()> {
             JlseSubcommands::Run(args) => run_jlse_run(&args, cli.dir.as_ref()),
             JlseSubcommands::Tsduck(args) => run_jlse_tsduck(&args, cli.dir.as_ref()),
         },
+        Commands::Init => run_init(cli.dir.as_ref()),
     }
+}
+
+/// Initialize config file with default template.
+#[allow(clippy::print_stdout)]
+fn run_init(dir: Option<&PathBuf>) -> Result<()> {
+    let path = resolve_config_path(dir).context("failed to resolve config path")?;
+    let default_config = AppConfig::default();
+    let template = default_config.to_commented_toml();
+
+    match std::fs::read_to_string(&path) {
+        Ok(existing) if existing == template => {
+            println!("Config already up to date: {}", path.display());
+        }
+        Ok(_) => {
+            println!("Template (would be written to {}):\n", path.display());
+            print!("{template}");
+            print!("Overwrite existing config? [y/N] ");
+            std::io::Write::flush(&mut std::io::stdout()).context("failed to flush stdout")?;
+            let mut answer = String::new();
+            std::io::stdin()
+                .lock()
+                .read_line(&mut answer)
+                .context("failed to read from stdin")?;
+            if answer.trim().eq_ignore_ascii_case("y") {
+                AppConfig::write_toml(&path, &template)
+                    .with_context(|| format!("failed to write {}", path.display()))?;
+                println!("Config overwritten: {}", path.display());
+            } else {
+                println!("Aborted.");
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            AppConfig::write_toml(&path, &template)
+                .with_context(|| format!("failed to create config at {}", path.display()))?;
+            println!("Config created: {}", path.display());
+        }
+        Err(e) => {
+            return Err(e).with_context(|| format!("failed to read {}", path.display()));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
