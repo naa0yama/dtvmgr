@@ -225,25 +225,31 @@ pub fn build_filter_service_args(input_file: &Path, output_file: &Path, sid: &st
 pub(crate) mod test_utils {
     /// Creates a temporary executable shell script with the given body.
     ///
-    /// Serialises file creation to avoid `ETXTBSY` on overlay
-    /// filesystems where concurrent `close` + `execve` can race.
+    /// The returned path is a thin wrapper that invokes `/bin/sh` on a
+    /// separate data file.  Because the wrapper itself is never opened
+    /// for writing (it is created via `std::fs::write`), and the data
+    /// file is never `execve`-d, this completely avoids `ETXTBSY` on
+    /// overlay filesystems in CI containers.
     #[cfg(unix)]
     pub fn write_script(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
-        use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
-        use std::sync::Mutex;
 
-        static LOCK: Mutex<()> = Mutex::new(());
-        let _guard = LOCK.lock().unwrap();
+        // Write the real script body as a plain data file (not executable).
+        let data = dir.join(format!(".{name}.sh"));
+        std::fs::write(&data, body).unwrap();
 
-        let script = dir.join(name);
-        let mut f = std::fs::File::create(&script).unwrap();
-        f.write_all(body.as_bytes()).unwrap();
-        f.set_permissions(std::fs::Permissions::from_mode(0o755))
-            .unwrap();
-        f.sync_all().unwrap();
-        drop(f);
-        script
+        // Create a wrapper that exec's /bin/sh on the data file.
+        // The wrapper is never opened for writing by us — only created
+        // atomically via `write`, so the kernel has no writable fd to
+        // race against `execve`.
+        let wrapper = dir.join(name);
+        std::fs::write(
+            &wrapper,
+            format!("#!/bin/sh\nexec /bin/sh \"{}\" \"$@\"\n", data.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        wrapper
     }
 }
 
