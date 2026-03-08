@@ -1,11 +1,9 @@
 # TMDB API クライアント (`TmdbClient`)
 
-> 親ドキュメント: [PLAN.md](../../PLAN.md)
->
 > 関連ドキュメント:
 >
-> - [TMDB エピソード照合ロジック](../tmdb-episode-matching.md)
-> - [リネームパイプライン設計](../rename-pipeline.md)
+> - [TMDB エピソード照合ロジック](../../archive/tmdb-episode-matching.md) (アーカイブ)
+> - [リネームパイプライン設計](../../archive/rename-pipeline.md) (アーカイブ)
 > - [TMDB API ドキュメント](../../external/themoviedb/README.md)
 > - [TMDB 認証](../../external/themoviedb/authentication-application.md)
 > - [TMDB エラーコード](../../external/themoviedb/errors.md)

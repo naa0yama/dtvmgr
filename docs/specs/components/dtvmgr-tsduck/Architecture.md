@@ -1,6 +1,6 @@
 # dtvmgr-tsduck Architecture
 
-> 親ドキュメント: [IMPROVEMENT_PLAN.md](../../IMPROVEMENT_PLAN.md)
+> 親ドキュメント: [IMPROVEMENT_PLAN.md](../../archive/IMPROVEMENT_PLAN.md) (アーカイブ)
 >
 > 関連ドキュメント:
 >

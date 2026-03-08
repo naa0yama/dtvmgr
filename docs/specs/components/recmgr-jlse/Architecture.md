@@ -1,6 +1,6 @@
 # recmgr-jlse Architecture
 
-> 親ドキュメント: [IMPROVEMENT_PLAN.md](../../IMPROVEMENT_PLAN.md)
+> 親ドキュメント: [IMPROVEMENT_PLAN.md](../../archive/IMPROVEMENT_PLAN.md) (アーカイブ)
 
 ## 1. 背景と目的
 

@@ -1,13 +1,9 @@
 # しょぼいカレンダー API クライアント (`SyoboiClient`)
 
-> 親ドキュメント: [PLAN.md](../../PLAN.md) (Section 6)
->
 > 関連ドキュメント:
 >
-> - [エンコード後ファイル名自動生成](../filename-generation.md)
-> - [一括リネーム・EPGStation 連携](../batch-rename-epgstation.md)
-> - [API データ収集・分析ツール設計](../../api-research/api-data-collection.md)
-> - [API レスポンス実例](../../api-research/api-spec.md)
+> - [エンコード後ファイル名自動生成](../../archive/filename-generation.md) (アーカイブ)
+> - [一括リネーム・EPGStation 連携](../../archive/batch-rename-epgstation.md) (アーカイブ)
 > - [db.php パラメータ仕様](../../external/syoboi/db.php.md)
 > - [レート制限仕様](../../external/syoboi/rate_limit.md)
 > - [ChID 一覧](../../external/syoboi/chid-list.md)
@@ -140,7 +136,7 @@
 | `LastUpdate` | No   | 範囲指定           | 更新日時フィルタ |
 
 **主な用途:** `channels.toml` の初期セットアップ時に全局一覧を取得する
-(`filename-generation.md` Section 2.5 参照)。
+(アーカイブ: `filename-generation.md` Section 2.5 参照)。
 
 ---
 
@@ -661,7 +657,7 @@ pub fn split_into_monthly_chunks(
 
 ### 9.3 Bulk リクエストフロー
 
-`batch-rename-epgstation.md` Section 2.10.2 で規定される一括取得フローで使用する。
+アーカイブ: `batch-rename-epgstation.md` Section 2.10.2 で規定される一括取得フローで使用する。
 
 ```rust
 /// 期間内の全放送データを月単位で取得する
