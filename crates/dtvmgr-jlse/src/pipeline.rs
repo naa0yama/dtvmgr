@@ -289,9 +289,9 @@ pub fn run_pipeline(
     }
 
     // Resolve FFmpeg encode args (always logged for visibility)
-    let encode_args =
+    let (input_encode_args, output_encode_args) =
         JlseEncode::build_encode_args(ctx.config.encode.as_ref(), ctx.ffmpeg_option.as_deref());
-    info!(args = ?encode_args, "ffmpeg encode args");
+    info!(input_args = ?input_encode_args, output_args = ?output_encode_args, "ffmpeg encode args");
 
     // Step 12: (optional) encoding
     if ctx.encode {
@@ -313,7 +313,8 @@ pub fn run_pipeline(
             extension,
         );
 
-        let extra_options = encode_args.join(" ");
+        let input_options = input_encode_args.join(" ");
+        let extra_options = output_encode_args.join(" ");
 
         info!("running ffmpeg encoding");
         let chapter_file = if ctx.add_chapter {
@@ -335,6 +336,7 @@ pub fn run_pipeline(
                 &output_file,
                 chapter_file,
                 &mkv_metadata,
+                &input_options,
                 &extra_options,
                 duration,
                 cb,
@@ -346,6 +348,7 @@ pub fn run_pipeline(
                 &output_file,
                 chapter_file,
                 &mkv_metadata,
+                &input_options,
                 &extra_options,
             )?;
         }

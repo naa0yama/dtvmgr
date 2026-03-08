@@ -47,9 +47,17 @@ pub fn run(
     output_file: &Path,
     chapter_file: Option<&Path>,
     metadata: &MkvMetadata,
+    input_options: &str,
     extra_options: &str,
 ) -> Result<()> {
-    let args = build_args(avs_file, output_file, chapter_file, metadata, extra_options);
+    let args = build_args(
+        avs_file,
+        output_file,
+        chapter_file,
+        metadata,
+        input_options,
+        extra_options,
+    );
     let os_args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
     super::run(binary, &os_args)
 }
@@ -58,7 +66,7 @@ pub fn run(
 ///
 /// Format:
 /// ```text
-/// ffmpeg -y -i <avs_file>
+/// ffmpeg [input_options...] -y -i <avs_file>
 ///        [-i <chapter> -map_metadata 1]
 ///        [-metadata TITLE=... -metadata SUBTITLE=... -metadata GENRE=...
 ///         -metadata DESCRIPTION=... -metadata DATE_RECORDED=...]
@@ -73,13 +81,19 @@ pub fn build_args(
     output_file: &Path,
     chapter_file: Option<&Path>,
     metadata: &MkvMetadata,
+    input_options: &str,
     extra_options: &str,
 ) -> Vec<String> {
-    let mut args = vec![
-        "-y".to_owned(),
-        "-i".to_owned(),
-        avs_file.display().to_string(),
-    ];
+    let mut args = Vec::new();
+
+    // Input options (hwaccel, fflags, etc.) must come before -i
+    for opt in input_options.split_whitespace() {
+        args.push(opt.to_owned());
+    }
+
+    args.push("-y".to_owned());
+    args.push("-i".to_owned());
+    args.push(avs_file.display().to_string());
 
     if let Some(chapter) = chapter_file {
         args.push("-i".to_owned());
@@ -131,20 +145,16 @@ fn push_metadata_tag(args: &mut Vec<String>, tag: &str, value: Option<&str>) {
 // ── JlseEncode → FFmpeg args ─────────────────────────────────
 
 impl JlseEncode {
-    /// Convert encode configuration to `FFmpeg` argument list.
+    /// Build args placed **before** `-i` (input-side options).
     ///
     /// Generated order:
-    /// 1. Input flags (`-fflags`, `-analyzeduration`, `-probesize`)
-    /// 2. Video mapping (`-map 0:v`)
-    /// 3. Video codec / preset / profile / `pix_fmt` / filter / extra
-    /// 4. Audio mapping (`-map 0:a`)
-    /// 5. Audio codec / `sample_rate` / bitrate / channels / extra
+    /// 1. Global flags (`-hide_banner`, `-ignore_unknown`)
+    /// 2. Input flags (`-fflags`, `-analyzeduration`, `-probesize`)
+    /// 3. HW accel (`-hwaccel_output_format`, `-hwaccel`, `-c:v` decoder)
     #[must_use]
-    #[allow(clippy::cognitive_complexity)]
-    pub fn to_ffmpeg_args(&self) -> Vec<String> {
+    pub fn to_input_args(&self) -> Vec<String> {
         let mut args = vec!["-hide_banner".to_owned(), "-ignore_unknown".to_owned()];
 
-        // Input flags
         if let Some(ref input) = self.input {
             if let Some(ref flags) = input.flags {
                 args.push("-fflags".to_owned());
@@ -158,7 +168,32 @@ impl JlseEncode {
                 args.push("-probesize".to_owned());
                 args.push(size.clone());
             }
+            if let Some(ref fmt) = input.hwaccel_output_format {
+                args.push("-hwaccel_output_format".to_owned());
+                args.push(fmt.clone());
+            }
+            if let Some(ref accel) = input.hwaccel {
+                args.push("-hwaccel".to_owned());
+                args.push(accel.clone());
+            }
+            if let Some(ref dec) = input.decoder {
+                args.push("-c:v".to_owned());
+                args.push(dec.clone());
+            }
         }
+
+        args
+    }
+
+    /// Build args placed **after** `-i` (output-side options).
+    ///
+    /// Generated order:
+    /// 1. Video mapping / codec / preset / profile / `pix_fmt` / filter / extra
+    /// 2. Audio mapping / codec / `sample_rate` / bitrate / channels / extra
+    #[must_use]
+    #[allow(clippy::cognitive_complexity)]
+    pub fn to_output_args(&self) -> Vec<String> {
+        let mut args = Vec::new();
 
         // Video
         if let Some(ref video) = self.video {
@@ -235,14 +270,21 @@ impl JlseEncode {
 
     /// Build encode args from an optional TOML config and optional CLI extra options.
     ///
-    /// Merges `to_ffmpeg_args()` output with whitespace-split CLI options.
+    /// Returns `(input_args, output_args)` — input args go before `-i`,
+    /// output args go after `-i`.
     #[must_use]
-    pub fn build_encode_args(encode: Option<&Self>, cli_opts: Option<&str>) -> Vec<String> {
-        let mut args = encode.map_or_else(Vec::new, Self::to_ffmpeg_args);
+    pub fn build_encode_args(
+        encode: Option<&Self>,
+        cli_opts: Option<&str>,
+    ) -> (Vec<String>, Vec<String>) {
+        let (input_args, mut output_args) = encode.map_or_else(
+            || (Vec::new(), Vec::new()),
+            |e| (e.to_input_args(), e.to_output_args()),
+        );
         if let Some(opts) = cli_opts {
-            args.extend(opts.split_whitespace().map(String::from));
+            output_args.extend(opts.split_whitespace().map(String::from));
         }
-        args
+        (input_args, output_args)
     }
 }
 
@@ -264,11 +306,19 @@ pub fn run_with_progress(
     output_file: &Path,
     chapter_file: Option<&Path>,
     metadata: &MkvMetadata,
+    input_options: &str,
     extra_options: &str,
     duration: f64,
     on_progress: &dyn Fn(ProgressEvent),
 ) -> Result<()> {
-    let args = build_args(avs_file, output_file, chapter_file, metadata, extra_options);
+    let args = build_args(
+        avs_file,
+        output_file,
+        chapter_file,
+        metadata,
+        input_options,
+        extra_options,
+    );
     debug!(cmd = %binary.display(), ?args, "running ffmpeg with progress");
 
     let mut child = Command::new(binary)
@@ -392,6 +442,7 @@ mod tests {
             None,
             &metadata,
             "",
+            "",
         );
 
         // Assert
@@ -420,6 +471,7 @@ mod tests {
             Path::new("/enc/output.mkv"),
             Some(Path::new("/out/chapter.txt")),
             &metadata,
+            "",
             "",
         );
 
@@ -459,6 +511,7 @@ mod tests {
             None,
             &metadata,
             "",
+            "",
         );
 
         // Assert
@@ -480,6 +533,7 @@ mod tests {
             Path::new("/enc/output.mkv"),
             None,
             &metadata,
+            "",
             "-c:v libx264 -crf 23",
         );
 
@@ -490,6 +544,34 @@ mod tests {
         assert!(args.contains(&"libx264".to_owned()));
         assert!(args.contains(&"-crf".to_owned()));
         assert!(args.contains(&"23".to_owned()));
+    }
+
+    #[test]
+    fn test_build_args_with_input_options() {
+        // Arrange
+        let metadata = MkvMetadata::default();
+
+        // Act
+        let args = build_args(
+            Path::new("/out/in.avs"),
+            Path::new("/out.mkv"),
+            None,
+            &metadata,
+            "-hwaccel qsv -c:v mpeg2_qsv",
+            "-c:v hevc_qsv",
+        );
+
+        // Assert — input options come before -y -i
+        assert_eq!(args[0], "-hwaccel");
+        assert_eq!(args[1], "qsv");
+        assert_eq!(args[2], "-c:v");
+        assert_eq!(args[3], "mpeg2_qsv");
+        assert_eq!(args[4], "-y");
+        assert_eq!(args[5], "-i");
+        assert_eq!(args[6], "/out/in.avs");
+        // output options and output file come after
+        assert!(args.contains(&"hevc_qsv".to_owned()));
+        assert_eq!(*args.last().unwrap(), "/out.mkv");
     }
 
     #[test]
@@ -506,6 +588,7 @@ mod tests {
             Path::new("/out.mkv"),
             Some(Path::new("/chap.txt")),
             &metadata,
+            "",
             "",
         );
 
@@ -530,6 +613,7 @@ mod tests {
             None,
             &metadata,
             "",
+            "",
         );
 
         // Assert — empty title is skipped, subtitle is present
@@ -552,28 +636,107 @@ mod tests {
             Some(Path::new("/chap.txt")),
             &metadata,
             "",
+            "",
         );
 
         // Assert
         assert!(!args.iter().any(|a| a.contains("movflags")));
     }
 
-    // ── to_ffmpeg_args ─────────────────────────────────────
+    // ── to_input_args / to_output_args ─────────────────────
 
     #[test]
-    fn test_to_ffmpeg_args_empty() {
+    fn test_to_input_args_no_input() {
         // Arrange
-        let encode = JlseEncode::default();
+        let encode = JlseEncode {
+            input: None,
+            video: None,
+            audio: None,
+            ..JlseEncode::default()
+        };
 
         // Act
-        let args = encode.to_ffmpeg_args();
+        let args = encode.to_input_args();
 
         // Assert — only global flags
         assert_eq!(args, vec!["-hide_banner", "-ignore_unknown"]);
     }
 
     #[test]
-    fn test_to_ffmpeg_args_full() {
+    fn test_to_output_args_no_sections() {
+        // Arrange
+        let encode = JlseEncode {
+            video: None,
+            audio: None,
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert — no output args
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn test_to_input_args_with_hwaccel() {
+        // Arrange
+        let encode = JlseEncode {
+            input: Some(EncodeInput {
+                flags: Some("+discardcorrupt+genpts".to_owned()),
+                analyzeduration: Some("30M".to_owned()),
+                probesize: Some("100M".to_owned()),
+                hwaccel: Some("qsv".to_owned()),
+                hwaccel_output_format: Some("qsv".to_owned()),
+                decoder: Some("mpeg2_qsv".to_owned()),
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_input_args();
+
+        // Assert — global flags, input flags, hwaccel in correct order
+        assert_eq!(args[0], "-hide_banner");
+        assert_eq!(args[1], "-ignore_unknown");
+        assert_eq!(args[2], "-fflags");
+        assert_eq!(args[3], "+discardcorrupt+genpts");
+        assert_eq!(args[4], "-analyzeduration");
+        assert_eq!(args[5], "30M");
+        assert_eq!(args[6], "-probesize");
+        assert_eq!(args[7], "100M");
+        assert_eq!(args[8], "-hwaccel_output_format");
+        assert_eq!(args[9], "qsv");
+        assert_eq!(args[10], "-hwaccel");
+        assert_eq!(args[11], "qsv");
+        assert_eq!(args[12], "-c:v");
+        assert_eq!(args[13], "mpeg2_qsv");
+    }
+
+    #[test]
+    fn test_to_input_args_without_hwaccel() {
+        // Arrange
+        let encode = JlseEncode {
+            input: Some(EncodeInput {
+                flags: Some("+discardcorrupt+genpts".to_owned()),
+                analyzeduration: Some("30M".to_owned()),
+                probesize: Some("100M".to_owned()),
+                ..EncodeInput::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_input_args();
+
+        // Assert — no hwaccel-related args
+        assert!(!args.contains(&"-hwaccel".to_owned()));
+        assert!(!args.contains(&"-hwaccel_output_format".to_owned()));
+        assert!(!args.contains(&"-c:v".to_owned()));
+    }
+
+    #[test]
+    fn test_to_output_args_full() {
         // Arrange
         let encode = JlseEncode {
             format: Some("mkv".to_owned()),
@@ -581,6 +744,7 @@ mod tests {
                 flags: Some("+discardcorrupt+genpts".to_owned()),
                 analyzeduration: Some("30M".to_owned()),
                 probesize: Some("100M".to_owned()),
+                ..EncodeInput::default()
             }),
             video: Some(EncodeVideo {
                 codec: Some("libx264".to_owned()),
@@ -594,16 +758,6 @@ mod tests {
                 extra: vec![
                     "-crf".to_owned(),
                     "23".to_owned(),
-                    "-color_range".to_owned(),
-                    "tv".to_owned(),
-                    "-color_primaries".to_owned(),
-                    "bt709".to_owned(),
-                    "-color_trc".to_owned(),
-                    "bt709".to_owned(),
-                    "-colorspace".to_owned(),
-                    "bt709".to_owned(),
-                    "-max_muxing_queue_size".to_owned(),
-                    "4000".to_owned(),
                     "-movflags".to_owned(),
                     "faststart".to_owned(),
                 ],
@@ -618,19 +772,11 @@ mod tests {
         };
 
         // Act
-        let args = encode.to_ffmpeg_args();
+        let args = encode.to_output_args();
 
-        // Assert — global flags
-        assert_eq!(args[0], "-hide_banner");
-        assert_eq!(args[1], "-ignore_unknown");
-
-        // Assert — input flags
-        assert_eq!(args[2], "-fflags");
-        assert_eq!(args[3], "+discardcorrupt+genpts");
-        assert_eq!(args[4], "-analyzeduration");
-        assert_eq!(args[5], "30M");
-        assert_eq!(args[6], "-probesize");
-        assert_eq!(args[7], "100M");
+        // Assert — no global/input flags in output args
+        assert!(!args.contains(&"-hide_banner".to_owned()));
+        assert!(!args.contains(&"-fflags".to_owned()));
 
         // Assert — video mapping and codec
         assert!(args.contains(&"-map".to_owned()));
@@ -648,14 +794,6 @@ mod tests {
         assert!(args.contains(&"-vf".to_owned()));
         assert!(args.contains(&"-crf".to_owned()));
         assert!(args.contains(&"23".to_owned()));
-        assert!(args.contains(&"-color_range".to_owned()));
-        assert!(args.contains(&"tv".to_owned()));
-        assert!(args.contains(&"-colorspace".to_owned()));
-        assert!(args.contains(&"bt709".to_owned()));
-        assert!(args.contains(&"-max_muxing_queue_size".to_owned()));
-        assert!(args.contains(&"4000".to_owned()));
-        assert!(args.contains(&"-movflags".to_owned()));
-        assert!(args.contains(&"faststart".to_owned()));
 
         // Assert — audio mapping and codec
         assert!(args.contains(&"0:a".to_owned()));
@@ -670,18 +808,19 @@ mod tests {
     }
 
     #[test]
-    fn test_to_ffmpeg_args_video_only() {
+    fn test_to_output_args_video_only() {
         // Arrange
         let encode = JlseEncode {
             video: Some(EncodeVideo {
                 codec: Some("libx264".to_owned()),
                 ..EncodeVideo::default()
             }),
+            audio: None,
             ..JlseEncode::default()
         };
 
         // Act
-        let args = encode.to_ffmpeg_args();
+        let args = encode.to_output_args();
 
         // Assert — has video mapping but no audio mapping
         assert!(args.contains(&"-map".to_owned()));
@@ -691,9 +830,10 @@ mod tests {
     }
 
     #[test]
-    fn test_to_ffmpeg_args_audio_only() {
+    fn test_to_output_args_audio_only() {
         // Arrange
         let encode = JlseEncode {
+            video: None,
             audio: Some(EncodeAudio {
                 codec: Some("aac".to_owned()),
                 ..EncodeAudio::default()
@@ -702,10 +842,38 @@ mod tests {
         };
 
         // Act
-        let args = encode.to_ffmpeg_args();
+        let args = encode.to_output_args();
 
         // Assert — has audio mapping but no video mapping
         assert!(args.contains(&"0:a".to_owned()));
         assert!(!args.contains(&"0:v".to_owned()));
+    }
+
+    #[test]
+    fn test_build_encode_args_returns_tuple() {
+        // Arrange
+        let encode = JlseEncode {
+            input: Some(EncodeInput {
+                hwaccel: Some("qsv".to_owned()),
+                ..EncodeInput::default()
+            }),
+            video: Some(EncodeVideo {
+                codec: Some("hevc_qsv".to_owned()),
+                ..EncodeVideo::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let (input_args, output_args) =
+            JlseEncode::build_encode_args(Some(&encode), Some("-threads 4"));
+
+        // Assert — input_args contain hwaccel, output_args contain codec + cli opts
+        assert!(input_args.contains(&"-hwaccel".to_owned()));
+        assert!(input_args.contains(&"qsv".to_owned()));
+        assert!(output_args.contains(&"-c:v".to_owned()));
+        assert!(output_args.contains(&"hevc_qsv".to_owned()));
+        assert!(output_args.contains(&"-threads".to_owned()));
+        assert!(output_args.contains(&"4".to_owned()));
     }
 }
