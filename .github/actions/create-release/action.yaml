@@ -50,7 +50,7 @@ runs:
         fi
 
         echo "Found artifacts:"
-        find ./artifacts -type f -name "*" | head -20
+        find ./artifacts -type f -name "*" | head -20 || true
 
         # Count expected vs actual artifacts (2 targets expected)
         artifact_count=$(find ./artifacts -type f -executable | wc -l)
@@ -78,7 +78,9 @@ runs:
           # Extract target from artifact directory name
           dir_name=$(basename "$(dirname "$file")")
           # Pattern: {binary_name}-{tag}-{target}
-          target=$(echo "$dir_name" | sed -E 's/.*-([a-zA-Z0-9_-]+)$/\1/')
+          # Remove the tag prefix (e.g., "dtvmgr-v0.1.1-") to get the target
+          tag_escaped=$(printf '%s' "$TAG" | sed 's/[.[\*^$]/\\&/g')
+          target=$(echo "$dir_name" | sed -E "s/^.*-${tag_escaped}-//")
           binary_name=$(basename "$file")
 
           if [ -z "$target" ]; then
