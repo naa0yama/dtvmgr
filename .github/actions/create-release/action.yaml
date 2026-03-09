@@ -37,23 +37,25 @@ runs:
       continue-on-error: true
       id: download-artifacts
 
-    - name: Check artifacts
+    - name: Check and prepare artifacts
       shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
       run: |
         set -euo pipefail
         echo "Checking downloaded artifacts..."
-        if [ ! -d "./artifacts" ] || [ -z "$(find ./artifacts -name "*" -type f 2>/dev/null)" ]; then
-          echo "ERROR: No artifacts found or download failed"
-          echo "Available artifacts directory contents:"
-          ls -la ./artifacts/ || echo "No artifacts directory found"
+        if [ ! -d "./artifacts" ]; then
+          echo "ERROR: No artifacts directory found"
           exit 1
         fi
 
         echo "Found artifacts:"
-        find ./artifacts -type f -name "*" | head -20 || true
+        find ./artifacts -type f | head -20 || true
 
-        # Count expected vs actual artifacts (2 targets expected)
-        artifact_count=$(find ./artifacts -type f -executable | wc -l)
+        # actions/download-artifact does not preserve executable permission
+        find ./artifacts -type f | while read -r f; do chmod +x "$f"; done
+
+        artifact_count=$(find ./artifacts -type f | wc -l)
         echo "Found ${artifact_count} binary artifacts"
 
         if [ "$artifact_count" -eq 0 ]; then
@@ -72,7 +74,7 @@ runs:
         mkdir -p release-assets
 
         # Process binary artifacts
-        find ./artifacts -type f -executable | while read -r file; do
+        find ./artifacts -type f | while read -r file; do
           echo "Processing: $file"
 
           # Extract target from artifact directory name
