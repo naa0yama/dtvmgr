@@ -124,19 +124,37 @@ pub fn run_capture(program: &Path, args: &[&OsStr]) -> Result<String> {
 pub(crate) mod test_utils {
     /// Creates a temporary executable shell script with the given body.
     ///
-    /// Writes to a staging file, sets permissions, then atomically
-    /// renames into place so the final inode is never opened for
-    /// writing. This avoids `ETXTBSY` on overlay filesystems in CI.
+    /// Uses a subprocess (`sh -c "cat > file && chmod …"`) to write the
+    /// script so that the writing fd is owned by a child process.  When
+    /// `wait()` returns, the child has fully exited and the kernel has
+    /// reaped all its fds, guaranteeing `i_writecount == 0` on the inode.
+    /// This avoids `ETXTBSY` on overlayfs (Docker containers in CI).
     #[cfg(unix)]
     pub fn write_script(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
-        use std::os::unix::fs::PermissionsExt;
+        use std::io::Write;
 
         let target = dir.join(name);
-        let staging = dir.join(format!(".{name}.staging"));
 
-        std::fs::write(&staging, body).unwrap();
-        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755)).unwrap();
-        std::fs::rename(&staging, &target).unwrap();
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "cat > '{}' && chmod 755 '{}'",
+                target.display(),
+                target.display()
+            ))
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        // Close stdin after writing to signal EOF to cat.
+        {
+            let mut stdin = child.stdin.take().unwrap();
+            stdin.write_all(body.as_bytes()).unwrap();
+        }
+
+        let status = child.wait().unwrap();
+        assert!(status.success());
+
         target
     }
 }
