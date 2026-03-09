@@ -225,31 +225,38 @@ pub fn build_filter_service_args(input_file: &Path, output_file: &Path, sid: &st
 pub(crate) mod test_utils {
     /// Creates a temporary executable shell script with the given body.
     ///
-    /// The returned path is a thin wrapper that invokes `/bin/sh` on a
-    /// separate data file.  Because the wrapper itself is never opened
-    /// for writing (it is created via `std::fs::write`), and the data
-    /// file is never `execve`-d, this completely avoids `ETXTBSY` on
-    /// overlay filesystems in CI containers.
+    /// Uses a subprocess (`sh -c "cat > file && chmod …"`) to write the
+    /// script so that the writing fd is owned by a child process.  When
+    /// `wait()` returns, the child has fully exited and the kernel has
+    /// reaped all its fds, guaranteeing `i_writecount == 0` on the inode.
+    /// This avoids `ETXTBSY` on overlayfs (Docker containers in CI).
     #[cfg(unix)]
     pub fn write_script(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
-        use std::os::unix::fs::PermissionsExt;
+        use std::io::Write;
 
-        // Write the real script body as a plain data file (not executable).
-        let data = dir.join(format!(".{name}.sh"));
-        std::fs::write(&data, body).unwrap();
+        let target = dir.join(name);
 
-        // Create a wrapper that exec's /bin/sh on the data file.
-        // The wrapper is never opened for writing by us — only created
-        // atomically via `write`, so the kernel has no writable fd to
-        // race against `execve`.
-        let wrapper = dir.join(name);
-        std::fs::write(
-            &wrapper,
-            format!("#!/bin/sh\nexec /bin/sh \"{}\" \"$@\"\n", data.display()),
-        )
-        .unwrap();
-        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
-        wrapper
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "cat > '{}' && chmod 755 '{}'",
+                target.display(),
+                target.display()
+            ))
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        // Close stdin after writing to signal EOF to cat.
+        {
+            let mut stdin = child.stdin.take().unwrap();
+            stdin.write_all(body.as_bytes()).unwrap();
+        }
+
+        let status = child.wait().unwrap();
+        assert!(status.success());
+
+        target
     }
 }
 
