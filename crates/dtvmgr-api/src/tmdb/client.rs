@@ -1,5 +1,6 @@
 //! `TmdbClient` - TMDB API client implementation.
 
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,6 +26,24 @@ const MAX_RETRIES: u32 = 3;
 /// Backoff duration between retries.
 const RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
+/// Wrapper that prevents sensitive values from leaking via `Debug`.
+///
+/// Does not implement `Display` to avoid accidental formatting.
+struct Secret(String);
+
+impl Secret {
+    /// Returns the inner value for constructing auth headers.
+    fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Secret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
 /// TMDB API client.
 #[derive(Debug)]
 #[allow(clippy::module_name_repetitions)]
@@ -34,7 +53,7 @@ pub struct TmdbClient {
     /// Base URL for API requests.
     base_url: Url,
     /// Bearer API token.
-    api_token: String,
+    api_token: Secret,
     /// Rate limiter.
     rate_limiter: Arc<Mutex<TmdbRateLimiter>>,
 }
@@ -119,7 +138,7 @@ impl TmdbClientBuilder {
         Ok(TmdbClient {
             http_client,
             base_url,
-            api_token,
+            api_token: Secret(api_token),
             rate_limiter: Arc::new(Mutex::new(rate_limiter)),
         })
     }
@@ -147,6 +166,10 @@ impl TmdbClient {
             .join(path)
             .with_context(|| format!("failed to join URL path: {path}"))?;
 
+        let auth_value =
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.api_token.expose()))
+                .context("invalid API token for Authorization header")?;
+
         let mut retries = 0u32;
         loop {
             let mut request = self
@@ -156,11 +179,9 @@ impl TmdbClient {
                 .build()
                 .with_context(|| format!("failed to build request: {path}"))?;
 
-            request.headers_mut().insert(
-                reqwest::header::AUTHORIZATION,
-                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.api_token))
-                    .context("invalid API token for Authorization header")?,
-            );
+            request
+                .headers_mut()
+                .insert(reqwest::header::AUTHORIZATION, auth_value.clone());
 
             tracing::debug!(url = %request.url(), "TMDB API request");
 
