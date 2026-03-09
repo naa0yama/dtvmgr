@@ -52,15 +52,15 @@ runs:
         echo "Found artifacts:"
         find ./artifacts -type f -name "*" | head -20
 
-        # Count expected vs actual artifacts (5 targets expected)
-        artifact_count=$(find ./artifacts -type f \( -executable -o -name "*.exe" \) | wc -l)
+        # Count expected vs actual artifacts (2 targets expected)
+        artifact_count=$(find ./artifacts -type f -executable | wc -l)
         echo "Found ${artifact_count} binary artifacts"
 
         if [ "$artifact_count" -eq 0 ]; then
           echo "ERROR: No binary artifacts found"
           exit 1
-        elif [ "$artifact_count" -lt 5 ]; then
-          echo "WARNING: Expected 5 artifacts but found ${artifact_count}"
+        elif [ "$artifact_count" -lt 2 ]; then
+          echo "WARNING: Expected 2 artifacts but found ${artifact_count}"
         fi
 
     - name: Prepare release assets
@@ -72,7 +72,7 @@ runs:
         mkdir -p release-assets
 
         # Process binary artifacts
-        find ./artifacts -type f \( -executable -o -name "*.exe" \) | while read -r file; do
+        find ./artifacts -type f -executable | while read -r file; do
           echo "Processing: $file"
 
           # Extract target from artifact directory name
@@ -88,16 +88,9 @@ runs:
 
           echo "Target: $target, Binary: $binary_name"
 
-          # Create compressed archive based on platform
-          if [[ "$target" == *windows* ]]; then
-            zip_name="${binary_name%.*}-${TAG}-${target}.zip"
-            echo "Creating ZIP: $zip_name"
-            zip -j "release-assets/$zip_name" "$file"
-          else
-            tar_name="${binary_name}-${TAG}-${target}.tar.gz"
-            echo "Creating TAR: $tar_name"
-            tar -czf "release-assets/$tar_name" -C "$(dirname "$file")" "$(basename "$file")"
-          fi
+          tar_name="${binary_name}-${TAG}-${target}.tar.gz"
+          echo "Creating TAR: $tar_name"
+          tar -czf "release-assets/$tar_name" -C "$(dirname "$file")" "$(basename "$file")"
         done
 
         echo "Release assets created:"
@@ -134,25 +127,13 @@ runs:
           if [ -f "$asset" ]; then
             filename=$(basename "$asset")
             case "$filename" in
-              *darwin*)
-                platform="macOS"
-                arch="ARM64 (Apple Silicon)"
-                ;;
-              *linux-gnu*x86_64*)
+              *x86_64*linux-gnu*)
                 platform="Linux"
                 arch="x86_64 (GNU)"
                 ;;
-              *linux-gnu*aarch64*)
+              *aarch64*linux-gnu*)
                 platform="Linux"
                 arch="ARM64 (GNU)"
-                ;;
-              *windows-msvc*)
-                platform="Windows"
-                arch="x86_64 (MSVC)"
-                ;;
-              *windows-gnu*)
-                platform="Windows"
-                arch="x86_64 (GNU)"
                 ;;
               *)
                 platform="Other"
@@ -167,8 +148,8 @@ runs:
 
         ### 🛠️ Build Information
 
-        - Built with: `cargo-zigbuild` + `sccache`
-        - Cross-compilation: Zig toolchain
+        - Built with: `cargo build` + `sccache`
+        - Native runners: `ubuntu-latest` (x86_64) / `ubuntu-24.04-arm` (aarch64)
         - Optimization: Release profile with symbol stripping
 
         ---
