@@ -1,9 +1,13 @@
 # Changelog
 
 ## [v0.1.0](https://github.com/naa0yama/dtvmgr/commits/v0.1.0) - 2026-03-09
+
 ### Documentation 🗒️
+
 - Dev/1st build by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/24
+
 ### Dependency Updates 👒
+
 - Update taiki-e/install-action action to v2.67.20 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/4
 - Update All action update by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/5
 - Update taiki-e/install-action action to v2.67.25 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/6
@@ -34,7 +38,9 @@
 - chore(deps): update rust crate ratatui to 0.30 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/35
 - chore(deps): update rust crate toml to v1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/42
 - chore(deps): update rust crate rusqlite to 0.38 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/36
+
 ### Other Changes
+
 - Add permissions for actionlint and zizmor jobs by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/2
 - fix(ci): update jdx/mise-action to v3.6.3 by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/30
 - fix(ci): move sccache config to env to unblock Renovate by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/38
