@@ -79,3 +79,11 @@ Exception: `build.rs` may use `println!` with `// ast-grep-ignore: no-println-de
 **Symptom**: Imports not properly grouped or ordered
 
 **Fix**: Group imports with blank lines: `std` → external crates → `crate`/`super`.
+
+## 9. `ETXTBSY` (text file busy) in tests
+
+**Symptom**: `Os { code: 26, kind: ExecutableFileBusy, message: "Text file busy" }` when executing a script written by the test.
+
+**Cause**: On overlayfs (Docker, CI), `std::fs::write` + `Command::new` in the same process keeps the overlay inode's write count elevated.
+
+**Fix**: Use the `write_script` helper that writes via a subprocess. See `~/.claude/skills/rust-implementation/references/testing.md` → "ETXTBSY on overlayfs" for the reusable template.
