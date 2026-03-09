@@ -25,7 +25,7 @@ env:
 jobs:
   build-matrix:
     name: build-${{ matrix.target }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
       contents: read # Required to checkout the repository
@@ -36,14 +36,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: aarch64-apple-darwin
-            os: ubuntu-latest
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: x86_64-pc-windows-gnu
-            os: ubuntu-latest
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -54,7 +50,6 @@ jobs:
         id: versions
         run: |
           sccache_version=$(grep -E '^ARG SCCACHE_VERSION=v?[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | sed -E 's/ARG SCCACHE_VERSION=(v?[0-9]+\.[0-9]+\.[0-9]+).*/\1/')
-          zigbuild_version=$(grep -E '^ARG ZIGBUILD_VERSION=v?[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | sed -E 's/ARG ZIGBUILD_VERSION=(v?[0-9]+\.[0-9]+\.[0-9]+).*/\1/')
           package_name=$(grep -E '^\[package\]' -A 10 Cargo.toml | grep -E '^name = "' | sed -E 's/name = "(.*)"/\1/')
 
           if grep -q '^\[\[bin\]\]' Cargo.toml; then
@@ -66,7 +61,6 @@ jobs:
 
           {
             echo "sccache=${sccache_version}"
-            echo "zigbuild=${zigbuild_version}"
             echo "package_name=${package_name}"
             echo "binary_name=${binary_name}"
           } >> "$GITHUB_OUTPUT"
@@ -76,30 +70,12 @@ jobs:
         with:
           sccache: ${{ steps.versions.outputs.sccache }}
 
-      - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@d6e286fa45544157a02d45a43742857ebbc25d12 # v2.68.16
-        with:
-          tool: cargo-zigbuild@${{ steps.versions.outputs.zigbuild }}
-
       - name: Build release binary
         env:
           TARGET: ${{ matrix.target }}
         run: |
           set -euxo pipefail
-          # Disable mold for cross-compilation (zigbuild handles linking)
-          unset RUSTFLAGS
-          cargo zigbuild --release --target "${TARGET}" --verbose
-
-      - name: Set binary extension
-        id: binary-ext
-        env:
-          TARGET: ${{ matrix.target }}
-        run: |
-          if [[ "${TARGET}" == *windows* ]]; then
-            echo "ext=.exe" >> "$GITHUB_OUTPUT"
-          else
-            echo "ext=" >> "$GITHUB_OUTPUT"
-          fi
+          cargo build --release --target "${TARGET}" --verbose
 
       - name: Upload binary artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -107,10 +83,9 @@ jobs:
           BINARY_NAME: ${{ steps.versions.outputs.binary_name }}
           TAG: ${{ inputs.tag }}
           TARGET: ${{ matrix.target }}
-          BINARY_EXT: ${{ steps.binary-ext.outputs.ext }}
         with:
           name: ${{ env.BINARY_NAME }}-${{ env.TAG }}-${{ env.TARGET }}
-          path: target/${{ env.TARGET }}/release/${{ env.BINARY_NAME }}${{ env.BINARY_EXT }}
+          path: target/${{ env.TARGET }}/release/${{ env.BINARY_NAME }}
           if-no-files-found: error
           retention-days: 7
 
@@ -120,8 +95,7 @@ jobs:
           BINARY_NAME: ${{ steps.versions.outputs.binary_name }}
           TAG: ${{ inputs.tag }}
           TARGET: ${{ matrix.target }}
-          BINARY_EXT: ${{ steps.binary-ext.outputs.ext }}
         run: |
           artifact_name="${BINARY_NAME}-${TAG}-${TARGET}"
-          binary_path="target/${TARGET}/release/${BINARY_NAME}${BINARY_EXT}"
+          binary_path="target/${TARGET}/release/${BINARY_NAME}"
           echo "artifacts=${artifact_name}:${binary_path}" >> "$GITHUB_OUTPUT"
