@@ -149,13 +149,18 @@ impl TmdbClient {
 
         let mut retries = 0u32;
         loop {
-            let request = self
+            let mut request = self
                 .http_client
                 .get(url.clone())
-                .bearer_auth(&self.api_token)
                 .query(query)
                 .build()
                 .with_context(|| format!("failed to build request: {path}"))?;
+
+            request.headers_mut().insert(
+                reqwest::header::AUTHORIZATION,
+                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.api_token))
+                    .context("invalid API token for Authorization header")?,
+            );
 
             tracing::debug!(url = %request.url(), "TMDB API request");
 
