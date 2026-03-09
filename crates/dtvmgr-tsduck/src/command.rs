@@ -225,31 +225,20 @@ pub fn build_filter_service_args(input_file: &Path, output_file: &Path, sid: &st
 pub(crate) mod test_utils {
     /// Creates a temporary executable shell script with the given body.
     ///
-    /// The returned path is a thin wrapper that invokes `/bin/sh` on a
-    /// separate data file.  Because the wrapper itself is never opened
-    /// for writing (it is created via `std::fs::write`), and the data
-    /// file is never `execve`-d, this completely avoids `ETXTBSY` on
-    /// overlay filesystems in CI containers.
+    /// Writes to a staging file, sets permissions, then atomically
+    /// renames into place so the final inode is never opened for
+    /// writing. This avoids `ETXTBSY` on overlay filesystems in CI.
     #[cfg(unix)]
     pub fn write_script(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
         use std::os::unix::fs::PermissionsExt;
 
-        // Write the real script body as a plain data file (not executable).
-        let data = dir.join(format!(".{name}.sh"));
-        std::fs::write(&data, body).unwrap();
+        let target = dir.join(name);
+        let staging = dir.join(format!(".{name}.staging"));
 
-        // Create a wrapper that exec's /bin/sh on the data file.
-        // The wrapper is never opened for writing by us — only created
-        // atomically via `write`, so the kernel has no writable fd to
-        // race against `execve`.
-        let wrapper = dir.join(name);
-        std::fs::write(
-            &wrapper,
-            format!("#!/bin/sh\nexec /bin/sh \"{}\" \"$@\"\n", data.display()),
-        )
-        .unwrap();
-        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
-        wrapper
+        std::fs::write(&staging, body).unwrap();
+        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::rename(&staging, &target).unwrap();
+        target
     }
 }
 
