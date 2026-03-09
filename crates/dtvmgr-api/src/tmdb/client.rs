@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use reqwest::Client;
 use tokio::sync::Mutex;
 use tracing::instrument;
@@ -159,12 +159,21 @@ impl TmdbClient {
 
             tracing::debug!(url = %request.url(), "TMDB API request");
 
-            let response = self
-                .http_client
-                .execute(request)
-                .await
-                .map_err(|e| anyhow!("{e}"))
-                .with_context(|| format!("request failed: {path}"))?;
+            let response = match self.http_client.execute(request).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    let kind = if e.is_timeout() {
+                        "timeout"
+                    } else if e.is_connect() {
+                        "connection error"
+                    } else if e.is_redirect() {
+                        "too many redirects"
+                    } else {
+                        "request error"
+                    };
+                    bail!("{kind}: {path}");
+                }
+            };
 
             let status = response.status();
 
