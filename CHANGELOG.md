@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.1.4](https://github.com/naa0yama/dtvmgr/compare/v0.1.3...v0.1.4) - 2026-03-09
+
+### Dependency Updates 👒
+
+- chore(deps): update github/codeql-action action to v4.32.5 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/53
+
+### Other Changes
+
+- fix(ci): add end-of-options marker to printf with leading dash by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/52
+
 ## [v0.1.3](https://github.com/naa0yama/dtvmgr/compare/v0.1.2...v0.1.3) - 2026-03-09
 
 ### Other Changes
