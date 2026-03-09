@@ -1,7 +1,9 @@
 # Changelog
 
 ## [v0.1.2](https://github.com/naa0yama/dtvmgr/compare/v0.1.1...v0.1.2) - 2026-03-09
+
 ### Other Changes
+
 - fix(ci): fix release build and sync Cargo.lock on tagpr version bump by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/46
 - Add pull_request trigger to tagpr workflow by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/48
 
