@@ -42,7 +42,7 @@ reqwest = { version = "0.13.1", default-features = false, features = ["json", "q
 rusqlite = { version = "0.34", features = ["bundled"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.137"
-toml = "0.9"
+toml = "1.0"
 url = "2"
 
 # Logging
