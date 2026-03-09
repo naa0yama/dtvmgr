@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.3](https://github.com/naa0yama/dtvmgr/compare/v0.1.2...v0.1.3) - 2026-03-09
+### Other Changes
+- fix(ci): preserve artifact permissions with tar-based upload by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/50
+
 ## [v0.1.2](https://github.com/naa0yama/dtvmgr/compare/v0.1.1...v0.1.2) - 2026-03-09
 
 ### Other Changes
