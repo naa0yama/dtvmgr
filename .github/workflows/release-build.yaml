@@ -7,10 +7,7 @@ on:
         description: "Release tag"
         required: true
         type: string
-    outputs:
-      artifacts:
-        description: "List of built artifacts"
-        value: ${{ jobs.build-matrix.outputs.artifacts }}
+    outputs: {}
 
 permissions: {}
 
@@ -30,8 +27,6 @@ jobs:
     permissions:
       contents: read # Required to checkout the repository
       actions: write # Required to upload artifacts
-    outputs:
-      artifacts: ${{ steps.collect-artifacts.outputs.artifacts }}
     strategy:
       fail-fast: false
       matrix:
@@ -78,7 +73,19 @@ jobs:
           set -euxo pipefail
           cargo build --release --target "${TARGET}" --bin "${BINARY_NAME}" --verbose
 
-      - name: Upload binary artifacts
+      - name: Package binary as tar.gz
+        id: package
+        env:
+          BINARY_NAME: ${{ steps.versions.outputs.binary_name }}
+          TAG: ${{ inputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          asset_name="${BINARY_NAME}-${TAG}-${TARGET}.tar.gz"
+          tar -czf "${asset_name}" -C "target/${TARGET}/release" "${BINARY_NAME}"
+          echo "asset_name=${asset_name}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release asset
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         env:
           BINARY_NAME: ${{ steps.versions.outputs.binary_name }}
@@ -86,17 +93,6 @@ jobs:
           TARGET: ${{ matrix.target }}
         with:
           name: ${{ env.BINARY_NAME }}-${{ env.TAG }}-${{ env.TARGET }}
-          path: target/${{ env.TARGET }}/release/${{ env.BINARY_NAME }}
+          path: ${{ steps.package.outputs.asset_name }}
           if-no-files-found: error
           retention-days: 7
-
-      - name: Collect artifact info
-        id: collect-artifacts
-        env:
-          BINARY_NAME: ${{ steps.versions.outputs.binary_name }}
-          TAG: ${{ inputs.tag }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          artifact_name="${BINARY_NAME}-${TAG}-${TARGET}"
-          binary_path="target/${TARGET}/release/${BINARY_NAME}"
-          echo "artifacts=${artifact_name}:${binary_path}" >> "$GITHUB_OUTPUT"
