@@ -150,8 +150,8 @@ runs:
         printf "🔗 Release URL: %s\n" "${RELEASE_URL}"
 
         echo "## 📋 Release Summary" >> $GITHUB_STEP_SUMMARY
-        printf "- **Tag**: %s\n" "${TAG}" >> $GITHUB_STEP_SUMMARY
+        printf -- "- **Tag**: %s\n" "${TAG}" >> $GITHUB_STEP_SUMMARY
         echo "- **Assets**: $(ls -1 release-assets/ | wc -l)" >> $GITHUB_STEP_SUMMARY
-        printf "- **Release URL**: %s\n" "${RELEASE_URL}" >> $GITHUB_STEP_SUMMARY
-        printf "- **Draft**: %s\n" "${DRAFT}" >> $GITHUB_STEP_SUMMARY
-        printf "- **Prerelease**: %s\n" "${PRERELEASE}" >> $GITHUB_STEP_SUMMARY
+        printf -- "- **Release URL**: %s\n" "${RELEASE_URL}" >> $GITHUB_STEP_SUMMARY
+        printf -- "- **Draft**: %s\n" "${DRAFT}" >> $GITHUB_STEP_SUMMARY
+        printf -- "- **Prerelease**: %s\n" "${PRERELEASE}" >> $GITHUB_STEP_SUMMARY
