@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.5](https://github.com/naa0yama/dtvmgr/compare/v0.1.4...v0.1.5) - 2026-03-09
+### Other Changes
+- fix(security): prevent cleartext logging of API token in TMDB client by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/55
+
 ## [v0.1.4](https://github.com/naa0yama/dtvmgr/compare/v0.1.3...v0.1.4) - 2026-03-09
 
 ### Dependency Updates 👒
