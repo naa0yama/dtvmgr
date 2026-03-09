@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.1](https://github.com/naa0yama/dtvmgr/compare/v0.1.0...v0.1.1) - 2026-03-09
+### Other Changes
+- fix(ci): replace cargo-zigbuild with native runners in release build by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/44
+
 ## [v0.1.0](https://github.com/naa0yama/dtvmgr/commits/v0.1.0) - 2026-03-09
 
 ### Documentation 🗒️
