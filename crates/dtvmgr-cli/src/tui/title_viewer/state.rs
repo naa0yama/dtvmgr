@@ -267,7 +267,7 @@ impl TitleViewerState {
     }
 
     /// Focuses the programs pane (right).
-    pub fn focus_programs(&mut self) {
+    pub const fn focus_programs(&mut self) {
         self.active_pane = ActivePane::Programs;
         if self.program_table_state.selected().is_none() {
             self.program_table_state.select(Some(0));
@@ -339,7 +339,7 @@ impl TitleViewerState {
     }
 
     /// Selects the first title if available.
-    fn select_first_title(&mut self) {
+    const fn select_first_title(&mut self) {
         if self.filtered_indices.is_empty() {
             self.title_table_state.select(None);
         } else {

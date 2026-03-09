@@ -375,7 +375,7 @@ impl NormalizeViewerState {
     }
 
     /// Selects the first row if available.
-    fn select_first(&mut self) {
+    const fn select_first(&mut self) {
         if self.filtered_indices.is_empty() {
             self.table_state.select(None);
         } else {
