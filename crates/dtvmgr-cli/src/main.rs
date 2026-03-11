@@ -2016,27 +2016,6 @@ fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
 
             run_pipeline(&ctx, Some(&cb))
         }
-    } else if args.tui {
-        // Standalone TUI mode
-        let input = args.input.clone().context("--input is required")?;
-
-        let ctx = PipelineContext {
-            input,
-            channel_name,
-            config: jlse_config,
-            filter: args.filter,
-            encode: args.encode,
-            target: AvsTarget::from(args.target),
-            add_chapter: args.add_chapter,
-            ffmpeg_option: args.ffmpeg_option.clone(),
-            out_dir: args.outdir.clone(),
-            out_name: args.outname.clone(),
-            remove: args.remove,
-            progress_mode: None,
-            skip_duration_check: args.skip_duration_check,
-        };
-
-        run_pipeline_with_tui(ctx)
     } else {
         let input = args.input.clone().context("--input is required")?;
 
@@ -2056,7 +2035,11 @@ fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
             skip_duration_check: args.skip_duration_check,
         };
 
-        run_pipeline(&ctx, None)
+        if args.tui {
+            run_pipeline_with_tui(ctx)
+        } else {
+            run_pipeline(&ctx, None)
+        }
     }
 }
 
