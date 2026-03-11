@@ -376,6 +376,14 @@ pub fn run_pipeline(
             )?;
         }
         debug!("ffmpeg encoding completed");
+
+        // Save EIT XML alongside encoded output
+        if let Some(ref eit_src) = mkv_metadata.eit_xml_path {
+            let eit_dest = output_file.with_extension("eit.xml");
+            std::fs::copy(eit_src, &eit_dest)
+                .with_context(|| format!("failed to copy EIT XML to {}", eit_dest.display()))?;
+            debug!(path = %eit_dest.display(), "saved EIT XML alongside output");
+        }
     }
 
     // Step 13: (optional) Remove intermediate files
