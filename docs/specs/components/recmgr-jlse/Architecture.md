@@ -86,7 +86,6 @@ flowchart TD
 | chapter_exe     | [chapter_exe.md](./chapter_exe.md)     | 2     | **完了** | 無音・シーンチェンジ検出                |
 | logoframe       | [logoframe.md](./logoframe.md)         | 2     | **完了** | ロゴ検出 + ロゴ選択                     |
 | join_logo_scp   | [join_logo_scp.md](./join_logo_scp.md) | 2     | **完了** | CM 区間決定                             |
-| tsdivider       | [tsdivider.md](./tsdivider.md)         | -     | **廃止** | TS 分割 (廃止済み)                      |
 | ffprobe         | [ffprobe.md](./ffprobe.md)             | 2     | **完了** | メタ情報取得                            |
 | AVS 連結        | [output_avs.md](./output_avs.md)       | 2     | **完了** | AVS ファイル連結                        |
 | チャプター生成  | [chapter.md](./chapter.md)             | 3     | **完了** | TrimReader + CreateChapter + OutputData |
@@ -105,7 +104,6 @@ flowchart TD
 | `src/command/chapterexe.js`      | 34   | `command/chapter_exe.rs`   | **完了** |
 | `src/command/logoframe.js`       | 96   | `command/logoframe.rs`     | **完了** |
 | `src/command/join_logo_frame.js` | 47   | `command/join_logo_scp.rs` | **完了** |
-| `src/command/tsdivider.js`       | 13   | ~~`command/tsdivider.rs`~~ | **廃止** |
 | `src/command/ffprobe.js`         | 43   | `command/ffprobe.rs`       | **完了** |
 | `src/command/ffmpeg.js`          | 64   | `command/ffmpeg.rs`        | 未実装   |
 | `src/output/avs.js`              | 37   | `output/avs.rs`            | **完了** |
@@ -220,7 +218,6 @@ crates/dtvmgr-jlse/src/
 - [chapter_exe.md](./chapter_exe.md): 無音・シーンチェンジ検出
 - [logoframe.md](./logoframe.md): ロゴ検出 + ロゴファイル選択
 - [join_logo_scp.md](./join_logo_scp.md): CM 区間決定
-- [tsdivider.md](./tsdivider.md): TS 分割 (廃止済み)
 - [ffprobe.md](./ffprobe.md): メタ情報取得
 - [output_avs.md](./output_avs.md): AVS ファイル連結
 

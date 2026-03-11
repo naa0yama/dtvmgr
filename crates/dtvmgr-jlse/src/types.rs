@@ -397,8 +397,6 @@ pub struct JlseBins {
     pub logoframe: Option<PathBuf>,
     /// `chapter_exe` binary path.
     pub chapter_exe: Option<PathBuf>,
-    /// `tsdivider` binary path.
-    pub tsdivider: Option<PathBuf>,
     /// `join_logo_scp` binary path.
     pub join_logo_scp: Option<PathBuf>,
     /// ffmpeg binary path.
@@ -414,7 +412,6 @@ impl Default for JlseBins {
         Self {
             logoframe: Some(PathBuf::from("/join_logo_scp_trial/bin/logoframe")),
             chapter_exe: Some(PathBuf::from("/join_logo_scp_trial/bin/chapter_exe")),
-            tsdivider: Some(PathBuf::from("/join_logo_scp_trial/bin/tsdivider")),
             join_logo_scp: Some(PathBuf::from("/join_logo_scp_trial/bin/join_logo_scp")),
             ffmpeg: Some(PathBuf::from("/opt/ffmpeg/bin/ffmpeg")),
             ffprobe: Some(PathBuf::from("/opt/ffmpeg/bin/ffprobe")),

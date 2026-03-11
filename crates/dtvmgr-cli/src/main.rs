@@ -46,7 +46,7 @@ use dtvmgr_jlse::channel::{detect_channel, load_channels as load_jlse_channels};
 use dtvmgr_jlse::param::{detect_param, load_params};
 use dtvmgr_jlse::pipeline::{PipelineContext, run_pipeline};
 use dtvmgr_jlse::progress::{ProgressEvent, ProgressMode};
-use dtvmgr_jlse::settings::DataPaths;
+use dtvmgr_jlse::settings::{BinaryPaths, DataPaths};
 use dtvmgr_jlse::types::{AvsTarget, JlseConfig};
 
 /// CLI argument parser.
@@ -151,9 +151,6 @@ struct JlseRunArgs {
     /// Disable chapter addition (chapters are added by default).
     #[arg(long = "no-chapter", action = clap::ArgAction::SetFalse)]
     add_chapter: bool,
-    /// Path to `tstables` binary (default: resolved from PATH).
-    #[arg(long, default_value = "tstables")]
-    tstables_bin: PathBuf,
     /// Enable EPGStation-compatible progress JSON output.
     /// Reads `INPUT` and `OUTPUT` from environment variables.
     #[arg(long)]
@@ -200,9 +197,6 @@ struct JlseTsduckArgs {
     /// Service ID to filter EIT events (decimal or hex `0x...`).
     #[arg(short, long)]
     sid: Option<String>,
-    /// Path to `tstables` binary (default: resolved from PATH).
-    #[arg(long, default_value = "tstables")]
-    tstables_bin: PathBuf,
 }
 
 /// Arguments for the `db` subcommand.
@@ -1744,11 +1738,13 @@ fn detect_target_from_middle(
 #[allow(clippy::print_stdout)]
 #[instrument(skip_all)]
 fn run_jlse_tsduck(args: &JlseTsduckArgs, dir: Option<&PathBuf>) -> Result<()> {
+    let jlse_config = resolve_jlse_config(dir)?;
+    let bins = BinaryPaths::from_config(&jlse_config);
+
     // --sid takes priority over -c (channel name detection).
     let explicit_sid = if let Some(ref sid) = args.sid {
         Some(sid.clone())
     } else if args.channel.is_some() {
-        let jlse_config = resolve_jlse_config(dir)?;
         let data = DataPaths::from_config(&jlse_config);
         let channels = load_jlse_channels(&data.channel_list)?;
         let channel_name = resolve_channel_name(args.channel.as_deref());
@@ -1767,17 +1763,17 @@ fn run_jlse_tsduck(args: &JlseTsduckArgs, dir: Option<&PathBuf>) -> Result<()> {
 
     let programs = if let Some(ref sid) = explicit_sid {
         // Explicit SID: extract EIT only (PID 0x12).
-        let xml = dtvmgr_tsduck::command::extract_eit(&args.tstables_bin, &args.input)?;
+        let xml = dtvmgr_tsduck::command::extract_eit(&bins.tstables, &args.input)?;
         println!("=== EIT Program Information (SID: {sid}) ===");
         dtvmgr_tsduck::eit::parse_eit_xml_by_sid(&xml, sid)
             .with_context(|| format!("failed to parse EIT XML for SID {sid}"))?
     } else {
         // No explicit SID: extract PAT (PID 0) and EIT (PID 0x12) separately.
-        let pat_xml = dtvmgr_tsduck::command::extract_pat(&args.tstables_bin, &args.input)?;
+        let pat_xml = dtvmgr_tsduck::command::extract_pat(&bins.tstables, &args.input)?;
         let pat_sid = dtvmgr_tsduck::pat::parse_pat_first_service_id(&pat_xml)
             .context("failed to parse PAT XML")?;
 
-        let eit_xml = dtvmgr_tsduck::command::extract_eit(&args.tstables_bin, &args.input)?;
+        let eit_xml = dtvmgr_tsduck::command::extract_eit(&bins.tstables, &args.input)?;
         if let Some(sid) = pat_sid {
             println!("=== EIT Program Information (SID: {sid} from PAT) ===");
             let all =
@@ -1792,7 +1788,7 @@ fn run_jlse_tsduck(args: &JlseTsduckArgs, dir: Option<&PathBuf>) -> Result<()> {
     let programs = dtvmgr_tsduck::eit::dedup_programs(programs);
 
     // Detect recording target from middle-of-file EIT p/f.
-    let recording_target = detect_target_from_middle(&args.tstables_bin, &args.input);
+    let recording_target = detect_target_from_middle(&bins.tstables, &args.input);
     let target_event_id = match &recording_target {
         Ok(Some(target)) => {
             println!(
@@ -1957,8 +1953,7 @@ fn run_pipeline_with_tui(ctx: PipelineContext) -> Result<()> {
 /// Returns an error if the pipeline fails.
 #[instrument(skip_all)]
 fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
-    let mut jlse_config = resolve_jlse_config(dir)?;
-    jlse_config.bins.tstables = Some(args.tstables_bin.clone());
+    let jlse_config = resolve_jlse_config(dir)?;
 
     let channel_name = resolve_channel_name(args.channel.as_deref());
 
