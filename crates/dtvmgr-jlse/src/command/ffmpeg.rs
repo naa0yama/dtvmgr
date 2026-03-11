@@ -14,6 +14,33 @@ use tracing::debug;
 use crate::progress::{self, ProgressEvent};
 use crate::types::JlseEncode;
 
+/// Options that should NOT receive automatic stream specifiers
+/// because they are muxer-level or global options.
+const GLOBAL_OPTIONS: &[&str] = &[
+    "-movflags",
+    "-max_muxing_queue_size",
+    "-f",
+    "-t",
+    "-ss",
+    "-to",
+    "-threads",
+    "-shortest",
+    "-fflags",
+    "-flags",
+];
+
+/// Append extra args, automatically adding a stream specifier (`:v` or `:a`)
+/// to option flags that lack one — unless the flag is a known global/muxer option.
+fn append_extra_with_specifier(args: &mut Vec<String>, extra: &[String], specifier: &str) {
+    for arg in extra {
+        if arg.starts_with('-') && !arg.contains(':') && !GLOBAL_OPTIONS.contains(&arg.as_str()) {
+            args.push(format!("{arg}:{specifier}"));
+        } else {
+            args.push(arg.clone());
+        }
+    }
+}
+
 // ── Types ────────────────────────────────────────────────────
 
 /// Metadata fields for the encoded MKV file.
@@ -232,7 +259,7 @@ impl JlseEncode {
                 args.push("-vf".to_owned());
                 args.push(filter.clone());
             }
-            args.extend(video.extra.iter().cloned());
+            append_extra_with_specifier(&mut args, &video.extra, "v");
         }
 
         // Audio
@@ -255,14 +282,14 @@ impl JlseEncode {
                 args.push(rate.to_string());
             }
             if let Some(ref bitrate) = audio.bitrate {
-                args.push("-ab".to_owned());
+                args.push("-b:a".to_owned());
                 args.push(bitrate.clone());
             }
             if let Some(channels) = audio.channels {
                 args.push("-ac".to_owned());
                 args.push(channels.to_string());
             }
-            args.extend(audio.extra.iter().cloned());
+            append_extra_with_specifier(&mut args, &audio.extra, "a");
         }
 
         args
@@ -793,8 +820,10 @@ mod tests {
         assert!(args.contains(&"-aspect".to_owned()));
         assert!(args.contains(&"16:9".to_owned()));
         assert!(args.contains(&"-vf".to_owned()));
-        assert!(args.contains(&"-crf".to_owned()));
+        assert!(args.contains(&"-crf:v".to_owned()));
         assert!(args.contains(&"23".to_owned()));
+        // -movflags is a global option — must NOT get :v specifier
+        assert!(args.contains(&"-movflags".to_owned()));
 
         // Assert — audio mapping and codec
         assert!(args.contains(&"0:a".to_owned()));
@@ -802,7 +831,7 @@ mod tests {
         assert!(args.contains(&"aac".to_owned()));
         assert!(args.contains(&"-ar".to_owned()));
         assert!(args.contains(&"48000".to_owned()));
-        assert!(args.contains(&"-ab".to_owned()));
+        assert!(args.contains(&"-b:a".to_owned()));
         assert!(args.contains(&"256k".to_owned()));
         assert!(args.contains(&"-ac".to_owned()));
         assert!(args.contains(&"2".to_owned()));
@@ -876,5 +905,121 @@ mod tests {
         assert!(output_args.contains(&"hevc_qsv".to_owned()));
         assert!(output_args.contains(&"-threads".to_owned()));
         assert!(output_args.contains(&"4".to_owned()));
+    }
+
+    // ── stream specifier auto-append ────────────────────────
+
+    #[test]
+    fn test_video_extra_global_quality_gets_stream_specifier() {
+        // Arrange — av1_qsv ICQ mode with -global_quality
+        let encode = JlseEncode {
+            video: Some(EncodeVideo {
+                codec: Some("av1_qsv".to_owned()),
+                extra: vec!["-global_quality".to_owned(), "24".to_owned()],
+                ..EncodeVideo::default()
+            }),
+            audio: Some(EncodeAudio {
+                codec: Some("libopus".to_owned()),
+                bitrate: Some("128k".to_owned()),
+                ..EncodeAudio::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert — -global_quality becomes -global_quality:v (not applied to audio)
+        assert!(args.contains(&"-global_quality:v".to_owned()));
+        assert!(!args.contains(&"-global_quality".to_owned()));
+        // Value "24" stays as-is (not a flag)
+        assert!(args.contains(&"24".to_owned()));
+    }
+
+    #[test]
+    fn test_video_extra_movflags_not_modified() {
+        // Arrange — -movflags is a muxer-level option, must not get :v
+        let encode = JlseEncode {
+            video: Some(EncodeVideo {
+                codec: Some("libx264".to_owned()),
+                extra: vec!["-movflags".to_owned(), "faststart".to_owned()],
+                ..EncodeVideo::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert
+        assert!(args.contains(&"-movflags".to_owned()));
+        assert!(!args.contains(&"-movflags:v".to_owned()));
+    }
+
+    #[test]
+    fn test_video_extra_preserves_existing_specifier() {
+        // Arrange — option already has a stream specifier
+        let encode = JlseEncode {
+            video: Some(EncodeVideo {
+                codec: Some("libx264".to_owned()),
+                extra: vec!["-b:v".to_owned(), "5M".to_owned()],
+                ..EncodeVideo::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert — already has :v, must not become -b:v:v
+        assert!(args.contains(&"-b:v".to_owned()));
+        assert!(!args.contains(&"-b:v:v".to_owned()));
+    }
+
+    #[test]
+    fn test_audio_extra_gets_stream_specifier() {
+        // Arrange
+        let encode = JlseEncode {
+            audio: Some(EncodeAudio {
+                codec: Some("libopus".to_owned()),
+                extra: vec!["-af".to_owned(), "aresample=48000".to_owned()],
+                ..EncodeAudio::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert — -af becomes -af:a
+        assert!(args.contains(&"-af:a".to_owned()));
+        assert!(!args.contains(&"-af".to_owned()));
+    }
+
+    #[test]
+    fn test_all_global_options_excluded_from_specifier() {
+        // Arrange — every GLOBAL_OPTIONS entry should pass through unchanged
+        let extras: Vec<String> = GLOBAL_OPTIONS.iter().map(|s| (*s).to_owned()).collect();
+        let encode = JlseEncode {
+            video: Some(EncodeVideo {
+                codec: Some("libx264".to_owned()),
+                extra: extras.clone(),
+                ..EncodeVideo::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert — none of them should have :v appended
+        for opt in &extras {
+            assert!(args.contains(opt), "{opt} should be in args unchanged");
+            let with_specifier = format!("{opt}:v");
+            assert!(
+                !args.contains(&with_specifier),
+                "{opt} should NOT become {with_specifier}"
+            );
+        }
     }
 }

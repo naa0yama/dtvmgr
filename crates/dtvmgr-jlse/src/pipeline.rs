@@ -48,6 +48,9 @@ pub struct PipelineContext {
     pub out_dir: Option<PathBuf>,
     /// Output filename override (without extension).
     pub out_name: Option<String>,
+    /// Output extension override (e.g. "mp4").
+    /// When set, takes precedence over `config.encode.format`.
+    pub out_extension: Option<String>,
     /// Remove intermediate files after processing.
     pub remove: bool,
     /// Progress output mode (e.g. `EPGStation`).
@@ -320,10 +323,9 @@ pub fn run_pipeline(
         };
 
         let extension = ctx
-            .config
-            .encode
-            .as_ref()
-            .and_then(|e| e.format.as_deref())
+            .out_extension
+            .as_deref()
+            .or_else(|| ctx.config.encode.as_ref().and_then(|e| e.format.as_deref()))
             .unwrap_or("mkv");
         let output_file = resolve_output_path(
             &input,
@@ -374,6 +376,14 @@ pub fn run_pipeline(
             )?;
         }
         debug!("ffmpeg encoding completed");
+
+        // Save EIT XML alongside encoded output
+        if let Some(ref eit_src) = mkv_metadata.eit_xml_path {
+            let eit_dest = output_file.with_extension("eit.xml");
+            std::fs::copy(eit_src, &eit_dest)
+                .with_context(|| format!("failed to copy EIT XML to {}", eit_dest.display()))?;
+            debug!(path = %eit_dest.display(), "saved EIT XML alongside output");
+        }
     }
 
     // Step 13: (optional) Remove intermediate files

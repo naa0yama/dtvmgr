@@ -310,7 +310,6 @@ mod tests {
         config.bins = JlseBins {
             logoframe: None,
             chapter_exe: None,
-            tsdivider: None,
             join_logo_scp: None,
             ffmpeg: None,
             ffprobe: None,
@@ -401,7 +400,6 @@ mod tests {
         config.bins = JlseBins {
             logoframe: Some(PathBuf::from("/custom/logoframe")),
             chapter_exe: Some(PathBuf::from("/custom/chapter_exe")),
-            tsdivider: Some(PathBuf::from("/custom/tsdivider")),
             join_logo_scp: Some(PathBuf::from("/custom/join_logo_scp")),
             ffprobe: Some(PathBuf::from("/custom/ffprobe")),
             ffmpeg: Some(PathBuf::from("/custom/ffmpeg")),

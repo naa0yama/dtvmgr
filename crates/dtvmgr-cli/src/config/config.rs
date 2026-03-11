@@ -470,30 +470,25 @@ impl AppConfig {
         out.push_str("\n[jlse.bins]\n");
         let entries: &[(&str, Option<&Path>, Option<&Path>)] = &[
             (
-                "logoframe",
-                bins.logoframe.as_deref(),
-                defaults.logoframe.as_deref(),
-            ),
-            (
                 "chapter_exe",
                 bins.chapter_exe.as_deref(),
                 defaults.chapter_exe.as_deref(),
-            ),
-            (
-                "tsdivider",
-                bins.tsdivider.as_deref(),
-                defaults.tsdivider.as_deref(),
-            ),
-            (
-                "join_logo_scp",
-                bins.join_logo_scp.as_deref(),
-                defaults.join_logo_scp.as_deref(),
             ),
             ("ffmpeg", bins.ffmpeg.as_deref(), defaults.ffmpeg.as_deref()),
             (
                 "ffprobe",
                 bins.ffprobe.as_deref(),
                 defaults.ffprobe.as_deref(),
+            ),
+            (
+                "join_logo_scp",
+                bins.join_logo_scp.as_deref(),
+                defaults.join_logo_scp.as_deref(),
+            ),
+            (
+                "logoframe",
+                bins.logoframe.as_deref(),
+                defaults.logoframe.as_deref(),
             ),
             (
                 "tstables",
