@@ -48,6 +48,9 @@ pub struct PipelineContext {
     pub out_dir: Option<PathBuf>,
     /// Output filename override (without extension).
     pub out_name: Option<String>,
+    /// Output extension override (e.g. "mp4").
+    /// When set, takes precedence over `config.encode.format`.
+    pub out_extension: Option<String>,
     /// Remove intermediate files after processing.
     pub remove: bool,
     /// Progress output mode (e.g. `EPGStation`).
@@ -320,10 +323,9 @@ pub fn run_pipeline(
         };
 
         let extension = ctx
-            .config
-            .encode
-            .as_ref()
-            .and_then(|e| e.format.as_deref())
+            .out_extension
+            .as_deref()
+            .or_else(|| ctx.config.encode.as_ref().and_then(|e| e.format.as_deref()))
             .unwrap_or("mkv");
         let output_file = resolve_output_path(
             &input,

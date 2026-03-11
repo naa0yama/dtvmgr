@@ -1965,15 +1965,21 @@ fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
             .or_else(|| std::env::var("INPUT").ok().map(PathBuf::from))
             .context("INPUT environment variable is required in --epgstation mode")?;
 
-        let (out_dir, out_name) = std::env::var("OUTPUT").map_or_else(
-            |_| (args.outdir.clone(), args.outname.clone()),
+        let (out_dir, out_name, out_extension) = std::env::var("OUTPUT").map_or_else(
+            |_| (args.outdir.clone(), args.outname.clone(), None),
             |output_str| {
                 let output_path = PathBuf::from(&output_str);
-                let dir = output_path.parent().map(Path::to_path_buf);
+                let dir = output_path
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .map(Path::to_path_buf);
                 let name = output_path
                     .file_stem()
                     .map(|s| s.to_string_lossy().into_owned());
-                (dir, name)
+                let ext = output_path
+                    .extension()
+                    .map(|e| e.to_string_lossy().into_owned());
+                (dir, name, ext)
             },
         );
 
@@ -1988,6 +1994,7 @@ fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
             ffmpeg_option: args.ffmpeg_option.clone(),
             out_dir,
             out_name,
+            out_extension,
             remove: args.remove,
             progress_mode: Some(ProgressMode::EpgStation),
             skip_duration_check: args.skip_duration_check,
@@ -2030,6 +2037,7 @@ fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
             ffmpeg_option: args.ffmpeg_option.clone(),
             out_dir: args.outdir.clone(),
             out_name: args.outname.clone(),
+            out_extension: None,
             remove: args.remove,
             progress_mode: None,
             skip_duration_check: args.skip_duration_check,
