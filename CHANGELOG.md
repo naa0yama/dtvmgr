@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.1.6](https://github.com/naa0yama/dtvmgr/compare/v0.1.5...v0.1.6) - 2026-03-11
+### Documentation 🗒️
+- feat(jlse): EIT XML save, output extension override, and ffmpeg stream specifier fix by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/63
+### Dependency Updates 👒
+- chore(deps): update taiki-e/install-action action to v2.68.17 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/57
+- chore(deps): update taiki-e/install-action action to v2.68.18 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/61
+- chore(deps): update dependency github:rust-secure-code/cargo-auditable to v0.7.3 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/60
+- chore(deps): update rust docker tag to v1.93.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/62
+- chore(deps): update docker/login-action action to v4 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/59
+
 ## [v0.1.5](https://github.com/naa0yama/dtvmgr/compare/v0.1.4...v0.1.5) - 2026-03-09
 
 ### Other Changes
