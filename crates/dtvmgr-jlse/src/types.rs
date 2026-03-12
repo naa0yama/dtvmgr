@@ -115,6 +115,10 @@ pub struct EncodeInput {
     pub analyzeduration: Option<String>,
     /// `-probesize` value (e.g. `"100M"`).
     pub probesize: Option<String>,
+    /// `-init_hw_device` value (e.g. `"qsv=hw"`).
+    pub init_hw_device: Option<String>,
+    /// `-filter_hw_device` value (e.g. `"hw"`).
+    pub filter_hw_device: Option<String>,
     /// `-hwaccel` value (e.g. `"qsv"`, `"cuda"`, `"vaapi"`).
     pub hwaccel: Option<String>,
     /// `-hwaccel_output_format` value (e.g. `"qsv"`).
@@ -129,6 +133,8 @@ impl Default for EncodeInput {
             flags: Some("+discardcorrupt+genpts".to_owned()),
             analyzeduration: Some("30M".to_owned()),
             probesize: Some("100M".to_owned()),
+            init_hw_device: None,
+            filter_hw_device: None,
             hwaccel: None,
             hwaccel_output_format: None,
             decoder: None,
@@ -357,6 +363,29 @@ codec = "libx264"
         assert!(encode.input.is_none());
         assert_eq!(encode.video.unwrap().codec.as_deref(), Some("libx264"));
         assert!(encode.audio.is_none());
+    }
+
+    #[test]
+    fn test_encode_input_deserialize_hw_device() {
+        // Arrange
+        let toml_str = r#"
+[input]
+flags = "+discardcorrupt+genpts"
+analyzeduration = "30M"
+probesize = "100M"
+init_hw_device = "qsv=hw"
+filter_hw_device = "hw"
+"#;
+
+        // Act
+        let encode: JlseEncode = toml::from_str(toml_str).unwrap();
+
+        // Assert
+        let input = encode.input.unwrap();
+        assert_eq!(input.init_hw_device.as_deref(), Some("qsv=hw"));
+        assert_eq!(input.filter_hw_device.as_deref(), Some("hw"));
+        assert_eq!(input.hwaccel, None);
+        assert_eq!(input.decoder, None);
     }
 
     #[test]

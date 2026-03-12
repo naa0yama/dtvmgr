@@ -99,14 +99,6 @@ pub struct TmdbConfig {
     /// Default language (e.g. "ja-JP"). Used when `--language` is not specified.
     #[serde(default)]
     pub language: Option<String>,
-    /// API credentials.
-    #[serde(default)]
-    pub api: TmdbApiConfig,
-}
-
-/// TMDB API credentials.
-#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct TmdbApiConfig {
     /// API bearer token. Falls back when `TMDB_API_TOKEN` env var is not set.
     #[serde(default)]
     pub api_key: Option<String>,
@@ -233,45 +225,42 @@ impl AppConfig {
 
         // [syoboi.titles]
         out.push_str("\n[syoboi.titles]\n");
-        out.push_str("# Syoboi category codes to include.\n");
-        out.push_str(
-            "# 0: その他, 1: アニメ, 2: ラジオ, 3: テレビ, 4: 特撮,\n\
-             # 5: アニメ関連, 6: メモ, 7: OVA, 8: 映画, 10: アニメ(終了/再放送)\n",
-        );
-        if self.syoboi.titles.cat.is_empty() {
-            out.push_str("# cat = []\n");
-        } else {
-            let ids: Vec<String> = self
-                .syoboi
-                .titles
-                .cat
-                .iter()
-                .map(ToString::to_string)
-                .collect();
-            let _ = writeln!(out, "cat = [{}]", ids.join(", "));
-        }
-        out.push_str("# Category codes that map to TMDB \"movie\" media type.\n");
-        if self.syoboi.titles.cat_movie.is_empty() {
-            out.push_str("# cat_movie = []\n");
-        } else {
-            let ids: Vec<String> = self
-                .syoboi
-                .titles
-                .cat_movie
-                .iter()
-                .map(ToString::to_string)
-                .collect();
-            let _ = writeln!(out, "cat_movie = [{}]", ids.join(", "));
-        }
-        out.push_str("# TIDs excluded from display in the title viewer.\n");
-        if self.syoboi.titles.excludes.is_empty() {
-            out.push_str("# excludes = []\n");
-        } else {
-            let mut sorted: Vec<u32> = self.syoboi.titles.excludes.clone();
-            sorted.sort_unstable();
-            let ids: Vec<String> = sorted.iter().map(ToString::to_string).collect();
-            let _ = writeln!(out, "excludes = [{}]", ids.join(", "));
-        }
+        let mut sorted_excludes = self.syoboi.titles.excludes.clone();
+        sorted_excludes.sort_unstable();
+        let mut entries: Vec<(&str, String)> = vec![
+            (
+                "cat",
+                Self::format_list(
+                    "cat",
+                    &self.syoboi.titles.cat,
+                    ToString::to_string,
+                    Some(
+                        "# Syoboi category codes to include.\n\
+                         # 0: その他, 1: アニメ, 2: ラジオ, 3: テレビ, 4: 特撮,\n\
+                         # 5: アニメ関連, 6: メモ, 7: OVA, 8: 映画, 10: アニメ(終了/再放送)\n",
+                    ),
+                ),
+            ),
+            (
+                "cat_movie",
+                Self::format_list(
+                    "cat_movie",
+                    &self.syoboi.titles.cat_movie,
+                    ToString::to_string,
+                    Some("# Category codes that map to TMDB \"movie\" media type.\n"),
+                ),
+            ),
+            (
+                "excludes",
+                Self::format_list(
+                    "excludes",
+                    &sorted_excludes,
+                    ToString::to_string,
+                    Some("# TIDs excluded from display in the title viewer.\n"),
+                ),
+            ),
+        ];
+        Self::write_sorted_entries(&mut out, &mut entries);
 
         // [tmdb]
         out.push_str("\n[tmdb]\n");
@@ -280,45 +269,36 @@ impl AppConfig {
         );
         let lang = self.tmdb.language.as_deref().unwrap_or("ja-JP");
         let _ = writeln!(out, "language = \"{lang}\"");
-
-        // [tmdb.api]
-        out.push_str("\n[tmdb.api]\n");
         out.push_str("# API bearer token. Falls back when TMDB_API_TOKEN env var is not set.\n");
-        match &self.tmdb.api.api_key {
-            Some(key) => {
-                let _ = writeln!(out, "api_key = \"{key}\"");
-            }
-            None => out.push_str("# api_key = \"\"\n"),
-        }
+        out.push_str(&Self::format_optional_str(
+            "api_key",
+            self.tmdb.api_key.as_deref(),
+            "",
+        ));
 
         // [normalize]
         out.push_str("\n[normalize]\n");
-        out.push_str("# Regex pattern history for the normalize viewer.\n");
-        if self.normalize.regex_history.is_empty() {
-            out.push_str("# regex_history = []\n");
-        } else {
-            // Use TOML literal strings (single quotes) to avoid backslash escaping
-            // issues with regex patterns like `\d+` and `\s+`.
-            let patterns: Vec<String> = self
-                .normalize
-                .regex_history
-                .iter()
-                .map(|p| format!("'{p}'"))
-                .collect();
-            let _ = writeln!(out, "regex_history = [{}]", patterns.join(", "));
-        }
-        out.push_str("# Regex patterns for title normalization (combined with `|`).\n");
-        if self.normalize.regex_titles.is_empty() {
-            out.push_str("# regex_titles = []\n");
-        } else {
-            let patterns: Vec<String> = self
-                .normalize
-                .regex_titles
-                .iter()
-                .map(|p| format!("'{p}'"))
-                .collect();
-            let _ = writeln!(out, "regex_titles = [{}]", patterns.join(", "));
-        }
+        let mut entries: Vec<(&str, String)> = vec![
+            (
+                "regex_history",
+                Self::format_list(
+                    "regex_history",
+                    &self.normalize.regex_history,
+                    |p| format!("'{p}'"),
+                    Some("# Regex pattern history for the normalize viewer.\n"),
+                ),
+            ),
+            (
+                "regex_titles",
+                Self::format_list(
+                    "regex_titles",
+                    &self.normalize.regex_titles,
+                    |p| format!("'{p}'"),
+                    Some("# Regex patterns for title normalization (combined with `|`).\n"),
+                ),
+            ),
+        ];
+        Self::write_sorted_entries(&mut out, &mut entries);
 
         // [jlse] — all sections always active with defaults
         out.push_str("\n# CM detection pipeline settings.\n");
@@ -330,9 +310,12 @@ impl AppConfig {
         let jlse = self.jlse.as_ref().unwrap_or(&default_jlse);
 
         out.push_str("[jlse.dirs]\n");
-        let _ = writeln!(out, "jl = \"{}\"", jlse.dirs.jl.display());
-        let _ = writeln!(out, "logo = \"{}\"", jlse.dirs.logo.display());
-        let _ = writeln!(out, "result = \"{}\"", jlse.dirs.result.display());
+        let mut entries: Vec<(&str, String)> = vec![
+            ("jl", Self::format_path("jl", &jlse.dirs.jl)),
+            ("logo", Self::format_path("logo", &jlse.dirs.logo)),
+            ("result", Self::format_path("result", &jlse.dirs.result)),
+        ];
+        Self::write_sorted_entries(&mut out, &mut entries);
 
         Self::write_bins_active(&mut out, &jlse.bins, &default_jlse.bins);
 
@@ -347,69 +330,157 @@ impl AppConfig {
     fn write_encode_active(enc: &JlseEncode) -> String {
         let mut out = String::new();
         out.push_str("\n[jlse.encode]\n");
-        Self::write_optional_str(&mut out, "format", enc.format.as_deref(), "mkv");
+        out.push_str(&Self::format_optional_str(
+            "format",
+            enc.format.as_deref(),
+            "mkv",
+        ));
 
         if let Some(ref input) = enc.input {
-            out.push_str("\n[jlse.encode.input]\n");
-            Self::write_optional_str(
-                &mut out,
-                "flags",
-                input.flags.as_deref(),
-                "+discardcorrupt+genpts",
-            );
-            Self::write_optional_str(
-                &mut out,
-                "analyzeduration",
-                input.analyzeduration.as_deref(),
-                "30M",
-            );
-            Self::write_optional_str(&mut out, "probesize", input.probesize.as_deref(), "100M");
-            Self::write_optional_str(&mut out, "hwaccel", input.hwaccel.as_deref(), "qsv");
-            Self::write_optional_str(
-                &mut out,
-                "hwaccel_output_format",
-                input.hwaccel_output_format.as_deref(),
-                "qsv",
-            );
-            Self::write_optional_str(&mut out, "decoder", input.decoder.as_deref(), "mpeg2_qsv");
+            Self::write_encode_input(&mut out, input);
         }
-
         if let Some(ref video) = enc.video {
-            out.push_str("\n[jlse.encode.video]\n");
-            Self::write_optional_str(&mut out, "codec", video.codec.as_deref(), "libx264");
-            Self::write_optional_str(&mut out, "preset", video.preset.as_deref(), "medium");
-            Self::write_optional_str(&mut out, "profile", video.profile.as_deref(), "main");
-            Self::write_optional_str(&mut out, "pix_fmt", video.pix_fmt.as_deref(), "yuv420p");
-            Self::write_optional_str(&mut out, "aspect", video.aspect.as_deref(), "16:9");
-            Self::write_optional_str(
-                &mut out,
-                "filter",
-                video.filter.as_deref(),
-                "yadif=mode=send_frame:parity=auto:deint=all,scale=w=1280:h=720",
-            );
-            Self::write_string_list(&mut out, "extra", &video.extra);
+            Self::write_encode_video(&mut out, video);
         }
-
         if let Some(ref audio) = enc.audio {
-            out.push_str("\n[jlse.encode.audio]\n");
-            Self::write_optional_str(&mut out, "codec", audio.codec.as_deref(), "aac");
-            if let Some(rate) = audio.sample_rate {
-                let _ = writeln!(out, "sample_rate = {rate}");
-            } else {
-                out.push_str("# sample_rate = 48000\n");
-            }
-            Self::write_optional_str(&mut out, "bitrate", audio.bitrate.as_deref(), "256k");
-            if let Some(channels) = audio.channels {
-                let _ = writeln!(out, "channels = {channels}");
-            } else {
-                out.push_str("# channels = 2\n");
-            }
-            Self::write_string_list(&mut out, "extra", &audio.extra);
+            Self::write_encode_audio(&mut out, audio);
         }
 
         Self::write_duration_check(&mut out, enc.duration_check.as_deref());
 
         out
+    }
+
+    /// Write `[jlse.encode.input]` section with sorted keys.
+    fn write_encode_input(out: &mut String, input: &dtvmgr_jlse::types::EncodeInput) {
+        out.push_str("\n[jlse.encode.input]\n");
+        let mut entries: Vec<(&str, String)> = vec![
+            (
+                "analyzeduration",
+                Self::format_optional_str(
+                    "analyzeduration",
+                    input.analyzeduration.as_deref(),
+                    "30M",
+                ),
+            ),
+            (
+                "decoder",
+                Self::format_optional_str("decoder", input.decoder.as_deref(), "mpeg2_qsv"),
+            ),
+            (
+                "filter_hw_device",
+                Self::format_optional_str(
+                    "filter_hw_device",
+                    input.filter_hw_device.as_deref(),
+                    "hw",
+                ),
+            ),
+            (
+                "flags",
+                Self::format_optional_str(
+                    "flags",
+                    input.flags.as_deref(),
+                    "+discardcorrupt+genpts",
+                ),
+            ),
+            (
+                "hwaccel",
+                Self::format_optional_str("hwaccel", input.hwaccel.as_deref(), "qsv"),
+            ),
+            (
+                "hwaccel_output_format",
+                Self::format_optional_str(
+                    "hwaccel_output_format",
+                    input.hwaccel_output_format.as_deref(),
+                    "qsv",
+                ),
+            ),
+            (
+                "init_hw_device",
+                Self::format_optional_str(
+                    "init_hw_device",
+                    input.init_hw_device.as_deref(),
+                    "qsv=hw",
+                ),
+            ),
+            (
+                "probesize",
+                Self::format_optional_str("probesize", input.probesize.as_deref(), "100M"),
+            ),
+        ];
+        Self::write_sorted_entries(out, &mut entries);
+    }
+
+    /// Write `[jlse.encode.video]` section with sorted keys.
+    fn write_encode_video(out: &mut String, video: &dtvmgr_jlse::types::EncodeVideo) {
+        out.push_str("\n[jlse.encode.video]\n");
+        let mut entries: Vec<(&str, String)> = vec![
+            (
+                "aspect",
+                Self::format_optional_str("aspect", video.aspect.as_deref(), "16:9"),
+            ),
+            (
+                "codec",
+                Self::format_optional_str("codec", video.codec.as_deref(), "libx264"),
+            ),
+            (
+                "filter",
+                Self::format_optional_str(
+                    "filter",
+                    video.filter.as_deref(),
+                    "yadif=mode=send_frame:parity=auto:deint=all,scale=w=1280:h=720",
+                ),
+            ),
+            (
+                "pix_fmt",
+                Self::format_optional_str("pix_fmt", video.pix_fmt.as_deref(), "yuv420p"),
+            ),
+            (
+                "preset",
+                Self::format_optional_str("preset", video.preset.as_deref(), "medium"),
+            ),
+            (
+                "profile",
+                Self::format_optional_str("profile", video.profile.as_deref(), "main"),
+            ),
+        ];
+        Self::write_sorted_entries(out, &mut entries);
+        out.push_str(&Self::format_list(
+            "extra",
+            &video.extra,
+            |v| format!("\"{v}\""),
+            None,
+        ));
+    }
+
+    /// Write `[jlse.encode.audio]` section with sorted keys.
+    fn write_encode_audio(out: &mut String, audio: &dtvmgr_jlse::types::EncodeAudio) {
+        out.push_str("\n[jlse.encode.audio]\n");
+        let mut entries: Vec<(&str, String)> = vec![
+            (
+                "bitrate",
+                Self::format_optional_str("bitrate", audio.bitrate.as_deref(), "256k"),
+            ),
+            (
+                "channels",
+                Self::format_optional_u32("channels", audio.channels, 2),
+            ),
+            (
+                "codec",
+                Self::format_optional_str("codec", audio.codec.as_deref(), "aac"),
+            ),
+            (
+                "sample_rate",
+                Self::format_optional_u32("sample_rate", audio.sample_rate, 48000),
+            ),
+        ];
+        Self::write_sorted_entries(out, &mut entries);
+        out.push_str(&Self::format_list(
+            "extra",
+            &audio.extra,
+            |v| format!("\"{v}\""),
+            None,
+        ));
     }
 
     /// Write `[[jlse.encode.duration_check]]` section.
@@ -427,92 +498,145 @@ impl AppConfig {
             Some(entries) if !entries.is_empty() => {
                 for r in entries {
                     out.push_str("\n[[jlse.encode.duration_check]]\n");
-                    let _ = writeln!(out, "min_min = {}", r.min_min);
-                    let _ = writeln!(out, "max_min = {}", r.max_min);
-                    let _ = writeln!(out, "min_percent = {}", r.min_percent);
+                    let mut e: Vec<(&str, String)> = vec![
+                        ("max_min", format!("max_min = {}\n", r.max_min)),
+                        ("min_min", format!("min_min = {}\n", r.min_min)),
+                        ("min_percent", format!("min_percent = {}\n", r.min_percent)),
+                    ];
+                    Self::write_sorted_entries(out, &mut e);
                 }
             }
             _ => {
                 for r in DEFAULT_RULES {
                     out.push_str("# [[jlse.encode.duration_check]]\n");
-                    let _ = writeln!(out, "# min_min = {}", r.min_min);
-                    let _ = writeln!(out, "# max_min = {}", r.max_min);
-                    let _ = writeln!(out, "# min_percent = {}", r.min_percent);
+                    let mut e: Vec<(&str, String)> = vec![
+                        ("max_min", format!("# max_min = {}\n", r.max_min)),
+                        ("min_min", format!("# min_min = {}\n", r.min_min)),
+                        (
+                            "min_percent",
+                            format!("# min_percent = {}\n", r.min_percent),
+                        ),
+                    ];
+                    Self::write_sorted_entries(out, &mut e);
                 }
             }
         }
     }
 
-    /// Write a string list field as active or commented line.
-    fn write_string_list(out: &mut String, key: &str, values: &[String]) {
-        if values.is_empty() {
-            let _ = writeln!(out, "# {key} = []");
-        } else {
-            let quoted: Vec<String> = values.iter().map(|v| format!("\"{v}\"")).collect();
-            let _ = writeln!(out, "{key} = [{}]", quoted.join(", "));
-        }
+    /// Format an always-active path field.
+    fn format_path(key: &str, value: &Path) -> String {
+        format!("{key} = \"{}\"\n", value.display())
     }
 
-    /// Write an optional string field as active or commented line.
-    fn write_optional_str(out: &mut String, key: &str, value: Option<&str>, hint: &str) {
-        match value {
-            Some(v) => {
-                let _ = writeln!(out, "{key} = \"{v}\"");
-            }
-            None => {
-                let _ = writeln!(out, "# {key} = \"{hint}\"");
-            }
+    /// Format an optional path field (active or commented).
+    fn format_optional_path(key: &str, value: Option<&Path>, hint: Option<&Path>) -> String {
+        value.map_or_else(
+            || hint.map_or_else(String::new, |h| format!("# {key} = \"{}\"\n", h.display())),
+            |p| format!("{key} = \"{}\"\n", p.display()),
+        )
+    }
+
+    /// Format a list field with optional preceding comment.
+    ///
+    /// Each element is converted via `formatter`; the result is joined with
+    /// `, ` inside `[…]`.  An empty slice renders a commented-out line.
+    fn format_list<T>(
+        key: &str,
+        values: &[T],
+        formatter: impl Fn(&T) -> String,
+        comment: Option<&str>,
+    ) -> String {
+        let mut s = String::new();
+        if let Some(c) = comment {
+            s.push_str(c);
+        }
+        if values.is_empty() {
+            let _ = writeln!(s, "# {key} = []");
+        } else {
+            let items: Vec<String> = values.iter().map(formatter).collect();
+            let _ = writeln!(s, "{key} = [{}]", items.join(", "));
+        }
+        s
+    }
+
+    /// Format an optional string field as a TOML line (active or commented).
+    fn format_optional_str(key: &str, value: Option<&str>, hint: &str) -> String {
+        value.map_or_else(
+            || format!("# {key} = \"{hint}\"\n"),
+            |v| format!("{key} = \"{v}\"\n"),
+        )
+    }
+
+    /// Format an optional u32 field as a TOML line (active or commented).
+    fn format_optional_u32(key: &str, value: Option<u32>, hint: u32) -> String {
+        value.map_or_else(
+            || format!("# {key} = {hint}\n"),
+            |v| format!("{key} = {v}\n"),
+        )
+    }
+
+    /// Write entries sorted alphabetically by key.
+    fn write_sorted_entries(out: &mut String, entries: &mut [(&str, String)]) {
+        entries.sort_unstable_by_key(|(key, _)| *key);
+        for (_, line) in entries {
+            out.push_str(line);
         }
     }
 
     /// Write `[jlse.bins]` section with all binary paths.
     fn write_bins_active(out: &mut String, bins: &JlseBins, defaults: &JlseBins) {
         out.push_str("\n[jlse.bins]\n");
-        let entries: &[(&str, Option<&Path>, Option<&Path>)] = &[
+        let mut entries: Vec<(&str, String)> = vec![
             (
                 "chapter_exe",
-                bins.chapter_exe.as_deref(),
-                defaults.chapter_exe.as_deref(),
+                Self::format_optional_path(
+                    "chapter_exe",
+                    bins.chapter_exe.as_deref(),
+                    defaults.chapter_exe.as_deref(),
+                ),
             ),
-            ("ffmpeg", bins.ffmpeg.as_deref(), defaults.ffmpeg.as_deref()),
+            (
+                "ffmpeg",
+                Self::format_optional_path(
+                    "ffmpeg",
+                    bins.ffmpeg.as_deref(),
+                    defaults.ffmpeg.as_deref(),
+                ),
+            ),
             (
                 "ffprobe",
-                bins.ffprobe.as_deref(),
-                defaults.ffprobe.as_deref(),
+                Self::format_optional_path(
+                    "ffprobe",
+                    bins.ffprobe.as_deref(),
+                    defaults.ffprobe.as_deref(),
+                ),
             ),
             (
                 "join_logo_scp",
-                bins.join_logo_scp.as_deref(),
-                defaults.join_logo_scp.as_deref(),
+                Self::format_optional_path(
+                    "join_logo_scp",
+                    bins.join_logo_scp.as_deref(),
+                    defaults.join_logo_scp.as_deref(),
+                ),
             ),
             (
                 "logoframe",
-                bins.logoframe.as_deref(),
-                defaults.logoframe.as_deref(),
+                Self::format_optional_path(
+                    "logoframe",
+                    bins.logoframe.as_deref(),
+                    defaults.logoframe.as_deref(),
+                ),
             ),
             (
                 "tstables",
-                bins.tstables.as_deref(),
-                defaults.tstables.as_deref(),
+                Self::format_optional_path(
+                    "tstables",
+                    bins.tstables.as_deref(),
+                    defaults.tstables.as_deref(),
+                ),
             ),
         ];
-        for (key, value, hint) in entries {
-            Self::write_optional_path(out, key, *value, *hint);
-        }
-    }
-
-    /// Write an optional path field as active or commented-out line.
-    fn write_optional_path(out: &mut String, key: &str, value: Option<&Path>, hint: Option<&Path>) {
-        match value {
-            Some(p) => {
-                let _ = writeln!(out, "{key} = \"{}\"", p.display());
-            }
-            None => {
-                if let Some(h) = hint {
-                    let _ = writeln!(out, "# {key} = \"{}\"", h.display());
-                }
-            }
-        }
+        Self::write_sorted_entries(out, &mut entries);
     }
 }
 
@@ -532,7 +656,7 @@ mod tests {
         // Assert
         assert!(config.syoboi.channels.selected.is_empty());
         assert!(config.tmdb.language.is_none());
-        assert!(config.tmdb.api.api_key.is_none());
+        assert!(config.tmdb.api_key.is_none());
         assert_eq!(config.normalize.regex_history, default_regex_history());
         assert_eq!(config.normalize.regex_titles, default_regex_titles());
     }
@@ -549,9 +673,7 @@ mod tests {
             },
             tmdb: TmdbConfig {
                 language: Some(String::from("ja-JP")),
-                api: TmdbApiConfig {
-                    api_key: Some(String::from("test-key")),
-                },
+                api_key: Some(String::from("test-key")),
             },
             normalize: NormalizeConfig {
                 regex_history: vec![
@@ -601,6 +723,8 @@ mod tests {
                         flags: Some(String::from("+discardcorrupt+genpts")),
                         analyzeduration: Some(String::from("30M")),
                         probesize: Some(String::from("100M")),
+                        init_hw_device: None,
+                        filter_hw_device: None,
                         hwaccel: Some(String::from("qsv")),
                         hwaccel_output_format: Some(String::from("qsv")),
                         decoder: Some(String::from("mpeg2_qsv")),
@@ -639,6 +763,9 @@ mod tests {
         assert!(output.contains("# api_key = \"\""));
         assert!(output.contains(r"regex_history = ['\(.*\)$'"));
         assert!(output.contains(r"regex_titles = ['\s*\(第\d+(?:期|クール|シリーズ)\)'"));
+        // hw device init fields are commented out (None in default)
+        assert!(output.contains("# init_hw_device = \"qsv=hw\""));
+        assert!(output.contains("# filter_hw_device = \"hw\""));
         // hwaccel fields are commented out (None in default)
         assert!(output.contains("# hwaccel = \"qsv\""));
         assert!(output.contains("# hwaccel_output_format = \"qsv\""));
@@ -667,9 +794,7 @@ mod tests {
             },
             tmdb: TmdbConfig {
                 language: Some(String::from("en-US")),
-                api: TmdbApiConfig {
-                    api_key: Some(String::from("my-token")),
-                },
+                api_key: Some(String::from("my-token")),
             },
             normalize: NormalizeConfig {
                 regex_history: vec![String::from(r"第(?P<SeasonNum>\d+)期")],
@@ -736,7 +861,7 @@ mod tests {
         // Assert — channels preserved, language gets "ja-JP" from default output
         assert_eq!(loaded.syoboi.channels.selected, vec![1, 3, 7]);
         assert_eq!(loaded.tmdb.language, Some(String::from("ja-JP")));
-        assert!(loaded.tmdb.api.api_key.is_none());
+        assert!(loaded.tmdb.api_key.is_none());
     }
 
     #[test]

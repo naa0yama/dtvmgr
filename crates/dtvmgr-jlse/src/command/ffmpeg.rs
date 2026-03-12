@@ -176,13 +176,25 @@ impl JlseEncode {
     ///
     /// Generated order:
     /// 1. Global flags (`-hide_banner`, `-ignore_unknown`)
-    /// 2. Input flags (`-fflags`, `-analyzeduration`, `-probesize`)
-    /// 3. HW accel (`-hwaccel_output_format`, `-hwaccel`, `-c:v` decoder)
+    /// 2. HW device init (`-init_hw_device`, `-filter_hw_device`)
+    /// 3. Input flags (`-fflags`, `-analyzeduration`, `-probesize`)
+    /// 4. HW accel (`-hwaccel_output_format`, `-hwaccel`, `-c:v` decoder)
     #[must_use]
     pub fn to_input_args(&self) -> Vec<String> {
         let mut args = vec!["-hide_banner".to_owned(), "-ignore_unknown".to_owned()];
 
         if let Some(ref input) = self.input {
+            // HW device init (must precede input flags)
+            if let Some(ref hw) = input.init_hw_device {
+                args.push("-init_hw_device".to_owned());
+                args.push(hw.clone());
+            }
+            if let Some(ref hw) = input.filter_hw_device {
+                args.push("-filter_hw_device".to_owned());
+                args.push(hw.clone());
+            }
+
+            // Input flags
             if let Some(ref flags) = input.flags {
                 args.push("-fflags".to_owned());
                 args.push(flags.clone());
@@ -195,6 +207,8 @@ impl JlseEncode {
                 args.push("-probesize".to_owned());
                 args.push(size.clone());
             }
+
+            // HW accel
             if let Some(ref fmt) = input.hwaccel_output_format {
                 args.push("-hwaccel_output_format".to_owned());
                 args.push(fmt.clone());
@@ -713,6 +727,8 @@ mod tests {
                 flags: Some("+discardcorrupt+genpts".to_owned()),
                 analyzeduration: Some("30M".to_owned()),
                 probesize: Some("100M".to_owned()),
+                init_hw_device: None,
+                filter_hw_device: None,
                 hwaccel: Some("qsv".to_owned()),
                 hwaccel_output_format: Some("qsv".to_owned()),
                 decoder: Some("mpeg2_qsv".to_owned()),
@@ -760,6 +776,46 @@ mod tests {
         assert!(!args.contains(&"-hwaccel".to_owned()));
         assert!(!args.contains(&"-hwaccel_output_format".to_owned()));
         assert!(!args.contains(&"-c:v".to_owned()));
+    }
+
+    #[test]
+    fn test_to_input_args_with_hw_device_init() {
+        // Arrange — AVS (SW decode) + av1_qsv (HW encode) scenario
+        let encode = JlseEncode {
+            input: Some(EncodeInput {
+                flags: Some("+discardcorrupt+genpts".to_owned()),
+                analyzeduration: Some("30M".to_owned()),
+                probesize: Some("100M".to_owned()),
+                init_hw_device: Some("qsv=hw".to_owned()),
+                filter_hw_device: Some("hw".to_owned()),
+                hwaccel: None,
+                hwaccel_output_format: None,
+                decoder: None,
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_input_args();
+
+        // Assert — hw device init appears after global flags, before input flags
+        assert_eq!(
+            args,
+            vec![
+                "-hide_banner",
+                "-ignore_unknown",
+                "-init_hw_device",
+                "qsv=hw",
+                "-filter_hw_device",
+                "hw",
+                "-fflags",
+                "+discardcorrupt+genpts",
+                "-analyzeduration",
+                "30M",
+                "-probesize",
+                "100M",
+            ]
+        );
     }
 
     #[test]
