@@ -1506,16 +1506,16 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> R
 /// fails to build.
 #[instrument(skip_all)]
 fn build_tmdb_client(dir: Option<&PathBuf>) -> Result<TmdbClient> {
-    let api_token =
-        if let Ok(token) = std::env::var("TMDB_API_TOKEN") {
-            token
-        } else {
-            let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
-            let config = AppConfig::load(&config_path).context("failed to load config")?;
-            config.tmdb.api.api_key.context(
-                "TMDB_API_TOKEN env var is not set and tmdb.api.api_key is not configured",
-            )?
-        };
+    let api_token = if let Ok(token) = std::env::var("TMDB_API_TOKEN") {
+        token
+    } else {
+        let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+        let config = AppConfig::load(&config_path).context("failed to load config")?;
+        config
+            .tmdb
+            .api_key
+            .context("TMDB_API_TOKEN env var is not set and tmdb.api_key is not configured")?
+    };
 
     TmdbClient::builder()
         .api_token(api_token)
