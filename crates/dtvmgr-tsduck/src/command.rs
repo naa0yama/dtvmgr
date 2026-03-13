@@ -11,6 +11,39 @@ use anyhow::{Context, Result, bail};
 use tempfile::NamedTempFile;
 use tracing::debug;
 
+/// Set `PR_SET_PDEATHSIG` so the child receives `SIGTERM` when
+/// the parent process dies.
+///
+/// # Safety
+///
+/// Called after `fork()` / before `exec()`.
+/// `libc::prctl` is async-signal-safe.
+#[cfg(target_os = "linux")]
+fn set_pdeathsig() -> std::io::Result<()> {
+    // SAFETY: prctl(PR_SET_PDEATHSIG, sig) is async-signal-safe
+    // and only affects the calling (child) process.
+    let ret = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) };
+    if ret == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Register [`set_pdeathsig`] as a `pre_exec` hook on Linux.
+///
+/// On non-Linux platforms this is a no-op.
+pub fn apply_pdeathsig(cmd: &mut Command) {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt as _;
+        // SAFETY: set_pdeathsig calls only async-signal-safe libc::prctl.
+        unsafe {
+            cmd.pre_exec(set_pdeathsig);
+        }
+    }
+    let _ = cmd; // suppress unused warning on non-Linux
+}
+
 /// Spawn a command, inherit stdout/stderr, and check exit status.
 ///
 /// # Errors
@@ -20,8 +53,10 @@ use tracing::debug;
 fn run(program: &Path, args: &[&OsStr]) -> Result<()> {
     debug!(cmd = %program.display(), ?args, "running command");
 
-    let status = Command::new(program)
-        .args(args)
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    apply_pdeathsig(&mut cmd);
+    let status = cmd
         .status()
         .with_context(|| format!("failed to spawn {}", program.display()))?;
 
@@ -47,8 +82,10 @@ fn run(program: &Path, args: &[&OsStr]) -> Result<()> {
 fn run_capture(program: &Path, args: &[&OsStr]) -> Result<String> {
     debug!(cmd = %program.display(), ?args, "running command (capture)");
 
-    let output = Command::new(program)
-        .args(args)
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    apply_pdeathsig(&mut cmd);
+    let output = cmd
         .output()
         .with_context(|| format!("failed to spawn {}", program.display()))?;
 

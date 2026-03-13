@@ -15,6 +15,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
+use dtvmgr_tsduck::command::apply_pdeathsig;
 use tracing::debug;
 
 /// Spawn a command, inherit stdout/stderr, and check exit status.
@@ -26,8 +27,10 @@ use tracing::debug;
 pub fn run(program: &Path, args: &[&OsStr]) -> Result<()> {
     debug!(cmd = %program.display(), ?args, "running command");
 
-    let status = Command::new(program)
-        .args(args)
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    apply_pdeathsig(&mut cmd);
+    let status = cmd
         .status()
         .with_context(|| format!("failed to spawn {}", program.display()))?;
 
@@ -58,10 +61,10 @@ pub fn run(program: &Path, args: &[&OsStr]) -> Result<()> {
 pub fn run_logged(program: &Path, args: &[&OsStr], on_log: &dyn Fn(&str)) -> Result<()> {
     debug!(cmd = %program.display(), ?args, "running command (logged)");
 
-    let mut child = Command::new(program)
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+    let mut cmd = Command::new(program);
+    cmd.args(args).stdout(Stdio::null()).stderr(Stdio::piped());
+    apply_pdeathsig(&mut cmd);
+    let mut child = cmd
         .spawn()
         .with_context(|| format!("failed to spawn {}", program.display()))?;
 
@@ -100,8 +103,10 @@ pub fn run_logged(program: &Path, args: &[&OsStr], on_log: &dyn Fn(&str)) -> Res
 pub fn run_capture(program: &Path, args: &[&OsStr]) -> Result<String> {
     debug!(cmd = %program.display(), ?args, "running command (capture)");
 
-    let output = Command::new(program)
-        .args(args)
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    apply_pdeathsig(&mut cmd);
+    let output = cmd
         .output()
         .with_context(|| format!("failed to spawn {}", program.display()))?;
 
