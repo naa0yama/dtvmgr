@@ -24,6 +24,7 @@ repository = "https://github.com/naa0yama/dtvmgr"
 # Core
 anyhow = "1.0"
 chrono = "0.4"
+futures = "0.3"
 regex = "1"
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
 trait-variant = "0.1"
@@ -31,6 +32,7 @@ unicode-normalization = "0.1"
 
 # CLI / TUI
 clap = { version = "4.5.45", features = ["derive"] }
+clap_complete = "4.5"
 crossterm = "0.29"
 open = "5"
 ratatui = "0.30"
