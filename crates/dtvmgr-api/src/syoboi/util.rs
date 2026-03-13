@@ -426,4 +426,33 @@ mod tests {
         // Assert
         assert!(result.is_empty());
     }
+
+    // ── parse_sub_titles (additional) ────────────────────────────
+
+    #[test]
+    fn test_parse_sub_titles_invalid_lines_skipped() {
+        // Arrange: mix of valid and invalid lines
+        let raw = "garbage line\n*01*Valid Title\nnot a subtitle\n*02*Second";
+
+        // Act
+        let result = parse_sub_titles(raw);
+
+        // Assert: only valid lines parsed
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], (1, String::from("Valid Title")));
+        assert_eq!(result[1], (2, String::from("Second")));
+    }
+
+    #[test]
+    fn test_parse_sub_titles_empty_lines_skipped() {
+        // Arrange: blank lines mixed in
+        let raw = "\n  \n*01*Title\n\n";
+
+        // Act
+        let result = parse_sub_titles(raw);
+
+        // Assert
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], (1, String::from("Title")));
+    }
 }

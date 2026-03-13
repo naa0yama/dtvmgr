@@ -17,12 +17,29 @@ pub struct AppConfig {
     /// TMDB settings.
     #[serde(default)]
     pub tmdb: TmdbConfig,
+    /// `EPGStation` settings.
+    #[serde(default)]
+    pub epgstation: EpgStationConfig,
     /// Normalize viewer settings.
     #[serde(default)]
     pub normalize: NormalizeConfig,
     /// CM detection pipeline settings.
     #[serde(default)]
     pub jlse: Option<JlseConfig>,
+}
+
+/// `EPGStation` settings.
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct EpgStationConfig {
+    /// Base URL (e.g. `http://localhost:8888`).
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// Default sub-directory for encoded files.
+    #[serde(default)]
+    pub default_directory: Option<String>,
+    /// Default encode preset name (e.g. "H.264").
+    #[serde(default)]
+    pub default_preset: Option<String>,
 }
 
 /// Syoboi Calendar settings.
@@ -273,6 +290,27 @@ impl AppConfig {
         out.push_str(&Self::format_optional_str(
             "api_key",
             self.tmdb.api_key.as_deref(),
+            "",
+        ));
+
+        // [epgstation]
+        out.push_str("\n[epgstation]\n");
+        out.push_str("# Base URL (e.g. \"http://localhost:8888\").\n");
+        out.push_str(&Self::format_optional_str(
+            "base_url",
+            self.epgstation.base_url.as_deref(),
+            "http://localhost:8888",
+        ));
+        out.push_str("# Default sub-directory for encoded files.\n");
+        out.push_str(&Self::format_optional_str(
+            "default_directory",
+            self.epgstation.default_directory.as_deref(),
+            "",
+        ));
+        out.push_str("# Default encode preset name (e.g. \"H.264\").\n");
+        out.push_str(&Self::format_optional_str(
+            "default_preset",
+            self.epgstation.default_preset.as_deref(),
             "",
         ));
 
@@ -657,6 +695,9 @@ mod tests {
         assert!(config.syoboi.channels.selected.is_empty());
         assert!(config.tmdb.language.is_none());
         assert!(config.tmdb.api_key.is_none());
+        assert!(config.epgstation.base_url.is_none());
+        assert!(config.epgstation.default_directory.is_none());
+        assert!(config.epgstation.default_preset.is_none());
         assert_eq!(config.normalize.regex_history, default_regex_history());
         assert_eq!(config.normalize.regex_titles, default_regex_titles());
     }
@@ -675,6 +716,7 @@ mod tests {
                 language: Some(String::from("ja-JP")),
                 api_key: Some(String::from("test-key")),
             },
+            epgstation: EpgStationConfig::default(),
             normalize: NormalizeConfig {
                 regex_history: vec![
                     String::from(r"第(?P<SeasonNum>\d+)期"),
@@ -761,6 +803,9 @@ mod tests {
         assert!(output.contains("language = \"ja-JP\""));
         assert!(!output.contains("# language"));
         assert!(output.contains("# api_key = \"\""));
+        // EPGStation section defaults are commented out
+        assert!(output.contains("[epgstation]"));
+        assert!(output.contains("# base_url = \"http://localhost:8888\""));
         assert!(output.contains(r"regex_history = ['\(.*\)$'"));
         assert!(output.contains(r"regex_titles = ['\s*\(第\d+(?:期|クール|シリーズ)\)'"));
         // hw device init fields are commented out (None in default)
@@ -796,6 +841,7 @@ mod tests {
                 language: Some(String::from("en-US")),
                 api_key: Some(String::from("my-token")),
             },
+            epgstation: EpgStationConfig::default(),
             normalize: NormalizeConfig {
                 regex_history: vec![String::from(r"第(?P<SeasonNum>\d+)期")],
                 regex_titles: vec![String::from(r"第\d+期$"), String::from(r"\s*Season\s*\d+")],
@@ -962,5 +1008,73 @@ mod tests {
             parsed.jlse.as_ref().unwrap().encode,
             Some(JlseEncode::default())
         );
+    }
+
+    // ── format helpers ───────────────────────────────────────────
+
+    #[test]
+    fn test_format_optional_path_with_value() {
+        let result = AppConfig::format_optional_path(
+            "key",
+            Some(Path::new("/tmp/file")),
+            Some(Path::new("/hint")),
+        );
+        assert_eq!(result, "key = \"/tmp/file\"\n");
+    }
+
+    #[test]
+    fn test_format_optional_path_hint_only() {
+        let result = AppConfig::format_optional_path("key", None, Some(Path::new("/hint/path")));
+        assert_eq!(result, "# key = \"/hint/path\"\n");
+    }
+
+    #[test]
+    fn test_format_optional_path_none_none() {
+        let result = AppConfig::format_optional_path("key", None, None);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_format_optional_u32_with_value() {
+        let result = AppConfig::format_optional_u32("threads", Some(4), 8);
+        assert_eq!(result, "threads = 4\n");
+    }
+
+    #[test]
+    fn test_format_optional_u32_hint_only() {
+        let result = AppConfig::format_optional_u32("threads", None, 8);
+        assert_eq!(result, "# threads = 8\n");
+    }
+
+    #[test]
+    fn test_format_optional_str_with_value() {
+        let result = AppConfig::format_optional_str("name", Some("test"), "default");
+        assert_eq!(result, "name = \"test\"\n");
+    }
+
+    #[test]
+    fn test_format_optional_str_hint_only() {
+        let result = AppConfig::format_optional_str("name", None, "default");
+        assert_eq!(result, "# name = \"default\"\n");
+    }
+
+    #[test]
+    fn test_format_list_with_values() {
+        let result = AppConfig::format_list("items", &[1, 2, 3], ToString::to_string, None);
+        assert_eq!(result, "items = [1, 2, 3]\n");
+    }
+
+    #[test]
+    fn test_format_list_empty() {
+        let result = AppConfig::format_list::<i32>("items", &[], ToString::to_string, None);
+        assert_eq!(result, "# items = []\n");
+    }
+
+    #[test]
+    fn test_format_list_with_comment() {
+        let result =
+            AppConfig::format_list("items", &[1], ToString::to_string, Some("# comment\n"));
+        assert!(result.starts_with("# comment\n"));
+        assert!(result.contains("items = [1]"));
     }
 }

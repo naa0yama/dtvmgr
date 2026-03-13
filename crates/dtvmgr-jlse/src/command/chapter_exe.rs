@@ -159,6 +159,92 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    // ── run_logged ───────────────────────────────────────────
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_logged_success() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let output_file = dir.path().join("chapter_out.txt");
+        let avs_file = dir.path().join("input.avs");
+        std::fs::write(&avs_file, "dummy avs").unwrap();
+
+        let script = write_script(
+            dir.path(),
+            "fake_chapter_exe.sh",
+            &format!(
+                "#!/bin/sh\necho 'chapter data' > '{}'\necho log_line >&2\nexit 0",
+                output_file.display()
+            ),
+        );
+        let lines = std::cell::RefCell::new(Vec::new());
+
+        // Act
+        let result = run_logged(&script, &avs_file, &output_file, &|line| {
+            lines.borrow_mut().push(line.to_owned());
+        });
+
+        // Assert
+        assert!(result.is_ok());
+        assert_eq!(*lines.borrow(), vec!["log_line"]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_logged_crash_with_output_file() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let output_file = dir.path().join("chapter_out.txt");
+        let avs_file = dir.path().join("input.avs");
+        std::fs::write(&avs_file, "dummy avs").unwrap();
+
+        let script = write_script(
+            dir.path(),
+            "fake_chapter_exe.sh",
+            &format!(
+                "#!/bin/sh\necho 'chapter data' > '{}'\necho crash_log >&2\nexit 1",
+                output_file.display()
+            ),
+        );
+        let lines = std::cell::RefCell::new(Vec::new());
+
+        // Act — should succeed because output file exists after crash
+        let result = run_logged(&script, &avs_file, &output_file, &|line| {
+            lines.borrow_mut().push(line.to_owned());
+        });
+
+        // Assert
+        assert!(result.is_ok());
+        assert_eq!(*lines.borrow(), vec!["crash_log"]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_logged_crash_without_output_file() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let output_file = dir.path().join("chapter_out.txt");
+        let avs_file = dir.path().join("input.avs");
+        std::fs::write(&avs_file, "dummy avs").unwrap();
+
+        let script = write_script(
+            dir.path(),
+            "fake_chapter_exe.sh",
+            "#!/bin/sh\necho err >&2\nexit 1",
+        );
+        let lines = std::cell::RefCell::new(Vec::new());
+
+        // Act
+        let result = run_logged(&script, &avs_file, &output_file, &|line| {
+            lines.borrow_mut().push(line.to_owned());
+        });
+
+        // Assert — should fail since output doesn't exist
+        assert!(result.is_err());
+        assert_eq!(*lines.borrow(), vec!["err"]);
+    }
+
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_run_crash_without_output_file() {

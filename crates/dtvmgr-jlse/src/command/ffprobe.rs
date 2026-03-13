@@ -279,6 +279,103 @@ mod tests {
         assert!(parse_frame_rate("-1/1").is_err());
     }
 
+    // ── run via write_script ─────────────────────────────────
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_get_frame_rate_via_script() {
+        // Arrange: script that prints frame rate to stdout
+        let dir = tempfile::tempdir().unwrap();
+        let script = super::super::test_utils::write_script(
+            dir.path(),
+            "ffprobe.sh",
+            "#!/bin/sh\necho '30000/1001'",
+        );
+        let input = dir.path().join("video.ts");
+        std::fs::write(&input, "dummy").unwrap();
+
+        // Act
+        let rate = get_frame_rate(&script, &input).unwrap();
+
+        // Assert
+        assert_eq!(rate.numerator, 30000);
+        assert_eq!(rate.denominator, 1001);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_get_sample_rate_via_script() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script = super::super::test_utils::write_script(
+            dir.path(),
+            "ffprobe.sh",
+            "#!/bin/sh\necho '48000'",
+        );
+        let input = dir.path().join("video.ts");
+        std::fs::write(&input, "dummy").unwrap();
+
+        // Act
+        let rate = get_sample_rate(&script, &input).unwrap();
+
+        // Assert
+        assert_eq!(rate, Some(48000));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_get_sample_rate_empty_output() {
+        // Arrange: script outputs nothing (no audio stream)
+        let dir = tempfile::tempdir().unwrap();
+        let script =
+            super::super::test_utils::write_script(dir.path(), "ffprobe.sh", "#!/bin/sh\necho ''");
+        let input = dir.path().join("video.ts");
+        std::fs::write(&input, "dummy").unwrap();
+
+        // Act
+        let rate = get_sample_rate(&script, &input).unwrap();
+
+        // Assert
+        assert_eq!(rate, None);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_get_duration_via_script() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script = super::super::test_utils::write_script(
+            dir.path(),
+            "ffprobe.sh",
+            "#!/bin/sh\necho '1800.5'",
+        );
+        let input = dir.path().join("video.ts");
+        std::fs::write(&input, "dummy").unwrap();
+
+        // Act
+        let dur = get_duration(&script, &input).unwrap();
+
+        // Assert
+        assert!((dur - 1800.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_get_frame_rate_failure() {
+        // Arrange: script exits with error
+        let dir = tempfile::tempdir().unwrap();
+        let script =
+            super::super::test_utils::write_script(dir.path(), "ffprobe.sh", "#!/bin/sh\nexit 1");
+        let input = dir.path().join("video.ts");
+        std::fs::write(&input, "dummy").unwrap();
+
+        // Act
+        let result = get_frame_rate(&script, &input);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
     #[test]
     fn test_build_duration_args() {
         // Arrange

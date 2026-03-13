@@ -9,6 +9,8 @@ mod connection;
 mod migrations;
 /// Program cache CRUD operations.
 pub mod programs;
+/// EPGStation recorded items cache CRUD operations.
+pub mod recorded;
 /// Title cache CRUD operations.
 pub mod titles;
 
@@ -18,6 +20,10 @@ pub use channels::{load_channel_groups, load_channels, upsert_channel_groups, up
 pub use connection::open_db;
 pub use programs::{
     delete_programs_by_tids_not_in, load_programs, load_programs_by_tids, upsert_programs,
+};
+pub use recorded::{
+    delete_recorded_items_not_in, get_newest_start_at, invalidate_file_exists, load_recorded_items,
+    load_recorded_items_page, update_file_exists, upsert_recorded_items,
 };
 pub use rusqlite::Connection;
 pub use titles::{

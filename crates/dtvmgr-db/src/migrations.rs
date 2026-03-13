@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 6;
+const CURRENT_VERSION: u32 = 7;
 
 /// Runs database migrations up to `CURRENT_VERSION`.
 ///
@@ -33,6 +33,9 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
     }
     if version < 6 {
         migrate_v6(conn).context("migration to v6 failed")?;
+    }
+    if version < 7 {
+        migrate_v7(conn).context("migration to v7 failed")?;
     }
 
     conn.pragma_update(None, "user_version", CURRENT_VERSION)
@@ -144,6 +147,47 @@ fn migrate_v5(conn: &Connection) -> Result<()> {
 fn migrate_v6(conn: &Connection) -> Result<()> {
     conn.execute_batch("ALTER TABLE titles ADD COLUMN tmdb_season_id INTEGER;")
         .context("failed to add tmdb_season_id column")?;
+
+    Ok(())
+}
+
+/// Migration to v7: create `EPGStation` recorded items and video files cache tables.
+fn migrate_v7(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS epg_recorded_items (
+            id              INTEGER PRIMARY KEY,
+            channel_id      INTEGER NOT NULL,
+            name            TEXT NOT NULL,
+            description     TEXT,
+            extended        TEXT,
+            start_at        INTEGER NOT NULL,
+            end_at          INTEGER NOT NULL,
+            is_recording    INTEGER NOT NULL DEFAULT 0,
+            is_encoding     INTEGER NOT NULL DEFAULT 0,
+            is_protected    INTEGER NOT NULL DEFAULT 0,
+            video_resolution TEXT,
+            video_type      TEXT,
+            drop_cnt        INTEGER NOT NULL DEFAULT 0,
+            error_cnt       INTEGER NOT NULL DEFAULT 0,
+            scrambling_cnt  INTEGER NOT NULL DEFAULT 0,
+            fetched_at      TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS epg_video_files (
+            id              INTEGER PRIMARY KEY,
+            recorded_id     INTEGER NOT NULL REFERENCES epg_recorded_items(id) ON DELETE CASCADE,
+            name            TEXT NOT NULL,
+            filename        TEXT,
+            file_type       TEXT NOT NULL,
+            size            INTEGER NOT NULL DEFAULT 0,
+            file_exists     INTEGER,
+            file_checked_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_epg_recorded_start_at ON epg_recorded_items(start_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_epg_video_files_recorded_id ON epg_video_files(recorded_id);",
+    )
+    .context("failed to create EPGStation cache tables")?;
 
     Ok(())
 }
@@ -301,6 +345,52 @@ mod tests {
             .prepare("SELECT tmdb_last_updated FROM titles LIMIT 0")
             .unwrap();
         assert_eq!(stmt.column_count(), 1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_v6_to_v7_migration() {
+        // Arrange: start from v6
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_v1(&conn).unwrap();
+        migrate_v2(&conn).unwrap();
+        migrate_v3(&conn).unwrap();
+        migrate_v4(&conn).unwrap();
+        migrate_v5(&conn).unwrap();
+        migrate_v6(&conn).unwrap();
+        conn.pragma_update(None, "user_version", 6u32).unwrap();
+
+        // Act: run full migrations (should apply v7)
+        run_migrations(&conn).unwrap();
+
+        // Assert
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_VERSION);
+
+        // Verify tables exist
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            .unwrap();
+        let tables: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert!(tables.contains(&String::from("epg_recorded_items")));
+        assert!(tables.contains(&String::from("epg_video_files")));
+
+        // Verify columns exist
+        let stmt = conn
+            .prepare("SELECT id, channel_id, name, fetched_at FROM epg_recorded_items LIMIT 0")
+            .unwrap();
+        assert_eq!(stmt.column_count(), 4);
+
+        let stmt = conn
+            .prepare("SELECT id, recorded_id, file_type, file_exists, file_checked_at FROM epg_video_files LIMIT 0")
+            .unwrap();
+        assert_eq!(stmt.column_count(), 5);
     }
 
     #[test]

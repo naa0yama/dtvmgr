@@ -626,4 +626,186 @@ mod tests {
         assert_eq!(channels[0].service_id, "101");
         assert_eq!(channels[1].short, "BS11");
     }
+
+    // ── match_by_channel_name additional branches ──────────────
+
+    #[test]
+    fn test_detect_by_name_service_id() {
+        // Arrange: channel_name starts with service_id
+        let channels = sample_channels();
+
+        // Act — service_id prefix match (line 166-167)
+        let result = detect_channel(&channels, "something.ts", Some("1024 NHK"));
+
+        // Assert
+        assert_eq!(result.unwrap().short, "NHK-G");
+    }
+
+    #[test]
+    fn test_detect_by_name_recognize_with_isolated_digit() {
+        // Arrange: after removing isolated digits, recognize matches
+        let channels = sample_channels();
+
+        // Act — "TOKYO3 MX" → remove_isolated_digits → "TOKYO MX" → starts_with "TOKYO MX"
+        let result = detect_channel(&channels, "something.ts", Some("TOKYO3 MX"));
+
+        // Assert
+        assert_eq!(result.unwrap().short, "MX");
+    }
+
+    // ── filename detection additional branches ────────────────
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_detect_by_filename_short_space_sep() {
+        // Arrange: short code after space, followed by close bracket char (priority 3)
+        let channels = sample_channels();
+
+        // Act
+        let result = detect_channel(&channels, "番組名 BS11]第1話.ts", None);
+
+        // Assert
+        assert_eq!(result.unwrap().short, "BS11");
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_detect_by_filename_service_id_space_sep() {
+        // Arrange: service_id after space, followed by close bracket char (priority 3)
+        let channels = sample_channels();
+
+        // Act
+        let result = detect_channel(&channels, "番組名 211]第1話.ts", None);
+
+        // Assert
+        assert_eq!(result.unwrap().short, "BS11");
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_detect_by_filename_recognize_after_underscore() {
+        // Arrange: recognize after underscore (priority 4)
+        let channels = sample_channels();
+
+        // Act
+        let result = detect_channel(&channels, "番組名_TOKYO MX.ts", None);
+
+        // Assert
+        assert_eq!(result.unwrap().short, "MX");
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_detect_by_filename_service_id_at_start() {
+        // Arrange: service_id at start followed by space (priority 1)
+        let channels = sample_channels();
+
+        // Act
+        let result = detect_channel(&channels, "1024 番組名.ts", None);
+
+        // Assert
+        assert_eq!(result.unwrap().short, "NHK-G");
+    }
+
+    // ── load_channels edge cases ───────────────────────────────
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_load_channels_skips_short_records() {
+        // Arrange: CSV with a header + lines, one of which has fewer than 4 fields
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("ChList.csv");
+        std::fs::write(
+            &csv_path,
+            "recognize,install,short,service_id\n\
+             ＮＨＫ総合,,NHK-G,1024\n\
+             Too,Few,Fields\n\
+             ＢＳ１１イレブン,,BS11,211\n",
+        )
+        .unwrap();
+
+        // Act
+        let channels = load_channels(&csv_path).unwrap();
+
+        // Assert — short record skipped
+        assert_eq!(channels.len(), 2);
+        assert_eq!(channels[0].short, "NHK-G");
+        assert_eq!(channels[1].short, "BS11");
+    }
+
+    // ── try_regex_match error path ───────────────────────────
+
+    #[test]
+    fn test_try_regex_match_invalid_pattern() {
+        // Arrange: invalid regex pattern
+        let result = try_regex_match("test", "[invalid");
+
+        // Assert — returns false on compilation error
+        assert!(!result);
+    }
+
+    // ── bracket_class ────────────────────────────────────────────
+
+    #[test]
+    fn test_bracket_class_simple() {
+        // Parentheses don't need escaping
+        let result = bracket_class("(");
+        assert_eq!(result, "[(]");
+    }
+
+    #[test]
+    fn test_bracket_class_escapes_bracket() {
+        // [ and ] need escaping
+        let result = bracket_class("[");
+        assert_eq!(result, "[\\[]");
+    }
+
+    #[test]
+    fn test_bracket_class_escapes_close_bracket() {
+        let result = bracket_class("]");
+        assert_eq!(result, "[\\]]");
+    }
+
+    #[test]
+    fn test_bracket_class_escapes_backslash() {
+        let result = bracket_class("\\");
+        assert_eq!(result, "[\\\\]");
+    }
+
+    #[test]
+    fn test_bracket_class_mixed() {
+        // Multiple chars including ones that need escaping
+        let result = bracket_class("([");
+        assert_eq!(result, "[(\\[]");
+    }
+
+    #[test]
+    fn test_bracket_class_open_brackets_const() {
+        // Verify the actual OPEN_BRACKETS constant produces valid regex
+        let result = bracket_class(OPEN_BRACKETS);
+        assert!(regex::Regex::new(&result).is_ok());
+    }
+
+    // ── remove_isolated_digits ───────────────────────────────────
+
+    #[test]
+    fn test_remove_isolated_digits_keeps_adjacent() {
+        assert_eq!(remove_isolated_digits("test12"), "test12");
+    }
+
+    #[test]
+    fn test_remove_isolated_digits_removes_isolated() {
+        assert_eq!(remove_isolated_digits("NHK1テレビ"), "NHKテレビ");
+    }
+
+    #[test]
+    fn test_remove_isolated_digits_keeps_end() {
+        // Digits at end are kept
+        assert_eq!(remove_isolated_digits("BS1"), "BS1");
+    }
+
+    #[test]
+    fn test_remove_isolated_digits_no_digits() {
+        assert_eq!(remove_isolated_digits("NHK"), "NHK");
+    }
 }

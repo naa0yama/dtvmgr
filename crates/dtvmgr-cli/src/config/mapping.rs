@@ -423,6 +423,68 @@ tmdb_series_id = 67890
     }
 
     #[test]
+    fn test_build_index_empty() {
+        // Arrange
+        let mapping = MappingFile {
+            mappings: Vec::new(),
+        };
+
+        // Act
+        let index = mapping.build_index();
+
+        // Assert
+        assert!(index.is_empty());
+    }
+
+    #[test]
+    fn test_remove_excluded_all_entries() {
+        // Arrange
+        let mut mapping = MappingFile {
+            mappings: vec![
+                MappingEntry {
+                    tid: 100,
+                    name: "A".to_owned(),
+                    tmdb_series_id: 1,
+                    tmdb_season_number: None,
+                    tmdb_season_id: 0,
+                },
+                MappingEntry {
+                    tid: 200,
+                    name: "B".to_owned(),
+                    tmdb_series_id: 2,
+                    tmdb_season_number: None,
+                    tmdb_season_id: 0,
+                },
+            ],
+        };
+
+        // Act
+        mapping.remove_excluded(&HashSet::from([100, 200]));
+
+        // Assert
+        assert!(mapping.mappings.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_load_invalid_toml() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.toml");
+        std::fs::write(&path, "this is not valid toml {{{{").unwrap();
+
+        // Act
+        let result = MappingFile::load(&path);
+
+        // Assert
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("failed to parse"),
+            "expected 'failed to parse' in: {err}"
+        );
+    }
+
+    #[test]
     fn test_remove_excluded_empty_set() {
         // Arrange
         let mut mapping = MappingFile {

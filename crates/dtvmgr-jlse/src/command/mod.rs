@@ -252,4 +252,65 @@ mod tests {
             "expected 'failed to spawn' in: {err}"
         );
     }
+
+    // ── run_logged ───────────────────────────────────────────────
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_logged_success_captures_stderr() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script = write_script(
+            dir.path(),
+            "logged.sh",
+            "#!/bin/sh\necho line1 >&2\necho line2 >&2\nexit 0\n",
+        );
+        let lines = std::cell::RefCell::new(Vec::new());
+
+        // Act
+        let result = run_logged(&script, &[], &|line| {
+            lines.borrow_mut().push(line.to_owned());
+        });
+
+        // Assert
+        assert!(result.is_ok());
+        assert_eq!(*lines.borrow(), vec!["line1", "line2"]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_logged_failure() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script = write_script(
+            dir.path(),
+            "fail_logged.sh",
+            "#!/bin/sh\necho err >&2\nexit 7\n",
+        );
+        let lines = std::cell::RefCell::new(Vec::new());
+
+        // Act
+        let result = run_logged(&script, &[], &|line| {
+            lines.borrow_mut().push(line.to_owned());
+        });
+
+        // Assert
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains('7'), "expected exit code 7 in: {err}");
+        assert_eq!(*lines.borrow(), vec!["err"]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_logged_nonexistent() {
+        // Act
+        let result = run_logged(Path::new("/nonexistent/binary"), &[], &|_| {});
+
+        // Assert
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("failed to spawn"),
+            "expected 'failed to spawn' in: {err}"
+        );
+    }
 }

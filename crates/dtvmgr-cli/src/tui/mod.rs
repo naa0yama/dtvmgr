@@ -3,6 +3,10 @@
 //! Uses `ratatui` + `crossterm` for rendering.
 
 mod channel_selector;
+/// Encode selector TUI.
+pub mod encode_selector;
+/// Shared formatting utilities.
+pub mod fmt;
 /// Normalize viewer TUI.
 pub mod normalize_viewer;
 /// Progress viewer TUI.

@@ -963,6 +963,99 @@ mod tests {
         assert!(output_args.contains(&"4".to_owned()));
     }
 
+    // ── build_encode_args ────────────────────────────────────
+
+    #[test]
+    fn test_build_encode_args_none_none() {
+        // Arrange & Act
+        let (input_args, output_args) = JlseEncode::build_encode_args(None, None);
+
+        // Assert — both empty when no encode config and no CLI opts
+        assert!(input_args.is_empty());
+        assert!(output_args.is_empty());
+    }
+
+    #[test]
+    fn test_build_encode_args_none_with_cli_opts() {
+        // Arrange & Act
+        let (input_args, output_args) =
+            JlseEncode::build_encode_args(None, Some("-c:v libx264 -crf 23"));
+
+        // Assert — input empty, output has CLI opts only
+        assert!(input_args.is_empty());
+        assert_eq!(output_args, vec!["-c:v", "libx264", "-crf", "23"]);
+    }
+
+    #[test]
+    fn test_build_encode_args_some_with_no_cli_opts() {
+        // Arrange
+        let encode = JlseEncode {
+            video: Some(EncodeVideo {
+                codec: Some("hevc_qsv".to_owned()),
+                ..EncodeVideo::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let (input_args, output_args) = JlseEncode::build_encode_args(Some(&encode), None);
+
+        // Assert — input has global flags, output has video codec, no extra CLI opts
+        assert!(input_args.contains(&"-hide_banner".to_owned()));
+        assert!(output_args.contains(&"-c:v".to_owned()));
+        assert!(output_args.contains(&"hevc_qsv".to_owned()));
+    }
+
+    // ── to_output_args edge cases ─────────────────────────────
+
+    #[test]
+    fn test_to_output_args_video_no_settings() {
+        // Arrange — video section exists but all fields are None/empty
+        let encode = JlseEncode {
+            video: Some(EncodeVideo {
+                codec: None,
+                preset: None,
+                profile: None,
+                pix_fmt: None,
+                aspect: None,
+                filter: None,
+                extra: vec![],
+            }),
+            audio: None,
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert — no -map 0:v because has_settings is false
+        assert!(!args.contains(&"-map".to_owned()));
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn test_to_output_args_audio_no_settings() {
+        // Arrange — audio section exists but all fields are None/empty
+        let encode = JlseEncode {
+            video: None,
+            audio: Some(EncodeAudio {
+                codec: None,
+                sample_rate: None,
+                bitrate: None,
+                channels: None,
+                extra: vec![],
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert — no -map 0:a because has_settings is false
+        assert!(!args.contains(&"-map".to_owned()));
+        assert!(args.is_empty());
+    }
+
     // ── stream specifier auto-append ────────────────────────
 
     #[test]
