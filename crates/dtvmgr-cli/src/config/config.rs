@@ -1009,4 +1009,72 @@ mod tests {
             Some(JlseEncode::default())
         );
     }
+
+    // ── format helpers ───────────────────────────────────────────
+
+    #[test]
+    fn test_format_optional_path_with_value() {
+        let result = AppConfig::format_optional_path(
+            "key",
+            Some(Path::new("/tmp/file")),
+            Some(Path::new("/hint")),
+        );
+        assert_eq!(result, "key = \"/tmp/file\"\n");
+    }
+
+    #[test]
+    fn test_format_optional_path_hint_only() {
+        let result = AppConfig::format_optional_path("key", None, Some(Path::new("/hint/path")));
+        assert_eq!(result, "# key = \"/hint/path\"\n");
+    }
+
+    #[test]
+    fn test_format_optional_path_none_none() {
+        let result = AppConfig::format_optional_path("key", None, None);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_format_optional_u32_with_value() {
+        let result = AppConfig::format_optional_u32("threads", Some(4), 8);
+        assert_eq!(result, "threads = 4\n");
+    }
+
+    #[test]
+    fn test_format_optional_u32_hint_only() {
+        let result = AppConfig::format_optional_u32("threads", None, 8);
+        assert_eq!(result, "# threads = 8\n");
+    }
+
+    #[test]
+    fn test_format_optional_str_with_value() {
+        let result = AppConfig::format_optional_str("name", Some("test"), "default");
+        assert_eq!(result, "name = \"test\"\n");
+    }
+
+    #[test]
+    fn test_format_optional_str_hint_only() {
+        let result = AppConfig::format_optional_str("name", None, "default");
+        assert_eq!(result, "# name = \"default\"\n");
+    }
+
+    #[test]
+    fn test_format_list_with_values() {
+        let result = AppConfig::format_list("items", &[1, 2, 3], ToString::to_string, None);
+        assert_eq!(result, "items = [1, 2, 3]\n");
+    }
+
+    #[test]
+    fn test_format_list_empty() {
+        let result = AppConfig::format_list::<i32>("items", &[], ToString::to_string, None);
+        assert_eq!(result, "# items = []\n");
+    }
+
+    #[test]
+    fn test_format_list_with_comment() {
+        let result =
+            AppConfig::format_list("items", &[1], ToString::to_string, Some("# comment\n"));
+        assert!(result.starts_with("# comment\n"));
+        assert!(result.contains("items = [1]"));
+    }
 }

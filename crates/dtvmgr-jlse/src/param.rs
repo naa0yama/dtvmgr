@@ -417,4 +417,55 @@ mod tests {
         assert_eq!(params[1].channel, "NHK-G");
         assert_eq!(params[1].jl_run, "JL_NHK.txt");
     }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_load_params_skips_short_records() {
+        // Arrange: CSV with a short record (< 3 columns)
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("ChParamJL1.csv");
+        std::fs::write(
+            &csv_path,
+            "放送局略称,タイトル,JL_RUN,FLAGS,OPTIONS,#コメント表示用,#コメント\n\
+             ,,JL_standard.txt,@,@,,default\n\
+             Short,Only\n\
+             NHK-G,,JL_NHK.txt,,,NHK settings,\n",
+        )
+        .unwrap();
+
+        // Act
+        let params = load_params(&csv_path).unwrap();
+
+        // Assert — short record skipped
+        assert_eq!(params.len(), 2);
+    }
+
+    // ── match_title edge cases ─────────────────────────────
+
+    #[test]
+    fn test_match_title_invalid_regex() {
+        // Arrange: title contains regex metachar but is invalid regex
+        let result = match_title("test_file.ts", "[invalid(regex");
+
+        // Assert — returns false on regex compilation error
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_match_title_substring() {
+        // Arrange: title without regex metachar → substring match
+        let result = match_title("特別番組テスト.ts", "番組テスト");
+
+        // Assert
+        assert!(result);
+    }
+
+    #[test]
+    fn test_match_title_substring_no_match() {
+        // Arrange: title without regex metachar → no substring match
+        let result = match_title("別の番組.ts", "特別番組");
+
+        // Assert
+        assert!(!result);
+    }
 }

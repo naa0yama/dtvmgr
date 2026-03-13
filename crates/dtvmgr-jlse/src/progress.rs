@@ -340,6 +340,53 @@ mod tests {
         assert!(parse_ffmpeg_progress(line, -1.0).is_none());
     }
 
+    #[test]
+    fn test_parse_ffmpeg_progress_no_speed() {
+        // Arrange — time present but no speed= field
+        let line = "frame=  120 fps= 30.0 time=00:05:00.00";
+        let duration = 600.0;
+
+        // Act
+        let progress = parse_ffmpeg_progress(line, duration).unwrap();
+
+        // Assert — no ETA since no speed, but fps is present
+        assert!((progress.percent - 0.5).abs() < 0.001);
+        assert!(progress.log.contains("fps=30.0/s"));
+        assert!(!progress.log.contains("ETA:"));
+    }
+
+    #[test]
+    fn test_parse_ffmpeg_progress_done_remaining_zero() {
+        // Arrange — current >= duration, remaining <= 0
+        let line = "frame= 3600 fps= 60 time=00:10:00.00 speed=1.0x";
+        let duration = 600.0; // 10 minutes
+
+        // Act
+        let progress = parse_ffmpeg_progress(line, duration).unwrap();
+
+        // Assert — ETA: 00:00:00 when remaining <= 0
+        assert!(progress.log.contains("ETA: 00:00:00"));
+    }
+
+    #[test]
+    fn test_parse_mute_frame_empty_after_colon() {
+        // Arrange — colon present but no digit after it
+        assert_eq!(parse_mute_frame("mute 1: "), None);
+    }
+
+    #[test]
+    fn test_parse_logoframe_checking_invalid_numbers() {
+        // Arrange — current/total are not valid u32
+        assert_eq!(parse_logoframe_checking("checking abc/def ended."), None);
+    }
+
+    #[test]
+    fn test_extract_field_empty_value() {
+        // Arrange — key present but value is empty (end of string)
+        let line = "time=";
+        assert_eq!(extract_field(line, "time="), None);
+    }
+
     // ── emit_epgstation ─────────────────────────────────────
 
     #[test]

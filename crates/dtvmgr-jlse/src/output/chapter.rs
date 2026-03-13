@@ -1170,4 +1170,180 @@ mod tests {
         assert!(!content.contains("title=B")); // deduped
         assert!(content.contains("title=C"));
     }
+
+    // ── classify_by_duration (additional) ────────────────────────
+
+    #[test]
+    fn test_classify_by_duration_boundary_15_sec() {
+        // 15 sec → Normal (boundary: >= 15 is Normal)
+        // 15 sec = 450 frames at 30fps
+        assert_eq!(classify_by_duration(0, 450), ChapterType::Normal);
+    }
+
+    #[test]
+    fn test_classify_by_duration_boundary_14_sec() {
+        // 14 sec → Ambiguous (< 15)
+        assert_eq!(classify_by_duration(0, 420), ChapterType::Ambiguous);
+    }
+
+    // ── classify_by_comment (additional) ─────────────────────────
+
+    #[test]
+    fn test_classify_by_comment_trailer_with_cut() {
+        assert_eq!(classify_by_comment("Trailer cut", 30), ChapterType::Normal);
+    }
+
+    #[test]
+    fn test_classify_by_comment_trailer_without_cut() {
+        assert_eq!(classify_by_comment("Trailer", 30), ChapterType::Standalone);
+    }
+
+    #[test]
+    fn test_classify_by_comment_sponsor() {
+        assert_eq!(
+            classify_by_comment("Sponsor", 30),
+            ChapterType::AmbiguousStandalone
+        );
+    }
+
+    #[test]
+    fn test_classify_by_comment_endcard() {
+        assert_eq!(
+            classify_by_comment("Endcard", 30),
+            ChapterType::AmbiguousStandalone
+        );
+    }
+
+    #[test]
+    fn test_classify_by_comment_edge() {
+        assert_eq!(
+            classify_by_comment("Edge", 30),
+            ChapterType::AmbiguousStandalone
+        );
+    }
+
+    #[test]
+    fn test_classify_by_comment_border() {
+        assert_eq!(
+            classify_by_comment("Border", 30),
+            ChapterType::AmbiguousStandalone
+        );
+    }
+
+    #[test]
+    fn test_classify_by_comment_cm() {
+        assert_eq!(classify_by_comment("CM", 30), ChapterType::Cm);
+    }
+
+    #[test]
+    fn test_classify_by_comment_duration_60() {
+        assert_eq!(classify_by_comment("unknown", 60), ChapterType::Standalone);
+    }
+
+    #[test]
+    fn test_classify_by_comment_duration_short() {
+        assert_eq!(classify_by_comment("unknown", 5), ChapterType::Ambiguous);
+    }
+
+    #[test]
+    fn test_classify_by_comment_duration_normal() {
+        assert_eq!(classify_by_comment("unknown", 30), ChapterType::Normal);
+    }
+
+    // ── chapter_name (additional) ────────────────────────────────
+
+    #[test]
+    fn test_chapter_name_cut_ambiguous() {
+        assert_eq!(chapter_name(true, ChapterType::Ambiguous, 0, 10), "X");
+    }
+
+    #[test]
+    fn test_chapter_name_cut_ambiguous_standalone() {
+        assert_eq!(
+            chapter_name(true, ChapterType::AmbiguousStandalone, 0, 90),
+            "X90Sec"
+        );
+    }
+
+    #[test]
+    fn test_chapter_name_noncut_standalone() {
+        assert_eq!(
+            chapter_name(false, ChapterType::Standalone, 0, 60),
+            "A60Sec"
+        );
+    }
+
+    #[test]
+    fn test_chapter_name_noncut_normal() {
+        assert_eq!(chapter_name(false, ChapterType::Normal, 0, 30), "A");
+    }
+
+    #[test]
+    fn test_chapter_name_noncut_normal_part1() {
+        assert_eq!(chapter_name(false, ChapterType::Normal, 1, 30), "B");
+    }
+
+    // ── update_part_non_cut / update_part_cut ────────────────────
+
+    #[test]
+    fn test_update_part_non_cut_ambiguous_sets_one() {
+        let mut b = 0;
+        update_part_non_cut(&mut b, ChapterType::Ambiguous);
+        assert_eq!(b, 1);
+    }
+
+    #[test]
+    fn test_update_part_non_cut_ambiguous_no_overwrite() {
+        let mut b = 2;
+        update_part_non_cut(&mut b, ChapterType::Ambiguous);
+        assert_eq!(b, 2); // does not overwrite when already > 0
+    }
+
+    #[test]
+    fn test_update_part_non_cut_ambiguous_standalone_sets_one() {
+        let mut b = 0;
+        update_part_non_cut(&mut b, ChapterType::AmbiguousStandalone);
+        assert_eq!(b, 1);
+    }
+
+    #[test]
+    fn test_update_part_non_cut_normal_sets_two() {
+        let mut b = 0;
+        update_part_non_cut(&mut b, ChapterType::Normal);
+        assert_eq!(b, 2);
+    }
+
+    #[test]
+    fn test_update_part_non_cut_empty_noop() {
+        let mut b = 0;
+        update_part_non_cut(&mut b, ChapterType::Empty);
+        assert_eq!(b, 0);
+    }
+
+    #[test]
+    fn test_update_part_cut_increments_when_active() {
+        let mut b = 1;
+        let mut n = 0;
+        update_part_cut(&mut b, &mut n, ChapterType::Normal);
+        assert_eq!(n, 1);
+        assert_eq!(b, 0);
+    }
+
+    #[test]
+    fn test_update_part_cut_noop_when_zero() {
+        let mut b = 0;
+        let mut n = 0;
+        update_part_cut(&mut b, &mut n, ChapterType::Normal);
+        assert_eq!(n, 0);
+        assert_eq!(b, 0);
+    }
+
+    #[test]
+    fn test_update_part_cut_noop_when_empty_type() {
+        let mut b = 1;
+        let mut n = 0;
+        update_part_cut(&mut b, &mut n, ChapterType::Empty);
+        assert_eq!(n, 0);
+        assert_eq!(b, 1);
+    }
 }

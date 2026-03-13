@@ -43,3 +43,56 @@ impl ProgressViewerState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+
+    use super::*;
+
+    #[test]
+    fn push_log_single_line() {
+        // Arrange
+        let mut state = ProgressViewerState::new();
+
+        // Act
+        state.push_log(String::from("line 1"));
+
+        // Assert
+        assert_eq!(state.logs.len(), 1);
+        assert_eq!(state.logs[0], "line 1");
+    }
+
+    #[test]
+    fn push_log_fills_to_max() {
+        // Arrange
+        let mut state = ProgressViewerState::new();
+
+        // Act
+        for i in 0..MAX_LOG_LINES {
+            state.push_log(format!("line {i}"));
+        }
+
+        // Assert
+        assert_eq!(state.logs.len(), MAX_LOG_LINES);
+        assert_eq!(state.logs[0], "line 0");
+        assert_eq!(state.logs[MAX_LOG_LINES - 1], "line 499");
+    }
+
+    #[test]
+    fn push_log_drops_oldest_on_overflow() {
+        // Arrange
+        let mut state = ProgressViewerState::new();
+        for i in 0..MAX_LOG_LINES {
+            state.push_log(format!("line {i}"));
+        }
+
+        // Act: push one more line
+        state.push_log(String::from("overflow"));
+
+        // Assert: oldest dropped, newest at end
+        assert_eq!(state.logs.len(), MAX_LOG_LINES);
+        assert_eq!(state.logs[0], "line 1");
+        assert_eq!(state.logs[MAX_LOG_LINES - 1], "overflow");
+    }
+}

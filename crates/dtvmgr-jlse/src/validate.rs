@@ -328,6 +328,52 @@ mod tests {
 
     // ── No matching rule (gap between 10 and 11 min) ─────────
 
+    // ── check_pre_encode_duration via write_script ──────────
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_check_pre_encode_duration_passes() {
+        // Arrange: fake ffprobe returning durations
+        let dir = tempfile::tempdir().unwrap();
+        // Script returns different values per invocation: first 1800 (TS), then 1440 (AVS = 80%)
+        let script = crate::command::test_utils::write_script(
+            dir.path(),
+            "ffprobe.sh",
+            "#!/bin/sh\nif [ -f /tmp/dtvmgr_test_second_call ]; then echo '1440.0'; rm /tmp/dtvmgr_test_second_call; else echo '1800.0'; touch /tmp/dtvmgr_test_second_call; fi",
+        );
+        let ts_file = dir.path().join("input.ts");
+        let avs_file = dir.path().join("input.avs");
+        std::fs::write(&ts_file, "dummy").unwrap();
+        std::fs::write(&avs_file, "dummy").unwrap();
+
+        // Act
+        let result = check_pre_encode_duration(&script, &ts_file, &avs_file, None);
+
+        // Assert — should pass (80% > 75% for ~30min)
+        assert!(result.is_ok());
+        // Cleanup
+        let _ = std::fs::remove_file("/tmp/dtvmgr_test_second_call");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_check_pre_encode_duration_ffprobe_fails() {
+        // Arrange: fake ffprobe that fails
+        let dir = tempfile::tempdir().unwrap();
+        let script =
+            crate::command::test_utils::write_script(dir.path(), "ffprobe.sh", "#!/bin/sh\nexit 1");
+        let ts_file = dir.path().join("input.ts");
+        let avs_file = dir.path().join("input.avs");
+        std::fs::write(&ts_file, "dummy").unwrap();
+        std::fs::write(&avs_file, "dummy").unwrap();
+
+        // Act
+        let result = check_pre_encode_duration(&script, &ts_file, &avs_file, None);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
     #[test]
     fn gap_between_rules_passes() {
         // Arrange: 10.5min = 630s, rounds to 11min so matches medium rule

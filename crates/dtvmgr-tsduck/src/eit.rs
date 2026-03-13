@@ -1515,4 +1515,61 @@ mod tests {
         assert_eq!(p.audio_component_type, Some(0x03));
         assert_eq!(p.audio_sampling_rate(), Some(48000));
     }
+
+    // ── decode_sampling_rate ─────────────────────────────────────
+
+    #[test]
+    fn test_decode_sampling_rate_all_codes() {
+        assert_eq!(decode_sampling_rate(1), Some(16000));
+        assert_eq!(decode_sampling_rate(2), Some(22050));
+        assert_eq!(decode_sampling_rate(3), Some(24000));
+        assert_eq!(decode_sampling_rate(5), Some(32000));
+        assert_eq!(decode_sampling_rate(6), Some(44100));
+        assert_eq!(decode_sampling_rate(7), Some(48000));
+        assert_eq!(decode_sampling_rate(0), None);
+        assert_eq!(decode_sampling_rate(4), None);
+        assert_eq!(decode_sampling_rate(8), None);
+        assert_eq!(decode_sampling_rate(255), None);
+    }
+
+    // ── decode_video_resolution ──────────────────────────────────
+
+    #[test]
+    fn test_decode_video_resolution_all_ranges() {
+        assert_eq!(decode_video_resolution(0x00), Some("480i"));
+        assert_eq!(decode_video_resolution(0x0F), Some("480i"));
+        assert_eq!(decode_video_resolution(0x90), Some("2160p"));
+        assert_eq!(decode_video_resolution(0x9F), Some("2160p"));
+        assert_eq!(decode_video_resolution(0xA0), Some("480p"));
+        assert_eq!(decode_video_resolution(0xB3), Some("1080i"));
+        assert_eq!(decode_video_resolution(0xC3), Some("720p"));
+        assert_eq!(decode_video_resolution(0xD0), Some("240p"));
+        assert_eq!(decode_video_resolution(0xE0), Some("1080p"));
+        assert_eq!(decode_video_resolution(0x10), None);
+        assert_eq!(decode_video_resolution(0x7F), None);
+        assert_eq!(decode_video_resolution(0xF0), None);
+    }
+
+    // ── decode_genre ─────────────────────────────────────────────
+
+    #[test]
+    fn test_decode_genre_all_codes() {
+        assert_eq!(decode_genre(0x0), Some("News/Report"));
+        assert_eq!(decode_genre(0x1), Some("Sports"));
+        assert_eq!(decode_genre(0x2), Some("Information/Tabloid"));
+        assert_eq!(decode_genre(0x3), Some("Drama"));
+        assert_eq!(decode_genre(0x4), Some("Music"));
+        assert_eq!(decode_genre(0x5), Some("Variety"));
+        assert_eq!(decode_genre(0x6), Some("Movie"));
+        assert_eq!(decode_genre(0x7), Some("Animation/Special Effects"));
+        assert_eq!(decode_genre(0x8), Some("Documentary/Education"));
+        assert_eq!(decode_genre(0x9), Some("Theater/Performance"));
+        assert_eq!(decode_genre(0xA), Some("Hobby/Education"));
+        assert_eq!(decode_genre(0xB), Some("Welfare"));
+        assert_eq!(decode_genre(0xC), Some("Reserved"));
+        assert_eq!(decode_genre(0xD), Some("Reserved"));
+        assert_eq!(decode_genre(0xE), Some("Extended"));
+        assert_eq!(decode_genre(0xF), Some("Other"));
+        assert_eq!(decode_genre(0x10), None);
+    }
 }

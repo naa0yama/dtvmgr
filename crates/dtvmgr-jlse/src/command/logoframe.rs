@@ -387,6 +387,42 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    fn test_find_logo_sid_no_match() {
+        // Arrange — SID prefix but no matching files
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("SID999-1.lgd"), "").unwrap();
+
+        // Act
+        let result = find_logo(tmp.path(), "SID101");
+
+        // Assert
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_find_sid_logo_nonexistent_dir() {
+        // Arrange — directory does not exist
+        let result = find_sid_logo(Path::new("/nonexistent/logo/dir"), "SID101");
+
+        // Assert
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_find_logo_non_sid_no_match() {
+        // Arrange — name does not start with SID, no .lgd/.lgd2 files
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Act
+        let result = find_logo(tmp.path(), "MISSING");
+
+        // Assert — returns None without SID scan
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_select_logo_nothing_found() {
         // Arrange
         let tmp = tempfile::tempdir().unwrap();

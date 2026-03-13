@@ -3198,6 +3198,7 @@ mod tests {
     )]
 
     use super::*;
+    use dtvmgr_api::epgstation::{DropLogFile, VideoFile};
 
     #[test]
     fn test_compile_regex_titles_empty() {
@@ -4017,5 +4018,555 @@ mod tests {
 
         // Assert
         assert!(result.is_empty());
+    }
+
+    // ── extract_base_query (additional) ──────────────────────────
+
+    #[test]
+    fn test_extract_base_query_empty_string() {
+        // Act
+        let result = extract_base_query("", None);
+
+        // Assert
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_extract_base_query_regex_partial_middle() {
+        // Arrange: regex matches in the middle of the string
+        let re = regex::Regex::new(r"\s*第\d+期\s*").unwrap();
+
+        // Act
+        let result = extract_base_query("進撃の巨人 第3期 完結編", Some(&re));
+
+        // Assert: middle portion removed, rest joined
+        assert_eq!(result, "進撃の巨人完結編");
+    }
+
+    #[test]
+    fn test_extract_base_query_regex_no_match() {
+        // Arrange: regex doesn't match the title
+        let re = regex::Regex::new(r"Season\s*\d+").unwrap();
+
+        // Act
+        let result = extract_base_query("進撃の巨人", Some(&re));
+
+        // Assert: normalized string returned unchanged
+        assert_eq!(result, "進撃の巨人");
+    }
+
+    // ── convert_recorded_to_cached ───────────────────────────────
+
+    #[allow(clippy::arithmetic_side_effects)]
+    fn make_recorded_item(id: u64) -> RecordedItem {
+        RecordedItem {
+            id,
+            channel_id: 100,
+            name: format!("Program {id}"),
+            description: Some(String::from("desc")),
+            extended: Some(String::from("ext")),
+            start_at: 1_700_000_000_000,
+            end_at: 1_700_001_800_000,
+            is_recording: false,
+            is_encoding: false,
+            is_protected: false,
+            video_resolution: Some(String::from("1080i")),
+            video_type: Some(String::from("mpeg2")),
+            video_files: vec![VideoFile {
+                id: id * 10,
+                name: format!("file_{id}.ts"),
+                filename: Some(format!("file_{id}.ts")),
+                file_type: String::from("ts"),
+                size: 1_048_576,
+            }],
+            drop_log_file: Some(DropLogFile {
+                drop_cnt: 5,
+                error_cnt: 2,
+                scrambling_cnt: 1,
+            }),
+        }
+    }
+
+    #[test]
+    fn test_convert_recorded_to_cached_item_fields() {
+        // Arrange
+        let records = vec![make_recorded_item(1)];
+        let now = "2024-01-01T00:00:00Z";
+
+        // Act
+        let (items, _) = convert_recorded_to_cached(&records, now);
+
+        // Assert
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, 1);
+        assert_eq!(items[0].channel_id, 100);
+        assert_eq!(items[0].name, "Program 1");
+        assert_eq!(items[0].description.as_deref(), Some("desc"));
+        assert_eq!(items[0].extended.as_deref(), Some("ext"));
+        assert_eq!(items[0].start_at, 1_700_000_000_000);
+        assert_eq!(items[0].end_at, 1_700_001_800_000);
+        assert!(!items[0].is_recording);
+        assert!(!items[0].is_encoding);
+        assert!(!items[0].is_protected);
+        assert_eq!(items[0].video_resolution.as_deref(), Some("1080i"));
+        assert_eq!(items[0].video_type.as_deref(), Some("mpeg2"));
+        assert_eq!(items[0].fetched_at, now);
+    }
+
+    #[test]
+    fn test_convert_recorded_to_cached_drop_log_fields() {
+        // Arrange
+        let records = vec![make_recorded_item(1)];
+
+        // Act
+        let (items, _) = convert_recorded_to_cached(&records, "2024-01-01T00:00:00Z");
+
+        // Assert
+        assert_eq!(items[0].drop_cnt, 5);
+        assert_eq!(items[0].error_cnt, 2);
+        assert_eq!(items[0].scrambling_cnt, 1);
+    }
+
+    #[test]
+    fn test_convert_recorded_to_cached_video_files() {
+        // Arrange
+        let records = vec![make_recorded_item(1)];
+
+        // Act
+        let (_, video_files) = convert_recorded_to_cached(&records, "2024-01-01T00:00:00Z");
+
+        // Assert
+        assert_eq!(video_files.len(), 1);
+        assert_eq!(video_files[0].0, 1); // recorded_id
+        assert_eq!(video_files[0].1.len(), 1);
+        assert_eq!(video_files[0].1[0].id, 10);
+        assert_eq!(video_files[0].1[0].file_type, "ts");
+        assert_eq!(video_files[0].1[0].size, 1_048_576);
+        assert!(video_files[0].1[0].file_exists.is_none());
+        assert!(video_files[0].1[0].file_checked_at.is_none());
+    }
+
+    #[test]
+    fn test_convert_recorded_to_cached_empty_input() {
+        // Act
+        let (items, video_files) = convert_recorded_to_cached(&[], "2024-01-01T00:00:00Z");
+
+        // Assert
+        assert!(items.is_empty());
+        assert!(video_files.is_empty());
+    }
+
+    #[test]
+    fn test_convert_recorded_to_cached_multiple_records() {
+        // Arrange
+        let records = vec![make_recorded_item(1), make_recorded_item(2)];
+
+        // Act
+        let (items, video_files) = convert_recorded_to_cached(&records, "2024-01-01T00:00:00Z");
+
+        // Assert
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].id, 1);
+        assert_eq!(items[1].id, 2);
+        assert_eq!(video_files.len(), 2);
+        assert_eq!(video_files[0].0, 1);
+        assert_eq!(video_files[1].0, 2);
+    }
+
+    #[test]
+    fn test_convert_recorded_to_cached_empty_video_files() {
+        // Arrange
+        let mut rec = make_recorded_item(1);
+        rec.video_files = vec![];
+
+        // Act
+        let (items, video_files) = convert_recorded_to_cached(&[rec], "2024-01-01T00:00:00Z");
+
+        // Assert
+        assert_eq!(items.len(), 1);
+        assert_eq!(video_files.len(), 1);
+        assert!(video_files[0].1.is_empty());
+    }
+
+    #[test]
+    fn test_convert_recorded_to_cached_no_drop_log() {
+        // Arrange
+        let mut rec = make_recorded_item(1);
+        rec.drop_log_file = None;
+
+        // Act
+        let (items, _) = convert_recorded_to_cached(&[rec], "2024-01-01T00:00:00Z");
+
+        // Assert: drop/error/scrambling default to 0
+        assert_eq!(items[0].drop_cnt, 0);
+        assert_eq!(items[0].error_cnt, 0);
+        assert_eq!(items[0].scrambling_cnt, 0);
+    }
+
+    #[test]
+    fn test_convert_recorded_to_cached_optional_fields_none() {
+        // Arrange
+        let mut rec = make_recorded_item(1);
+        rec.description = None;
+        rec.extended = None;
+        rec.video_resolution = None;
+        rec.video_type = None;
+
+        // Act
+        let (items, _) = convert_recorded_to_cached(&[rec], "2024-01-01T00:00:00Z");
+
+        // Assert
+        assert!(items[0].description.is_none());
+        assert!(items[0].extended.is_none());
+        assert!(items[0].video_resolution.is_none());
+        assert!(items[0].video_type.is_none());
+    }
+
+    #[test]
+    fn test_convert_recorded_to_cached_multiple_video_files() {
+        // Arrange
+        let mut rec = make_recorded_item(1);
+        rec.video_files = vec![
+            VideoFile {
+                id: 10,
+                name: String::from("ts_file"),
+                filename: Some(String::from("ts_file.ts")),
+                file_type: String::from("ts"),
+                size: 2_000_000,
+            },
+            VideoFile {
+                id: 11,
+                name: String::from("encoded_file"),
+                filename: Some(String::from("encoded.mp4")),
+                file_type: String::from("encoded"),
+                size: 500_000,
+            },
+        ];
+
+        // Act
+        let (_, video_files) = convert_recorded_to_cached(&[rec], "2024-01-01T00:00:00Z");
+
+        // Assert
+        assert_eq!(video_files[0].1.len(), 2);
+        assert_eq!(video_files[0].1[0].file_type, "ts");
+        assert_eq!(video_files[0].1[1].file_type, "encoded");
+    }
+
+    // ── build_rows_from_cache ────────────────────────────────────
+
+    fn make_cached_pair(
+        id: i64,
+        channel_id: i64,
+        files: Vec<dtvmgr_db::recorded::CachedVideoFile>,
+    ) -> (
+        dtvmgr_db::recorded::CachedRecordedItem,
+        Vec<dtvmgr_db::recorded::CachedVideoFile>,
+    ) {
+        (
+            dtvmgr_db::recorded::CachedRecordedItem {
+                id,
+                channel_id,
+                name: format!("Program {id}"),
+                description: None,
+                extended: None,
+                start_at: 1_700_000_000_000,
+                end_at: 1_700_001_800_000,
+                is_recording: false,
+                is_encoding: false,
+                is_protected: false,
+                video_resolution: Some(String::from("1080i")),
+                video_type: Some(String::from("mpeg2")),
+                drop_cnt: 3,
+                error_cnt: 1,
+                scrambling_cnt: 0,
+                fetched_at: String::from("2024-01-01T00:00:00Z"),
+            },
+            files,
+        )
+    }
+
+    fn make_ts_video_file(id: i64, recorded_id: i64) -> dtvmgr_db::recorded::CachedVideoFile {
+        dtvmgr_db::recorded::CachedVideoFile {
+            id,
+            recorded_id,
+            name: String::from("ts_file"),
+            filename: Some(String::from("file.ts")),
+            file_type: String::from("ts"),
+            size: 2_000_000,
+            file_exists: Some(true),
+            file_checked_at: Some(String::from("2024-01-01T00:00:00Z")),
+        }
+    }
+
+    #[test]
+    fn test_build_rows_from_cache_basic() {
+        // Arrange
+        let cached = vec![make_cached_pair(1, 100, vec![make_ts_video_file(10, 1)])];
+        let mut channel_names = std::collections::HashMap::new();
+        channel_names.insert(100_u64, String::from("NHK"));
+
+        // Act
+        let rows = build_rows_from_cache(&cached, &channel_names);
+
+        // Assert
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].recorded_id, 1);
+        assert_eq!(rows[0].channel_name, "NHK");
+        assert_eq!(rows[0].name, "Program 1");
+        assert_eq!(rows[0].source_video_file_id, Some(10));
+        assert_eq!(rows[0].file_size, 2_000_000);
+        assert!(rows[0].file_exists);
+        assert_eq!(rows[0].drop_cnt, 3);
+        assert_eq!(rows[0].error_cnt, 1);
+        assert!(!rows[0].is_recording);
+        assert!(!rows[0].is_encoding);
+    }
+
+    #[test]
+    fn test_build_rows_from_cache_unknown_channel() {
+        // Arrange: channel_id not in channel_names map
+        let cached = vec![make_cached_pair(1, 999, vec![make_ts_video_file(10, 1)])];
+        let channel_names = std::collections::HashMap::new();
+
+        // Act
+        let rows = build_rows_from_cache(&cached, &channel_names);
+
+        // Assert: falls back to channel_id as string
+        assert_eq!(rows[0].channel_name, "999");
+    }
+
+    #[test]
+    fn test_build_rows_from_cache_no_ts_file() {
+        // Arrange: only encoded file, no TS
+        let encoded_file = dtvmgr_db::recorded::CachedVideoFile {
+            id: 20,
+            recorded_id: 1,
+            name: String::from("encoded"),
+            filename: Some(String::from("encoded.mp4")),
+            file_type: String::from("encoded"),
+            size: 500_000,
+            file_exists: Some(true),
+            file_checked_at: None,
+        };
+        let cached = vec![make_cached_pair(1, 100, vec![encoded_file])];
+        let mut channel_names = std::collections::HashMap::new();
+        channel_names.insert(100_u64, String::from("NHK"));
+
+        // Act
+        let rows = build_rows_from_cache(&cached, &channel_names);
+
+        // Assert: no TS file → source_video_file_id is None, file_size 0, file_exists false
+        assert!(rows[0].source_video_file_id.is_none());
+        assert_eq!(rows[0].file_size, 0);
+        assert!(!rows[0].file_exists);
+    }
+
+    #[test]
+    fn test_build_rows_from_cache_multiple_files_picks_ts() {
+        // Arrange: TS and encoded files
+        let ts = make_ts_video_file(10, 1);
+        let encoded = dtvmgr_db::recorded::CachedVideoFile {
+            id: 20,
+            recorded_id: 1,
+            name: String::from("encoded"),
+            filename: Some(String::from("encoded.mp4")),
+            file_type: String::from("encoded"),
+            size: 500_000,
+            file_exists: Some(true),
+            file_checked_at: None,
+        };
+        let cached = vec![make_cached_pair(1, 100, vec![ts, encoded])];
+        let mut channel_names = std::collections::HashMap::new();
+        channel_names.insert(100_u64, String::from("NHK"));
+
+        // Act
+        let rows = build_rows_from_cache(&cached, &channel_names);
+
+        // Assert: picks TS file
+        assert_eq!(rows[0].source_video_file_id, Some(10));
+        assert_eq!(rows[0].file_size, 2_000_000);
+    }
+
+    #[test]
+    fn test_build_rows_from_cache_ts_file_exists_none() {
+        // Arrange: TS file with file_exists = None → false
+        let mut vf = make_ts_video_file(10, 1);
+        vf.file_exists = None;
+        let cached = vec![make_cached_pair(1, 100, vec![vf])];
+        let channel_names = std::collections::HashMap::new();
+
+        // Act
+        let rows = build_rows_from_cache(&cached, &channel_names);
+
+        // Assert
+        assert!(!rows[0].file_exists);
+    }
+
+    #[test]
+    fn test_build_rows_from_cache_ts_file_exists_false() {
+        // Arrange: TS file with file_exists = Some(false)
+        let mut vf = make_ts_video_file(10, 1);
+        vf.file_exists = Some(false);
+        let cached = vec![make_cached_pair(1, 100, vec![vf])];
+        let channel_names = std::collections::HashMap::new();
+
+        // Act
+        let rows = build_rows_from_cache(&cached, &channel_names);
+
+        // Assert
+        assert!(!rows[0].file_exists);
+    }
+
+    #[test]
+    fn test_build_rows_from_cache_optional_resolution_type_none() {
+        // Arrange: video_resolution and video_type are None → default to ""
+        let (mut item, files) = make_cached_pair(1, 100, vec![make_ts_video_file(10, 1)]);
+        item.video_resolution = None;
+        item.video_type = None;
+        let cached = vec![(item, files)];
+        let channel_names = std::collections::HashMap::new();
+
+        // Act
+        let rows = build_rows_from_cache(&cached, &channel_names);
+
+        // Assert
+        assert_eq!(rows[0].video_resolution, "");
+        assert_eq!(rows[0].video_type, "");
+    }
+
+    #[test]
+    fn test_build_rows_from_cache_recording_and_encoding_flags() {
+        // Arrange
+        let (mut item, files) = make_cached_pair(1, 100, vec![make_ts_video_file(10, 1)]);
+        item.is_recording = true;
+        item.is_encoding = true;
+        let cached = vec![(item, files)];
+        let channel_names = std::collections::HashMap::new();
+
+        // Act
+        let rows = build_rows_from_cache(&cached, &channel_names);
+
+        // Assert
+        assert!(rows[0].is_recording);
+        assert!(rows[0].is_encoding);
+    }
+
+    // ── collect_files_to_check ───────────────────────────────────
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_collect_files_to_check_force() {
+        // Arrange: file has recent check, but force=true
+        let mut vf = make_ts_video_file(10, 1);
+        vf.file_checked_at = Some(chrono::Utc::now().to_rfc3339());
+        vf.file_exists = Some(true);
+        let cached = vec![make_cached_pair(1, 100, vec![vf])];
+
+        // Act
+        let result = collect_files_to_check(&cached, true);
+
+        // Assert: force always includes
+        assert_eq!(result, vec![(10, 1)]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_collect_files_to_check_within_ttl() {
+        // Arrange: file was checked 10 minutes ago (within 1h TTL)
+        let mut vf = make_ts_video_file(10, 1);
+        let recent = (chrono::Utc::now() - chrono::Duration::minutes(10)).to_rfc3339();
+        vf.file_checked_at = Some(recent);
+        vf.file_exists = Some(true);
+        let cached = vec![make_cached_pair(1, 100, vec![vf])];
+
+        // Act
+        let result = collect_files_to_check(&cached, false);
+
+        // Assert: within TTL → skip
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_collect_files_to_check_expired_ttl() {
+        // Arrange: file was checked 2 hours ago (past 1h TTL)
+        let mut vf = make_ts_video_file(10, 1);
+        let old = (chrono::Utc::now() - chrono::Duration::hours(2)).to_rfc3339();
+        vf.file_checked_at = Some(old);
+        vf.file_exists = Some(true);
+        let cached = vec![make_cached_pair(1, 100, vec![vf])];
+
+        // Act
+        let result = collect_files_to_check(&cached, false);
+
+        // Assert: expired TTL → include
+        assert_eq!(result, vec![(10, 1)]);
+    }
+
+    #[test]
+    fn test_collect_files_to_check_never_checked() {
+        // Arrange: file_exists and file_checked_at are None
+        let mut vf = make_ts_video_file(10, 1);
+        vf.file_exists = None;
+        vf.file_checked_at = None;
+        let cached = vec![make_cached_pair(1, 100, vec![vf])];
+
+        // Act
+        let result = collect_files_to_check(&cached, false);
+
+        // Assert: never checked → include
+        assert_eq!(result, vec![(10, 1)]);
+    }
+
+    #[test]
+    fn test_collect_files_to_check_skips_non_ts() {
+        // Arrange: only encoded file
+        let encoded = dtvmgr_db::recorded::CachedVideoFile {
+            id: 20,
+            recorded_id: 1,
+            name: String::from("encoded"),
+            filename: Some(String::from("encoded.mp4")),
+            file_type: String::from("encoded"),
+            size: 500_000,
+            file_exists: None,
+            file_checked_at: None,
+        };
+        let cached = vec![make_cached_pair(1, 100, vec![encoded])];
+
+        // Act
+        let result = collect_files_to_check(&cached, false);
+
+        // Assert: non-TS files are skipped
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_collect_files_to_check_invalid_checked_at() {
+        // Arrange: file_exists is Some but checked_at is unparseable
+        let mut vf = make_ts_video_file(10, 1);
+        vf.file_exists = Some(true);
+        vf.file_checked_at = Some(String::from("not-a-date"));
+        let cached = vec![make_cached_pair(1, 100, vec![vf])];
+
+        // Act
+        let result = collect_files_to_check(&cached, false);
+
+        // Assert: invalid date → needs check
+        assert_eq!(result, vec![(10, 1)]);
+    }
+
+    #[test]
+    fn test_collect_files_to_check_checked_at_none_exists_some() {
+        // Arrange: file_exists is Some but checked_at is None
+        let mut vf = make_ts_video_file(10, 1);
+        vf.file_exists = Some(true);
+        vf.file_checked_at = None;
+        let cached = vec![make_cached_pair(1, 100, vec![vf])];
+
+        // Act
+        let result = collect_files_to_check(&cached, false);
+
+        // Assert: wildcard match → needs check
+        assert_eq!(result, vec![(10, 1)]);
     }
 }

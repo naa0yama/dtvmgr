@@ -619,4 +619,115 @@ mod tests {
         assert!(display.contains("45%"));
         assert!(display.contains("Que: 1"));
     }
+
+    #[test]
+    fn build_queue_display_multiple_running() {
+        let mut state = EncodeSelectorState::new(
+            vec![],
+            vec![],
+            vec![],
+            None,
+            None,
+            PageInfo {
+                offset: 0,
+                size: 10,
+                total: 0,
+            },
+        );
+        state.encode_queue = Some(EncodeQueueInfo {
+            running: vec![
+                RunningEncodeItem {
+                    name: String::from("Program A"),
+                    mode: String::from("H.264"),
+                    percent: Some(50.0),
+                },
+                RunningEncodeItem {
+                    name: String::from("Program B"),
+                    mode: String::from("H.265"),
+                    percent: None,
+                },
+            ],
+            waiting_count: 2,
+        });
+        let display = build_queue_display(&state);
+        // Two items joined by " | "
+        assert!(display.contains("Program A"));
+        assert!(display.contains("Program B"));
+        assert!(display.contains(" | "));
+        assert!(display.contains("50%"));
+        assert!(display.contains("Que: 2"));
+    }
+
+    // ── fmt_datetime ─────────────────────────────────────────────
+
+    #[test]
+    fn fmt_datetime_zero() {
+        // epoch(0) → 1970-01-01 09:00 in JST
+        assert_eq!(fmt_datetime(0), "1970-01-01 09:00");
+    }
+
+    #[test]
+    fn fmt_datetime_normal() {
+        // 2024-01-15 20:00 JST = 2024-01-15 11:00 UTC = 1705316400 sec
+        let unix_ms = 1_705_316_400_000;
+        assert_eq!(fmt_datetime(unix_ms), "2024-01-15 20:00");
+    }
+
+    #[test]
+    fn fmt_datetime_jst_date_boundary() {
+        // 2024-01-15 23:30 UTC = 2024-01-16 08:30 JST
+        let unix_ms = 1_705_361_400_000;
+        assert_eq!(fmt_datetime(unix_ms), "2024-01-16 08:30");
+    }
+
+    // ── fmt_duration ─────────────────────────────────────────────
+
+    #[test]
+    fn fmt_duration_zero() {
+        assert_eq!(fmt_duration(1000, 1000), "0m");
+    }
+
+    #[test]
+    fn fmt_duration_normal() {
+        // 30 minutes = 1_800_000 ms
+        assert_eq!(fmt_duration(0, 1_800_000), "30m");
+    }
+
+    #[test]
+    fn fmt_duration_start_after_end() {
+        // saturating_sub returns 0
+        assert_eq!(fmt_duration(2_000_000, 1_000_000), "0m");
+    }
+
+    // ── build_queue_display (additional) ─────────────────────────
+
+    #[test]
+    fn build_queue_display_truncates_long_name() {
+        let mut state = EncodeSelectorState::new(
+            vec![],
+            vec![],
+            vec![],
+            None,
+            None,
+            PageInfo {
+                offset: 0,
+                size: 10,
+                total: 0,
+            },
+        );
+        state.encode_queue = Some(EncodeQueueInfo {
+            running: vec![RunningEncodeItem {
+                name: String::from("This Is A Very Long Program Name That Exceeds Twenty"),
+                mode: String::from("H.265"),
+                percent: None,
+            }],
+            waiting_count: 0,
+        });
+        let display = build_queue_display(&state);
+        // Name should be truncated to 20 chars
+        assert!(display.contains("This Is A Very Long "));
+        // No percent shown
+        assert!(!display.contains('%'));
+        assert!(display.contains("H.265"));
+    }
 }

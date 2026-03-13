@@ -860,4 +860,313 @@ mod tests {
         // Assert: hidden_count now reflects the change
         assert_eq!(state.hidden_count(), 1);
     }
+
+    // ── FileCheckWorkerProgress::is_active ───────────────────────
+
+    #[test]
+    fn is_active_idle() {
+        let p = FileCheckWorkerProgress {
+            pending: 0,
+            checking: None,
+        };
+        assert!(!p.is_active());
+    }
+
+    #[test]
+    fn is_active_checking() {
+        let p = FileCheckWorkerProgress {
+            pending: 0,
+            checking: Some((3, 10)),
+        };
+        assert!(p.is_active());
+    }
+
+    #[test]
+    fn is_active_pending() {
+        let p = FileCheckWorkerProgress {
+            pending: 2,
+            checking: None,
+        };
+        assert!(p.is_active());
+    }
+
+    // ── SettingsField::next / prev ───────────────────────────────
+
+    #[test]
+    fn settings_field_next_cycle() {
+        assert_eq!(
+            SettingsField::Preset.next(),
+            SettingsField::SaveSameDirectory
+        );
+        assert_eq!(
+            SettingsField::SaveSameDirectory.next(),
+            SettingsField::ParentDir
+        );
+        assert_eq!(SettingsField::ParentDir.next(), SettingsField::Directory);
+        assert_eq!(
+            SettingsField::Directory.next(),
+            SettingsField::RemoveOriginal
+        );
+        // Wrap around
+        assert_eq!(SettingsField::RemoveOriginal.next(), SettingsField::Preset);
+    }
+
+    #[test]
+    fn settings_field_prev_cycle() {
+        assert_eq!(SettingsField::Preset.prev(), SettingsField::RemoveOriginal);
+        assert_eq!(
+            SettingsField::SaveSameDirectory.prev(),
+            SettingsField::Preset
+        );
+        assert_eq!(
+            SettingsField::ParentDir.prev(),
+            SettingsField::SaveSameDirectory
+        );
+        assert_eq!(SettingsField::Directory.prev(), SettingsField::ParentDir);
+        assert_eq!(
+            SettingsField::RemoveOriginal.prev(),
+            SettingsField::Directory
+        );
+    }
+
+    // ── required_confirms ────────────────────────────────────────
+
+    #[test]
+    fn required_confirms_without_remove() {
+        let state = make_state(1);
+        assert_eq!(state.required_confirms(), 1);
+    }
+
+    #[test]
+    fn required_confirms_with_remove() {
+        let mut state = make_state(1);
+        state.settings.remove_original = true;
+        assert_eq!(state.required_confirms(), 2);
+    }
+
+    // ── select_all / deselect_all ────────────────────────────────
+
+    #[test]
+    fn select_all_selects_available_rows() {
+        // Arrange: mixed state with 1 available, 2 unavailable
+        let mut state = make_mixed_state();
+
+        // Act
+        state.select_all();
+
+        // Assert: only the available row (recorded_id=0) is selected
+        assert_eq!(state.selected.len(), 1);
+        assert!(state.selected.contains(&0));
+    }
+
+    #[test]
+    fn deselect_all_clears_selection() {
+        // Arrange
+        let mut state = make_mixed_state();
+        state.select_all();
+        assert!(!state.selected.is_empty());
+
+        // Act
+        state.deselect_all();
+
+        // Assert
+        assert!(state.selected.is_empty());
+    }
+
+    // ── next_preset / prev_preset ────────────────────────────────
+
+    fn make_state_with_presets() -> EncodeSelectorState {
+        let page = PageInfo {
+            offset: 0,
+            size: 10,
+            total: 0,
+        };
+        EncodeSelectorState::new(
+            vec![],
+            vec![
+                String::from("H.264"),
+                String::from("H.265"),
+                String::from("AV1"),
+            ],
+            vec![],
+            None,
+            None,
+            page,
+        )
+    }
+
+    #[test]
+    fn next_preset_cycles_forward() {
+        let mut state = make_state_with_presets();
+        assert_eq!(state.settings.mode, "H.264");
+
+        state.next_preset();
+        assert_eq!(state.settings.mode, "H.265");
+
+        state.next_preset();
+        assert_eq!(state.settings.mode, "AV1");
+
+        // Wrap around
+        state.next_preset();
+        assert_eq!(state.settings.mode, "H.264");
+    }
+
+    #[test]
+    fn prev_preset_cycles_backward() {
+        let mut state = make_state_with_presets();
+        assert_eq!(state.settings.mode, "H.264");
+
+        // Wrap around from first to last
+        state.prev_preset();
+        assert_eq!(state.settings.mode, "AV1");
+
+        state.prev_preset();
+        assert_eq!(state.settings.mode, "H.265");
+
+        state.prev_preset();
+        assert_eq!(state.settings.mode, "H.264");
+    }
+
+    #[test]
+    fn next_preset_empty_noop() {
+        let page = PageInfo {
+            offset: 0,
+            size: 10,
+            total: 0,
+        };
+        let mut state = EncodeSelectorState::new(vec![], vec![], vec![], None, None, page);
+
+        // Act: should not panic
+        state.next_preset();
+        assert_eq!(state.settings.mode, "H.264"); // default
+    }
+
+    #[test]
+    fn prev_preset_empty_noop() {
+        let page = PageInfo {
+            offset: 0,
+            size: 10,
+            total: 0,
+        };
+        let mut state = EncodeSelectorState::new(vec![], vec![], vec![], None, None, page);
+
+        state.prev_preset();
+        assert_eq!(state.settings.mode, "H.264"); // default
+    }
+
+    // ── next_parent_dir / prev_parent_dir ────────────────────────
+
+    fn make_state_with_parent_dirs() -> EncodeSelectorState {
+        let page = PageInfo {
+            offset: 0,
+            size: 10,
+            total: 0,
+        };
+        EncodeSelectorState::new(
+            vec![],
+            vec![],
+            vec![
+                String::from("recorded"),
+                String::from("archive"),
+                String::from("tmp"),
+            ],
+            None,
+            None,
+            page,
+        )
+    }
+
+    #[test]
+    fn next_parent_dir_cycles_forward() {
+        let mut state = make_state_with_parent_dirs();
+        assert_eq!(state.settings.parent_dir, "recorded");
+
+        state.next_parent_dir();
+        assert_eq!(state.settings.parent_dir, "archive");
+
+        state.next_parent_dir();
+        assert_eq!(state.settings.parent_dir, "tmp");
+
+        // Wrap around
+        state.next_parent_dir();
+        assert_eq!(state.settings.parent_dir, "recorded");
+    }
+
+    #[test]
+    fn prev_parent_dir_cycles_backward() {
+        let mut state = make_state_with_parent_dirs();
+        assert_eq!(state.settings.parent_dir, "recorded");
+
+        // Wrap around from first to last
+        state.prev_parent_dir();
+        assert_eq!(state.settings.parent_dir, "tmp");
+
+        state.prev_parent_dir();
+        assert_eq!(state.settings.parent_dir, "archive");
+
+        state.prev_parent_dir();
+        assert_eq!(state.settings.parent_dir, "recorded");
+    }
+
+    #[test]
+    fn next_parent_dir_empty_noop() {
+        let page = PageInfo {
+            offset: 0,
+            size: 10,
+            total: 0,
+        };
+        let mut state = EncodeSelectorState::new(vec![], vec![], vec![], None, None, page);
+
+        state.next_parent_dir();
+        assert_eq!(state.settings.parent_dir, "recorded"); // default
+    }
+
+    #[test]
+    fn prev_parent_dir_empty_noop() {
+        let page = PageInfo {
+            offset: 0,
+            size: 10,
+            total: 0,
+        };
+        let mut state = EncodeSelectorState::new(vec![], vec![], vec![], None, None, page);
+
+        state.prev_parent_dir();
+        assert_eq!(state.settings.parent_dir, "recorded"); // default
+    }
+
+    // ── new constructor branches ─────────────────────────────────
+
+    #[test]
+    fn new_with_default_preset() {
+        let page = PageInfo {
+            offset: 0,
+            size: 10,
+            total: 0,
+        };
+        let state = EncodeSelectorState::new(
+            vec![],
+            vec![
+                String::from("H.264"),
+                String::from("H.265"),
+                String::from("AV1"),
+            ],
+            vec![],
+            Some("H.265"),
+            None,
+            page,
+        );
+        assert_eq!(state.settings.mode, "H.265");
+        assert_eq!(state.settings.preset_index, 1);
+    }
+
+    #[test]
+    fn new_with_default_directory() {
+        let page = PageInfo {
+            offset: 0,
+            size: 10,
+            total: 0,
+        };
+        let state = EncodeSelectorState::new(vec![], vec![], vec![], None, Some("subdir"), page);
+        assert_eq!(state.settings.directory, "subdir");
+    }
 }

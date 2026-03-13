@@ -206,6 +206,120 @@ mod tests {
         assert_eq!(args[11], "fLOff");
     }
 
+    // ── run / run_logged via write_script ─────────────────────
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_success() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script =
+            super::super::test_utils::write_script(dir.path(), "jls.sh", "#!/bin/sh\nexit 0");
+        let param = DetectionParam {
+            jl_run: "JL.txt".to_owned(),
+            flags: String::new(),
+            options: String::new(),
+        };
+
+        // Act
+        let result = run(
+            &script,
+            Path::new("/a"),
+            Path::new("/b"),
+            Path::new("/c"),
+            Path::new("/d"),
+            Path::new("/e"),
+            &param,
+        );
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_failure() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script =
+            super::super::test_utils::write_script(dir.path(), "jls.sh", "#!/bin/sh\nexit 1");
+        let param = DetectionParam::default();
+
+        // Act
+        let result = run(
+            &script,
+            Path::new("/a"),
+            Path::new("/b"),
+            Path::new("/c"),
+            Path::new("/d"),
+            Path::new("/e"),
+            &param,
+        );
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_logged_success() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script = super::super::test_utils::write_script(
+            dir.path(),
+            "jls.sh",
+            "#!/bin/sh\necho log_output >&2\nexit 0",
+        );
+        let param = DetectionParam::default();
+        let lines = std::cell::RefCell::new(Vec::new());
+
+        // Act
+        let result = run_logged(
+            &script,
+            Path::new("/a"),
+            Path::new("/b"),
+            Path::new("/c"),
+            Path::new("/d"),
+            Path::new("/e"),
+            &param,
+            &|line| lines.borrow_mut().push(line.to_owned()),
+        );
+
+        // Assert
+        assert!(result.is_ok());
+        assert_eq!(*lines.borrow(), vec!["log_output"]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_run_logged_failure() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script = super::super::test_utils::write_script(
+            dir.path(),
+            "jls.sh",
+            "#!/bin/sh\necho err >&2\nexit 1",
+        );
+        let param = DetectionParam::default();
+        let lines = std::cell::RefCell::new(Vec::new());
+
+        // Act
+        let result = run_logged(
+            &script,
+            Path::new("/a"),
+            Path::new("/b"),
+            Path::new("/c"),
+            Path::new("/d"),
+            Path::new("/e"),
+            &param,
+            &|line| lines.borrow_mut().push(line.to_owned()),
+        );
+
+        // Assert
+        assert!(result.is_err());
+        assert_eq!(*lines.borrow(), vec!["err"]);
+    }
+
     #[test]
     fn test_build_args_options_whitespace_splitting() {
         // Arrange
