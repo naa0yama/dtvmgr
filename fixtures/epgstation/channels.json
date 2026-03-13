@@ -1,0 +1,16 @@
+[
+	{
+		"id": 400101,
+		"name": "NHK総合",
+		"halfWidthName": "NHK総合",
+		"channelType": "GR",
+		"hasLogoData": true
+	},
+	{
+		"id": 400201,
+		"name": "MBS毎日放送",
+		"halfWidthName": "MBS毎日放送",
+		"channelType": "GR",
+		"hasLogoData": true
+	}
+]

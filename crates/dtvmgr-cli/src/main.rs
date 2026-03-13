@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use tracing::instrument;
 use tracing_subscriber::filter::EnvFilter;
 #[cfg(not(feature = "otel"))]
@@ -24,8 +24,16 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::config::{AppConfig, load_or_fetch, resolve_config_path, resolve_data_dir};
+use crate::tui::encode_selector::state::{
+    EncodeQueueInfo, EncodeRow, EncodeSelectorState, FileCheckMessage, PageInfo, QueueMessage,
+    RunningEncodeItem, SelectorResult, SyncMessage,
+};
 use crate::tui::run_channel_selector;
 use crate::tui::state::{ChannelEntry, ChannelGroup};
+use dtvmgr_api::epgstation::{
+    EncodeRequest, EpgStationClient, LocalEpgStationApi, RecordedItem, RecordedParams,
+    RecordedResponse,
+};
 use dtvmgr_api::syoboi::{
     LocalSyoboiApi, ProgLookupParams, SyoboiClient, SyoboiProgram, SyoboiTitle,
     lookup_all_programs, resolve_time_range,
@@ -73,8 +81,46 @@ enum Commands {
     Db(DbCommand),
     /// CM detection pipeline (`join_logo_scp`).
     Jlse(JlseCommand),
+    /// `EPGStation` operations.
+    Epgstation(EpgstationCommand),
     /// Initialize config file with default template.
     Init,
+    /// Generate shell completion script.
+    Completion(CompletionCommand),
+}
+
+/// Arguments for the `epgstation` subcommand.
+#[derive(clap::Args)]
+struct EpgstationCommand {
+    /// Epgstation subcommand to run.
+    #[command(subcommand)]
+    command: EpgstationSubcommands,
+}
+
+/// Available `EPGStation` subcommands.
+#[derive(Subcommand)]
+enum EpgstationSubcommands {
+    /// Queue programs for encoding via `EPGStation`.
+    Encode(EpgstationEncodeArgs),
+}
+
+/// Arguments for `epgstation encode`.
+#[derive(clap::Args)]
+struct EpgstationEncodeArgs {
+    /// Keyword to pre-filter recordings.
+    #[arg(short, long)]
+    keyword: Option<String>,
+    /// Number of recordings to fetch (default: 100).
+    #[arg(short, long, default_value_t = 100)]
+    limit: u64,
+}
+
+/// Arguments for the `completion` subcommand.
+#[derive(clap::Args, Debug)]
+struct CompletionCommand {
+    /// Target shell.
+    #[arg(value_enum)]
+    shell: clap_complete::Shell,
 }
 
 /// Arguments for the `jlse` subcommand.
@@ -2430,8 +2476,633 @@ async fn main() -> Result<()> {
             JlseSubcommands::Run(args) => run_jlse_run(&args, cli.dir.as_ref()),
             JlseSubcommands::Tsduck(args) => run_jlse_tsduck(&args, cli.dir.as_ref()),
         },
+        Commands::Epgstation(cmd) => match cmd.command {
+            EpgstationSubcommands::Encode(args) => {
+                run_epgstation_encode(&args, cli.dir.as_ref()).await
+            }
+        },
         Commands::Init => run_init(cli.dir.as_ref()),
+        Commands::Completion(comp) => {
+            let mut cmd = Cli::command();
+            clap_complete::generate(comp.shell, &mut cmd, "dtvmgr", &mut std::io::stdout());
+            Ok(())
+        }
     }
+}
+
+/// Converts an API `RecordedItem` page to cached DB items.
+#[allow(clippy::cast_possible_wrap, clippy::as_conversions)]
+fn convert_recorded_to_cached(
+    records: &[RecordedItem],
+    now: &str,
+) -> (
+    Vec<dtvmgr_db::recorded::CachedRecordedItem>,
+    Vec<(i64, Vec<dtvmgr_db::recorded::CachedVideoFile>)>,
+) {
+    use dtvmgr_db::recorded::{CachedRecordedItem, CachedVideoFile};
+
+    let items: Vec<CachedRecordedItem> = records
+        .iter()
+        .map(|rec| CachedRecordedItem {
+            id: rec.id as i64,
+            channel_id: rec.channel_id as i64,
+            name: rec.name.clone(),
+            description: rec.description.clone(),
+            extended: rec.extended.clone(),
+            start_at: rec.start_at as i64,
+            end_at: rec.end_at as i64,
+            is_recording: rec.is_recording,
+            is_encoding: rec.is_encoding,
+            is_protected: rec.is_protected,
+            video_resolution: rec.video_resolution.clone(),
+            video_type: rec.video_type.clone(),
+            drop_cnt: rec.drop_log_file.as_ref().map_or(0, |d| d.drop_cnt as i64),
+            error_cnt: rec.drop_log_file.as_ref().map_or(0, |d| d.error_cnt as i64),
+            scrambling_cnt: rec
+                .drop_log_file
+                .as_ref()
+                .map_or(0, |d| d.scrambling_cnt as i64),
+            fetched_at: String::from(now),
+        })
+        .collect();
+
+    let video_files: Vec<(i64, Vec<CachedVideoFile>)> = records
+        .iter()
+        .map(|rec| {
+            let files: Vec<CachedVideoFile> = rec
+                .video_files
+                .iter()
+                .map(|vf| CachedVideoFile {
+                    id: vf.id as i64,
+                    recorded_id: rec.id as i64,
+                    name: vf.name.clone(),
+                    filename: vf.filename.clone(),
+                    file_type: vf.file_type.clone(),
+                    size: vf.size as i64,
+                    file_exists: None,
+                    file_checked_at: None,
+                })
+                .collect();
+            (rec.id as i64, files)
+        })
+        .collect();
+
+    (items, video_files)
+}
+
+/// Processes a fetched API page: converts records to cached form, upserts to DB,
+/// collects IDs, and reports progress. Returns updated total.
+#[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
+fn process_fetched_page(
+    conn: &dtvmgr_db::Connection,
+    records: &[RecordedItem],
+    now: &str,
+    all_ids: &mut Vec<i64>,
+    api_total: u64,
+    on_progress: &mut dyn FnMut(usize, usize),
+) -> Result<()> {
+    let (items, video_files) = convert_recorded_to_cached(records, now);
+    for item in &items {
+        all_ids.push(item.id);
+    }
+    dtvmgr_db::upsert_recorded_items(conn, &items, &video_files)
+        .context("failed to upsert recorded items")?;
+    let fetched = all_ids.len();
+    #[allow(clippy::cast_possible_truncation)]
+    let total = api_total as usize;
+    on_progress(fetched, total);
+    Ok(())
+}
+
+/// Fetches a single page of recorded items from the API.
+async fn fetch_recorded_page(
+    client: &EpgStationClient,
+    limit: u64,
+    api_offset: u64,
+    keyword: Option<&str>,
+) -> Result<RecordedResponse> {
+    let params = RecordedParams {
+        has_original_file: Some(true),
+        limit: Some(limit),
+        offset: Some(api_offset),
+        is_reverse: None,
+        is_half_width: Some(true),
+        keyword: keyword.map(String::from),
+    };
+    client
+        .get_recorded(&params)
+        .await
+        .context("failed to fetch recorded programs")
+}
+
+/// Background sync: opens its own DB connection (required for `Send`).
+async fn sync_recorded_background(
+    client: &EpgStationClient,
+    data_dir: Option<&std::path::PathBuf>,
+    limit: u64,
+    keyword: Option<&str>,
+    sync_tx: &std::sync::mpsc::Sender<SyncMessage>,
+) -> Result<(Vec<i64>, dtvmgr_db::Connection)> {
+    let conn = open_db(data_dir).context("failed to open database for sync")?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut all_ids: Vec<i64> = Vec::new();
+    let mut api_offset: u64 = 0;
+    let mut api_total: u64 = 0;
+    let tx = sync_tx.clone();
+    let mut on_progress = move |fetched, total| {
+        let _ = tx.send(SyncMessage::Progress { fetched, total });
+    };
+
+    loop {
+        let recorded = fetch_recorded_page(client, limit, api_offset, keyword).await?;
+        if api_total == 0 {
+            api_total = recorded.total;
+        }
+        if recorded.records.is_empty() {
+            break;
+        }
+        process_fetched_page(
+            &conn,
+            &recorded.records,
+            &now,
+            &mut all_ids,
+            api_total,
+            &mut on_progress,
+        )?;
+        api_offset = api_offset.saturating_add(limit);
+        if api_offset >= api_total {
+            break;
+        }
+    }
+    Ok((all_ids, conn))
+}
+
+/// Blocking initial sync with terminal progress display.
+#[allow(clippy::future_not_send)]
+async fn sync_recorded_initial(
+    client: &EpgStationClient,
+    conn: &dtvmgr_db::Connection,
+    limit: u64,
+    keyword: Option<&str>,
+    terminal: &mut crate::tui::encode_selector::TuiTerminal,
+) -> Result<Vec<i64>> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut all_ids: Vec<i64> = Vec::new();
+    let mut api_offset: u64 = 0;
+    let mut api_total: u64 = 0;
+
+    loop {
+        let recorded = fetch_recorded_page(client, limit, api_offset, keyword).await?;
+        if api_total == 0 {
+            api_total = recorded.total;
+        }
+        if recorded.records.is_empty() {
+            break;
+        }
+        process_fetched_page(
+            conn,
+            &recorded.records,
+            &now,
+            &mut all_ids,
+            api_total,
+            &mut |fetched, total| {
+                let _ =
+                    crate::tui::encode_selector::draw_loading_progress(terminal, 0, fetched, total);
+            },
+        )?;
+        api_offset = api_offset.saturating_add(limit);
+        if api_offset >= api_total {
+            break;
+        }
+    }
+    Ok(all_ids)
+}
+
+/// Builds encode rows from cached recorded items.
+#[allow(clippy::cast_sign_loss, clippy::as_conversions)]
+fn build_rows_from_cache(
+    cached: &[(
+        dtvmgr_db::recorded::CachedRecordedItem,
+        Vec<dtvmgr_db::recorded::CachedVideoFile>,
+    )],
+    channel_names: &std::collections::HashMap<u64, String>,
+) -> Vec<EncodeRow> {
+    cached
+        .iter()
+        .map(|(item, files)| {
+            let ch_id = item.channel_id as u64;
+            let ch_name = channel_names
+                .get(&ch_id)
+                .cloned()
+                .unwrap_or_else(|| ch_id.to_string());
+
+            let ts_file = files.iter().find(|vf| vf.file_type == "ts");
+
+            let source_video_file_id = ts_file.map(|vf| vf.id as u64);
+            let file_size = ts_file.map_or(0, |vf| vf.size as u64);
+            let file_exists = ts_file.and_then(|vf| vf.file_exists).unwrap_or(false);
+
+            EncodeRow {
+                recorded_id: item.id as u64,
+                channel_name: ch_name,
+                name: item.name.clone(),
+                start_at: item.start_at as u64,
+                end_at: item.end_at as u64,
+                video_resolution: item.video_resolution.clone().unwrap_or_default(),
+                video_type: item.video_type.clone().unwrap_or_default(),
+                source_video_file_id,
+                file_size,
+                drop_cnt: item.drop_cnt as u64,
+                error_cnt: item.error_cnt as u64,
+                is_recording: item.is_recording,
+                is_encoding: item.is_encoding,
+                file_exists,
+            }
+        })
+        .collect()
+}
+
+/// Collects TS video files that need existence checking, using TTL cache logic.
+/// Returns a list of `(video_file_id, recorded_id)` pairs (as `i64`).
+fn collect_files_to_check(
+    cached: &[(
+        dtvmgr_db::recorded::CachedRecordedItem,
+        Vec<dtvmgr_db::recorded::CachedVideoFile>,
+    )],
+    force: bool,
+) -> Vec<(i64, i64)> {
+    let now = chrono::Utc::now();
+    let ttl_secs: i64 = 3600; // 1 hour
+
+    let mut to_check: Vec<(i64, i64)> = Vec::new();
+    for (item, files) in cached {
+        for vf in files {
+            if vf.file_type != "ts" {
+                continue;
+            }
+            if force {
+                to_check.push((vf.id, item.id));
+                continue;
+            }
+            let needs_check = match (&vf.file_exists, &vf.file_checked_at) {
+                (Some(_), Some(checked_at)) => chrono::DateTime::parse_from_rfc3339(checked_at)
+                    .map_or(true, |checked| {
+                        now.signed_duration_since(checked).num_seconds() > ttl_secs
+                    }),
+                _ => true,
+            };
+            if needs_check {
+                to_check.push((vf.id, item.id));
+            }
+        }
+    }
+    to_check
+}
+
+/// Spawns a background task that checks file existence for a set of video files.
+///
+/// Returns the receiver for progress/completion messages and the number of files to check.
+fn spawn_file_check_task(
+    files_to_check: Vec<(i64, i64)>,
+    client: &EpgStationClient,
+    data_dir: Option<&std::path::PathBuf>,
+) -> (std::sync::mpsc::Receiver<FileCheckMessage>, usize) {
+    let total = files_to_check.len();
+    let (tx, rx) = std::sync::mpsc::channel::<FileCheckMessage>();
+    let bg_client = client.clone();
+    let bg_data_dir = data_dir.cloned();
+    tokio::spawn(async move {
+        let Ok(bg_conn) = open_db(bg_data_dir.as_ref()) else {
+            let _ = tx.send(FileCheckMessage::Complete);
+            return;
+        };
+        let now_str = chrono::Utc::now().to_rfc3339();
+        for (vf_id, recorded_id) in files_to_check {
+            #[allow(clippy::cast_sign_loss, clippy::as_conversions)]
+            let exists = bg_client.check_video_file_exists(vf_id as u64).await;
+            let _ = dtvmgr_db::update_file_exists(&bg_conn, vf_id, exists, &now_str);
+            #[allow(clippy::cast_sign_loss, clippy::as_conversions)]
+            let _ = tx.send(FileCheckMessage::Result {
+                recorded_id: recorded_id as u64,
+                exists,
+            });
+        }
+        let _ = tx.send(FileCheckMessage::Complete);
+    });
+    (rx, total)
+}
+
+#[allow(
+    clippy::too_many_lines,
+    clippy::print_stdout,
+    clippy::future_not_send,
+    clippy::as_conversions,
+    clippy::cast_possible_wrap
+)]
+async fn run_epgstation_encode(args: &EpgstationEncodeArgs, dir: Option<&PathBuf>) -> Result<()> {
+    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+    let config = AppConfig::load(&config_path).context("failed to load config")?;
+    let base_url = config
+        .epgstation
+        .base_url
+        .as_deref()
+        .unwrap_or("http://localhost:8888");
+
+    let api_base = format!("{base_url}/api/");
+
+    let client = EpgStationClient::builder()
+        .base_url(api_base.parse().context("invalid EPGStation base URL")?)
+        .user_agent(concat!(
+            env!("CARGO_PKG_NAME"),
+            "/",
+            env!("CARGO_PKG_VERSION")
+        ))
+        .build()
+        .context("failed to build EPGStation client")?;
+
+    // Fetch channels and config once (shared across pages)
+    let (channels_result, config_result) = tokio::join!(client.get_channels(), client.get_config());
+
+    let channels = channels_result.context("failed to fetch channels")?;
+    let epg_config = config_result.context("failed to fetch EPGStation config")?;
+
+    let channel_names: std::collections::HashMap<u64, String> = channels
+        .iter()
+        .map(|ch| (ch.id, ch.half_width_name.clone()))
+        .collect();
+
+    let presets: Vec<String> = epg_config.encode.iter().map(|p| p.name.clone()).collect();
+    let parent_dirs: Vec<String> = epg_config.recorded.iter().map(|d| d.name.clone()).collect();
+
+    let limit = args.limit;
+    let mut offset: u64 = 0;
+    let mut selected = std::collections::BTreeSet::<u64>::new();
+
+    // Open DB for caching
+    let data_dir = resolve_data_dir(dir).context("failed to resolve data directory")?;
+    let conn = open_db(data_dir.as_ref()).context("failed to open database")?;
+
+    // Set up terminal
+    let mut terminal =
+        crate::tui::encode_selector::setup_terminal().context("failed to set up terminal")?;
+
+    // Check if DB has cached data
+    #[allow(clippy::cast_possible_wrap)]
+    let (cached_first_page, _cached_total) =
+        dtvmgr_db::load_recorded_items_page(&conn, 0, limit as i64)
+            .context("failed to load cached recorded items")?;
+    let has_cache = !cached_first_page.is_empty();
+
+    // Sync receiver for background updates
+    let (sync_tx, sync_rx) = std::sync::mpsc::channel();
+    let sync_rx_opt = if has_cache {
+        // Has cache: spawn background re-sync
+        let bg_client = client.clone();
+        let bg_data_dir = data_dir.clone();
+        let bg_keyword = args.keyword.clone();
+        let bg_limit = limit;
+        tokio::spawn(async move {
+            let Ok((all_ids, bg_conn)) = sync_recorded_background(
+                &bg_client,
+                bg_data_dir.as_ref(),
+                bg_limit,
+                bg_keyword.as_deref(),
+                &sync_tx,
+            )
+            .await
+            else {
+                return;
+            };
+            if !all_ids.is_empty() {
+                let _ = dtvmgr_db::delete_recorded_items_not_in(&bg_conn, &all_ids);
+            }
+            let _ = sync_tx.send(SyncMessage::Complete);
+        });
+        Some(sync_rx)
+    } else {
+        // No cache: do a blocking initial sync with progress
+        let _ = crate::tui::encode_selector::draw_loading_progress(&mut terminal, 0, 0, 0);
+        let all_ids = match sync_recorded_initial(
+            &client,
+            &conn,
+            limit,
+            args.keyword.as_deref(),
+            &mut terminal,
+        )
+        .await
+        {
+            Ok(ids) => ids,
+            Err(e) => {
+                let _ = crate::tui::encode_selector::teardown_terminal();
+                return Err(e).context("failed to sync recorded programs");
+            }
+        };
+        // Clean up stale entries
+        if !all_ids.is_empty() {
+            let _ = dtvmgr_db::delete_recorded_items_not_in(&conn, &all_ids);
+        }
+        drop(sync_tx);
+        None
+    };
+
+    // Spawn encode queue polling task (shared across all pages).
+    let (queue_tx, queue_rx) = std::sync::mpsc::channel::<QueueMessage>();
+    {
+        let poll_client = client.clone();
+        tokio::spawn(async move {
+            let mut last_info: Option<EncodeQueueInfo> = None;
+            loop {
+                if let Ok(resp) = poll_client.get_encode_queue().await {
+                    let info = EncodeQueueInfo {
+                        running: resp
+                            .running_items
+                            .iter()
+                            .map(|item| RunningEncodeItem {
+                                name: item.recorded.name.clone(),
+                                mode: item.mode.clone(),
+                                percent: item.percent,
+                            })
+                            .collect(),
+                        waiting_count: resp.wait_items.len(),
+                    };
+                    // Only send if changed from last update.
+                    if last_info.as_ref() != Some(&info) {
+                        last_info = Some(info.clone());
+                        if queue_tx.send(QueueMessage::Update(info)).is_err() {
+                            break;
+                        }
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        });
+    }
+
+    let state = loop {
+        terminal.clear().context("failed to clear terminal")?;
+
+        // Load current page from DB cache
+        #[allow(clippy::cast_possible_wrap)]
+        let (cached_page, total_items) =
+            match dtvmgr_db::load_recorded_items_page(&conn, offset as i64, limit as i64) {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = crate::tui::encode_selector::teardown_terminal();
+                    return Err(e).context("failed to load cached recorded items");
+                }
+            };
+
+        let rows = build_rows_from_cache(&cached_page, &channel_names);
+
+        if rows.is_empty() && selected.is_empty() {
+            crate::tui::encode_selector::teardown_terminal()
+                .context("failed to tear down terminal")?;
+            println!("No recorded programs found.");
+            return Ok(());
+        }
+
+        let page = PageInfo {
+            offset,
+            size: limit,
+            total: total_items,
+        };
+        let mut state = EncodeSelectorState::new(
+            rows,
+            presets.clone(),
+            parent_dirs.clone(),
+            config.epgstation.default_preset.as_deref(),
+            config.epgstation.default_directory.as_deref(),
+            page,
+        );
+        // Carry over selections across pages
+        state.selected.clone_from(&selected);
+
+        // Inner loop: on Refresh, keep state and re-spawn file check only.
+        // Old task's tx.send() returns Err (rx dropped) and is ignored; DB writes
+        // still complete so no work is wasted.
+        let mut is_force = false;
+        let result = loop {
+            let files_to_check = collect_files_to_check(&cached_page, is_force);
+            let (file_check_rx, total_checks) =
+                spawn_file_check_task(files_to_check, &client, data_dir.as_ref());
+            state.file_check_progress = if total_checks > 0 {
+                Some((0, total_checks))
+            } else {
+                None
+            };
+
+            let r = match crate::tui::encode_selector::run_encode_selector(
+                &mut terminal,
+                &mut state,
+                sync_rx_opt.as_ref(),
+                Some(&file_check_rx),
+                Some(&queue_rx),
+            )
+            .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = crate::tui::encode_selector::teardown_terminal();
+                    return Err(e).context("encode selector TUI failed");
+                }
+            };
+
+            if r == SelectorResult::Refresh {
+                is_force = true;
+                continue;
+            }
+            break r;
+        };
+
+        // Preserve selections before potentially continuing
+        selected.clone_from(&state.selected);
+
+        match result {
+            SelectorResult::Confirmed => break state,
+            SelectorResult::Cancelled => {
+                crate::tui::encode_selector::teardown_terminal()
+                    .context("failed to tear down terminal")?;
+                println!("Cancelled.");
+                return Ok(());
+            }
+            SelectorResult::PageNext => {
+                offset = offset.saturating_add(limit);
+            }
+            SelectorResult::PagePrev => {
+                offset = offset.saturating_sub(limit);
+            }
+            // Refresh is fully handled by the inner loop above.
+            SelectorResult::Refresh => {}
+        }
+    };
+
+    // Tear down terminal after exiting the pagination loop
+    crate::tui::encode_selector::teardown_terminal().context("failed to tear down terminal")?;
+
+    // Submit encode jobs
+    let selected_rows: Vec<_> = state
+        .rows
+        .iter()
+        .filter(|row| state.selected.contains(&row.recorded_id))
+        .collect();
+
+    let mut success_count: usize = 0;
+    let mut fail_count: usize = 0;
+
+    for row in &selected_rows {
+        let Some(source_id) = row.source_video_file_id else {
+            tracing::warn!(
+                recorded_id = row.recorded_id,
+                "skipping: no source video file"
+            );
+            fail_count = fail_count.saturating_add(1);
+            continue;
+        };
+
+        let request = EncodeRequest {
+            recorded_id: row.recorded_id,
+            source_video_file_id: source_id,
+            mode: state.settings.mode.clone(),
+            parent_dir: if state.settings.is_save_same_directory {
+                None
+            } else {
+                Some(state.settings.parent_dir.clone())
+            },
+            directory: if state.settings.directory.is_empty()
+                || state.settings.is_save_same_directory
+            {
+                None
+            } else {
+                Some(state.settings.directory.clone())
+            },
+            is_save_same_directory: state.settings.is_save_same_directory,
+            remove_original: state.settings.remove_original,
+        };
+
+        match client.add_encode(&request).await {
+            Ok(resp) => {
+                tracing::info!(
+                    recorded_id = row.recorded_id,
+                    encode_program_id = resp.encode_program_id,
+                    name = %row.name,
+                    "encode job queued"
+                );
+                success_count = success_count.saturating_add(1);
+            }
+            Err(e) => {
+                tracing::error!(
+                    recorded_id = row.recorded_id,
+                    name = %row.name,
+                    error = %e,
+                    "failed to queue encode job"
+                );
+                fail_count = fail_count.saturating_add(1);
+            }
+        }
+    }
+
+    println!("Encode jobs submitted: {success_count} success, {fail_count} failed");
+    Ok(())
 }
 
 /// Initialize config file with default template.

@@ -1,0 +1,61 @@
+{
+	"total": 2,
+	"records": [
+		{
+			"id": 12345,
+			"channelId": 400101,
+			"name": "SPY×FAMILY #01",
+			"description": "Episode 1 description",
+			"extended": null,
+			"startAt": 1736377200000,
+			"endAt": 1736379000000,
+			"isRecording": false,
+			"isEncoding": false,
+			"isProtected": false,
+			"videoResolution": "1080i",
+			"videoType": "mpeg2",
+			"videoFiles": [
+				{
+					"id": 67890,
+					"name": "SPY×FAMILY #01.ts",
+					"filename": "SPY×FAMILY #01.ts",
+					"type": "ts",
+					"size": 3435973837
+				}
+			],
+			"dropLogFile": {
+				"dropCnt": 0,
+				"errorCnt": 0,
+				"scramblingCnt": 0
+			}
+		},
+		{
+			"id": 12346,
+			"channelId": 400201,
+			"name": "ぼっち・ざ・ろっく #01",
+			"description": "Episode 1",
+			"extended": null,
+			"startAt": 1736380800000,
+			"endAt": 1736382600000,
+			"isRecording": false,
+			"isEncoding": true,
+			"isProtected": false,
+			"videoResolution": "1080i",
+			"videoType": "mpeg2",
+			"videoFiles": [
+				{
+					"id": 67891,
+					"name": "ぼっち・ざ・ろっく #01.ts",
+					"filename": "ぼっち・ざ・ろっく #01.ts",
+					"type": "ts",
+					"size": 3327083725
+				}
+			],
+			"dropLogFile": {
+				"dropCnt": 2,
+				"errorCnt": 0,
+				"scramblingCnt": 0
+			}
+		}
+	]
+}

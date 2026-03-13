@@ -2,7 +2,7 @@
 #![allow(missing_docs)]
 
 use assert_cmd::cargo_bin_cmd;
-use predicates::prelude::predicate;
+use predicates::prelude::{PredicateBooleanExt, predicate};
 
 // ── db subcommands ─────────────────────────────────────────────
 
@@ -145,4 +145,63 @@ fn test_jlse_run_missing_input() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("--input"));
+}
+
+// ── epgstation subcommands ────────────────────────────────────
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_epgstation_encode_help() {
+    // Arrange & Act & Assert
+    let mut cmd = cargo_bin_cmd!("dtvmgr");
+    cmd.args(["epgstation", "encode", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--keyword"));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_epgstation_help() {
+    // Arrange & Act & Assert
+    let mut cmd = cargo_bin_cmd!("dtvmgr");
+    cmd.args(["epgstation", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("encode"));
+}
+
+// ── completion subcommand ─────────────────────────────────────
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_completion_bash() {
+    // Arrange & Act & Assert
+    let mut cmd = cargo_bin_cmd!("dtvmgr");
+    cmd.args(["completion", "bash"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty().not());
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_completion_zsh() {
+    // Arrange & Act & Assert
+    let mut cmd = cargo_bin_cmd!("dtvmgr");
+    cmd.args(["completion", "zsh"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty().not());
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_completion_fish() {
+    // Arrange & Act & Assert
+    let mut cmd = cargo_bin_cmd!("dtvmgr");
+    cmd.args(["completion", "fish"])
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty().not());
 }
