@@ -64,9 +64,10 @@ use dtvmgr_jlse::types::{AvsTarget, JlseConfig};
 #[derive(Parser)]
 #[command(about, version)]
 struct Cli {
-    /// Override config/data directory.
+    /// Path to config file (relative or absolute).
+    /// Data directory defaults to the same directory as the config file.
     #[arg(long, global = true)]
-    dir: Option<PathBuf>,
+    config: Option<PathBuf>,
 
     /// Subcommand to run.
     #[command(subcommand)]
@@ -441,7 +442,7 @@ struct TmdbTvSeasonArgs {
 /// Returns an error if the API client fails to build, time range is invalid,
 /// or the API request fails.
 #[instrument(skip_all)]
-async fn run_syoboi_prog(args: &ProgArgs, dir: Option<&PathBuf>) -> Result<()> {
+async fn run_syoboi_prog(args: &ProgArgs, config_file: Option<&PathBuf>) -> Result<()> {
     let client = SyoboiClient::builder()
         .user_agent(concat!(
             env!("CARGO_PKG_NAME"),
@@ -458,7 +459,7 @@ async fn run_syoboi_prog(args: &ProgArgs, dir: Option<&PathBuf>) -> Result<()> {
         range.end.format("%Y-%m-%d %H:%M:%S"),
     );
 
-    let ch_ids = resolve_ch_ids(args.ch_ids.clone(), dir)?;
+    let ch_ids = resolve_ch_ids(args.ch_ids.clone(), config_file)?;
 
     let params = ProgLookupParams {
         ch_ids: Some(ch_ids),
@@ -536,12 +537,12 @@ async fn run_syoboi_titles(args: &TitlesArgs) -> Result<()> {
 /// Resolves channel IDs from CLI args or config fallback.
 ///
 /// Returns an error if no channels are specified via `--ch-ids` or config.
-fn resolve_ch_ids(ch_ids: Option<Vec<u32>>, dir: Option<&PathBuf>) -> Result<Vec<u32>> {
+fn resolve_ch_ids(ch_ids: Option<Vec<u32>>, config_file: Option<&PathBuf>) -> Result<Vec<u32>> {
     if let Some(ids) = ch_ids {
         return Ok(ids);
     }
 
-    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+    let config_path = resolve_config_path(config_file).context("failed to resolve config path")?;
     let config = AppConfig::load(&config_path).context("failed to load config")?;
     if config.syoboi.channels.selected.is_empty() {
         anyhow::bail!(
@@ -800,10 +801,10 @@ fn cleanup_disallowed_cats(
     Ok(())
 }
 
-async fn run_db_sync(args: &DbSyncArgs, dir: Option<&PathBuf>) -> Result<()> {
+async fn run_db_sync(args: &DbSyncArgs, config_file: Option<&PathBuf>) -> Result<()> {
     let client = build_syoboi_client()?;
 
-    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+    let config_path = resolve_config_path(config_file).context("failed to resolve config path")?;
     let config = AppConfig::load(&config_path).context("failed to load config")?;
     let allowed_cats: HashSet<u32> = config.syoboi.titles.cat.iter().copied().collect();
     tracing::info!(?allowed_cats, "Category filter loaded from config");
@@ -815,7 +816,7 @@ async fn run_db_sync(args: &DbSyncArgs, dir: Option<&PathBuf>) -> Result<()> {
         range.end.format("%Y-%m-%d %H:%M:%S"),
     );
 
-    let ch_ids = resolve_ch_ids(args.ch_ids.clone(), dir)?;
+    let ch_ids = resolve_ch_ids(args.ch_ids.clone(), config_file)?;
 
     let params = ProgLookupParams {
         ch_ids: Some(ch_ids),
@@ -852,7 +853,7 @@ async fn run_db_sync(args: &DbSyncArgs, dir: Option<&PathBuf>) -> Result<()> {
     }
 
     // Open DB and upsert
-    let data_dir = resolve_data_dir(dir).context("failed to resolve data directory")?;
+    let data_dir = resolve_data_dir(config_file).context("failed to resolve data directory")?;
     let conn = open_db(data_dir.as_ref()).context("failed to open database")?;
 
     let cached_titles: Vec<CachedTitle> =
@@ -1310,14 +1311,14 @@ fn filter_titles(titles: Vec<CachedTitle>, force: bool, retry_unmapped: bool) ->
 /// Returns an error if API calls or DB operations fail.
 #[instrument(skip_all)]
 #[allow(clippy::too_many_lines)]
-async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> Result<()> {
-    let data_dir = resolve_data_dir(dir).context("failed to resolve data directory")?;
+async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, config_file: Option<&PathBuf>) -> Result<()> {
+    let data_dir = resolve_data_dir(config_file).context("failed to resolve data directory")?;
     let conn = open_db(data_dir.as_ref()).context("failed to open database")?;
-    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+    let config_path = resolve_config_path(config_file).context("failed to resolve config path")?;
     let config = AppConfig::load(&config_path).context("failed to load config")?;
 
-    let language = resolve_tmdb_language(args.language.as_deref(), dir);
-    let tmdb_client = build_tmdb_client(dir)?;
+    let language = resolve_tmdb_language(args.language.as_deref(), config_file);
+    let tmdb_client = build_tmdb_client(config_file)?;
 
     let mapping_dir = config_path
         .parent()
@@ -1554,11 +1555,12 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, dir: Option<&PathBuf>) -> R
 /// Returns an error if neither env var nor config `api_key` is set, or the client
 /// fails to build.
 #[instrument(skip_all)]
-fn build_tmdb_client(dir: Option<&PathBuf>) -> Result<TmdbClient> {
+fn build_tmdb_client(config_file: Option<&PathBuf>) -> Result<TmdbClient> {
     let api_token = if let Ok(token) = std::env::var("TMDB_API_TOKEN") {
         token
     } else {
-        let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+        let config_path =
+            resolve_config_path(config_file).context("failed to resolve config path")?;
         let config = AppConfig::load(&config_path).context("failed to load config")?;
         config
             .tmdb
@@ -1578,11 +1580,11 @@ fn build_tmdb_client(dir: Option<&PathBuf>) -> Result<TmdbClient> {
 }
 
 /// Resolves TMDB language: CLI arg > config > "en-US".
-fn resolve_tmdb_language(cli_lang: Option<&str>, dir: Option<&PathBuf>) -> String {
+fn resolve_tmdb_language(cli_lang: Option<&str>, config_file: Option<&PathBuf>) -> String {
     if let Some(lang) = cli_lang {
         return lang.to_owned();
     }
-    if let Ok(config_path) = resolve_config_path(dir)
+    if let Ok(config_path) = resolve_config_path(config_file)
         && let Ok(config) = AppConfig::load(&config_path)
         && let Some(lang) = config.tmdb.language
     {
@@ -1597,9 +1599,9 @@ fn resolve_tmdb_language(cli_lang: Option<&str>, dir: Option<&PathBuf>) -> Strin
 ///
 /// Returns an error if the TMDB client fails to build or the API request fails.
 #[instrument(skip_all)]
-async fn run_tmdb_search_tv(args: &TmdbSearchTvArgs, dir: Option<&PathBuf>) -> Result<()> {
-    let client = build_tmdb_client(dir)?;
-    let language = resolve_tmdb_language(args.language.as_deref(), dir);
+async fn run_tmdb_search_tv(args: &TmdbSearchTvArgs, config_file: Option<&PathBuf>) -> Result<()> {
+    let client = build_tmdb_client(config_file)?;
+    let language = resolve_tmdb_language(args.language.as_deref(), config_file);
 
     let params = SearchMultiParams::new(&args.query).language(&language);
     let response = client
@@ -1631,9 +1633,12 @@ async fn run_tmdb_search_tv(args: &TmdbSearchTvArgs, dir: Option<&PathBuf>) -> R
 ///
 /// Returns an error if the TMDB client fails to build or the API request fails.
 #[instrument(skip_all)]
-async fn run_tmdb_search_movie(args: &TmdbSearchMovieArgs, dir: Option<&PathBuf>) -> Result<()> {
-    let client = build_tmdb_client(dir)?;
-    let language = resolve_tmdb_language(args.language.as_deref(), dir);
+async fn run_tmdb_search_movie(
+    args: &TmdbSearchMovieArgs,
+    config_file: Option<&PathBuf>,
+) -> Result<()> {
+    let client = build_tmdb_client(config_file)?;
+    let language = resolve_tmdb_language(args.language.as_deref(), config_file);
 
     let params = SearchMultiParams::new(&args.query).language(&language);
     let response = client
@@ -1664,9 +1669,12 @@ async fn run_tmdb_search_movie(args: &TmdbSearchMovieArgs, dir: Option<&PathBuf>
 ///
 /// Returns an error if the TMDB client fails to build or the API request fails.
 #[instrument(skip_all)]
-async fn run_tmdb_tv_details(args: &TmdbTvDetailsArgs, dir: Option<&PathBuf>) -> Result<()> {
-    let client = build_tmdb_client(dir)?;
-    let language = resolve_tmdb_language(args.language.as_deref(), dir);
+async fn run_tmdb_tv_details(
+    args: &TmdbTvDetailsArgs,
+    config_file: Option<&PathBuf>,
+) -> Result<()> {
+    let client = build_tmdb_client(config_file)?;
+    let language = resolve_tmdb_language(args.language.as_deref(), config_file);
 
     let details = client
         .tv_details(args.id, &language)
@@ -1702,9 +1710,9 @@ async fn run_tmdb_tv_details(args: &TmdbTvDetailsArgs, dir: Option<&PathBuf>) ->
 ///
 /// Returns an error if the TMDB client fails to build or the API request fails.
 #[instrument(skip_all)]
-async fn run_tmdb_tv_season(args: &TmdbTvSeasonArgs, dir: Option<&PathBuf>) -> Result<()> {
-    let client = build_tmdb_client(dir)?;
-    let language = resolve_tmdb_language(args.language.as_deref(), dir);
+async fn run_tmdb_tv_season(args: &TmdbTvSeasonArgs, config_file: Option<&PathBuf>) -> Result<()> {
+    let client = build_tmdb_client(config_file)?;
+    let language = resolve_tmdb_language(args.language.as_deref(), config_file);
 
     let season = client
         .tv_season(args.id, args.season, &language)
@@ -1738,8 +1746,8 @@ async fn run_tmdb_tv_season(args: &TmdbTvSeasonArgs, dir: Option<&PathBuf>) -> R
 /// # Errors
 ///
 /// Returns an error if the jlse section is not configured.
-fn resolve_jlse_config(dir: Option<&PathBuf>) -> Result<JlseConfig> {
-    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+fn resolve_jlse_config(config_file: Option<&PathBuf>) -> Result<JlseConfig> {
+    let config_path = resolve_config_path(config_file).context("failed to resolve config path")?;
     let config = AppConfig::load(&config_path).context("failed to load config")?;
     let jlse = config
         .jlse
@@ -1786,8 +1794,8 @@ fn detect_target_from_middle(
 /// Returns an error if `TSDuck` fails or the EIT XML cannot be parsed.
 #[allow(clippy::print_stdout)]
 #[instrument(skip_all)]
-fn run_jlse_tsduck(args: &JlseTsduckArgs, dir: Option<&PathBuf>) -> Result<()> {
-    let jlse_config = resolve_jlse_config(dir)?;
+fn run_jlse_tsduck(args: &JlseTsduckArgs, config_file: Option<&PathBuf>) -> Result<()> {
+    let jlse_config = resolve_jlse_config(config_file)?;
     let bins = BinaryPaths::from_config(&jlse_config);
 
     // --sid takes priority over -c (channel name detection).
@@ -1921,8 +1929,8 @@ fn print_program_info(p: &dtvmgr_tsduck::eit::ProgramInfo, target_event_id: Opti
 /// Returns an error if the channel list cannot be loaded.
 #[allow(clippy::print_stdout)]
 #[instrument(skip_all)]
-fn run_jlse_channel(args: &JlseChannelArgs, dir: Option<&PathBuf>) -> Result<()> {
-    let jlse_config = resolve_jlse_config(dir)?;
+fn run_jlse_channel(args: &JlseChannelArgs, config_file: Option<&PathBuf>) -> Result<()> {
+    let jlse_config = resolve_jlse_config(config_file)?;
     let data = DataPaths::from_config(&jlse_config);
     let channels = load_jlse_channels(&data.channel_list)?;
 
@@ -1954,8 +1962,8 @@ fn run_jlse_channel(args: &JlseChannelArgs, dir: Option<&PathBuf>) -> Result<()>
 /// Returns an error if the param lists cannot be loaded.
 #[allow(clippy::print_stdout)]
 #[instrument(skip_all)]
-fn run_jlse_param(args: &JlseParamArgs, dir: Option<&PathBuf>) -> Result<()> {
-    let jlse_config = resolve_jlse_config(dir)?;
+fn run_jlse_param(args: &JlseParamArgs, config_file: Option<&PathBuf>) -> Result<()> {
+    let jlse_config = resolve_jlse_config(config_file)?;
     let data = DataPaths::from_config(&jlse_config);
     let channels = load_jlse_channels(&data.channel_list)?;
 
@@ -2001,8 +2009,8 @@ fn run_pipeline_with_tui(ctx: PipelineContext) -> Result<()> {
 ///
 /// Returns an error if the pipeline fails.
 #[instrument(skip_all)]
-fn run_jlse_run(args: &JlseRunArgs, dir: Option<&PathBuf>) -> Result<()> {
-    let jlse_config = resolve_jlse_config(dir)?;
+fn run_jlse_run(args: &JlseRunArgs, config_file: Option<&PathBuf>) -> Result<()> {
+    let jlse_config = resolve_jlse_config(config_file)?;
 
     let channel_name = resolve_channel_name(args.channel.as_deref());
 
@@ -2128,7 +2136,7 @@ fn build_syoboi_client() -> Result<SyoboiClient> {
 ///
 /// Returns an error if API calls, DB operations, or TUI fails.
 #[instrument(skip_all)]
-async fn run_channels_select(dir: Option<&PathBuf>) -> Result<()> {
+async fn run_channels_select(config_file: Option<&PathBuf>) -> Result<()> {
     let client = build_syoboi_client()?;
 
     tracing::info!("Fetching channel groups from API...");
@@ -2144,7 +2152,7 @@ async fn run_channels_select(dir: Option<&PathBuf>) -> Result<()> {
         .context("failed to fetch channels")?;
 
     // Cache in DB
-    let data_dir = resolve_data_dir(dir).context("failed to resolve data directory")?;
+    let data_dir = resolve_data_dir(config_file).context("failed to resolve data directory")?;
     let conn = open_db(data_dir.as_ref()).context("failed to open database")?;
 
     let cached_groups: Vec<CachedChannelGroup> = api_groups
@@ -2173,7 +2181,7 @@ async fn run_channels_select(dir: Option<&PathBuf>) -> Result<()> {
     tracing::info!(changed = channels_changed, "Channels upsert complete");
 
     // Load config
-    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+    let config_path = resolve_config_path(config_file).context("failed to resolve config path")?;
     let config = AppConfig::load(&config_path).context("failed to load config")?;
     let initial_selected: BTreeSet<u32> = config.syoboi.channels.selected.into_iter().collect();
 
@@ -2253,8 +2261,8 @@ fn build_tui_groups(
 ///
 /// Returns an error if config or DB operations fail.
 #[instrument(skip_all)]
-fn run_channels_list(dir: Option<&PathBuf>) -> Result<()> {
-    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+fn run_channels_list(config_file: Option<&PathBuf>) -> Result<()> {
+    let config_path = resolve_config_path(config_file).context("failed to resolve config path")?;
     let config = AppConfig::load(&config_path).context("failed to load config")?;
 
     if config.syoboi.channels.selected.is_empty() {
@@ -2263,7 +2271,7 @@ fn run_channels_list(dir: Option<&PathBuf>) -> Result<()> {
     }
 
     // Try to load names from DB cache
-    let data_dir = resolve_data_dir(dir).ok().flatten();
+    let data_dir = resolve_data_dir(config_file).ok().flatten();
     let conn = open_db(data_dir.as_ref());
     let cached_channels = conn
         .as_ref()
@@ -2294,10 +2302,10 @@ fn run_channels_list(dir: Option<&PathBuf>) -> Result<()> {
 ///
 /// Returns an error if DB operations or TUI fails.
 #[instrument(skip_all)]
-fn run_db_list(dir: Option<&PathBuf>) -> Result<()> {
-    let data_dir = resolve_data_dir(dir).context("failed to resolve data directory")?;
+fn run_db_list(config_file: Option<&PathBuf>) -> Result<()> {
+    let data_dir = resolve_data_dir(config_file).context("failed to resolve data directory")?;
     let conn = open_db(data_dir.as_ref()).context("failed to open database")?;
-    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+    let config_path = resolve_config_path(config_file).context("failed to resolve config path")?;
     let config = AppConfig::load(&config_path).context("failed to load config")?;
 
     let excluded_tids: std::collections::HashSet<u32> =
@@ -2358,10 +2366,10 @@ fn run_db_list(dir: Option<&PathBuf>) -> Result<()> {
 ///
 /// Returns an error if DB operations, config I/O, or TUI fails.
 #[instrument(skip_all)]
-fn run_db_normalize(dir: Option<&PathBuf>) -> Result<()> {
-    let data_dir = resolve_data_dir(dir).context("failed to resolve data directory")?;
+fn run_db_normalize(config_file: Option<&PathBuf>) -> Result<()> {
+    let data_dir = resolve_data_dir(config_file).context("failed to resolve data directory")?;
     let conn = open_db(data_dir.as_ref()).context("failed to open database")?;
-    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+    let config_path = resolve_config_path(config_file).context("failed to resolve config path")?;
     let config = AppConfig::load(&config_path).context("failed to load config")?;
 
     let titles = load_titles(&conn).context("failed to load titles")?;
@@ -2452,39 +2460,41 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Syoboi(cmd) => match cmd.command {
-            SyoboiSubcommands::Prog(args) => run_syoboi_prog(&args, cli.dir.as_ref()).await,
+            SyoboiSubcommands::Prog(args) => run_syoboi_prog(&args, cli.config.as_ref()).await,
             SyoboiSubcommands::Titles(args) => run_syoboi_titles(&args).await,
             SyoboiSubcommands::Channels(ch) => match ch.command {
-                ChannelsSubcommands::Select => run_channels_select(cli.dir.as_ref()).await,
-                ChannelsSubcommands::List => run_channels_list(cli.dir.as_ref()),
+                ChannelsSubcommands::Select => run_channels_select(cli.config.as_ref()).await,
+                ChannelsSubcommands::List => run_channels_list(cli.config.as_ref()),
             },
         },
         Commands::Tmdb(tmdb) => match tmdb.command {
-            TmdbSubcommands::SearchTv(args) => run_tmdb_search_tv(&args, cli.dir.as_ref()).await,
+            TmdbSubcommands::SearchTv(args) => run_tmdb_search_tv(&args, cli.config.as_ref()).await,
             TmdbSubcommands::SearchMovie(args) => {
-                run_tmdb_search_movie(&args, cli.dir.as_ref()).await
+                run_tmdb_search_movie(&args, cli.config.as_ref()).await
             }
-            TmdbSubcommands::TvDetails(args) => run_tmdb_tv_details(&args, cli.dir.as_ref()).await,
-            TmdbSubcommands::TvSeason(args) => run_tmdb_tv_season(&args, cli.dir.as_ref()).await,
+            TmdbSubcommands::TvDetails(args) => {
+                run_tmdb_tv_details(&args, cli.config.as_ref()).await
+            }
+            TmdbSubcommands::TvSeason(args) => run_tmdb_tv_season(&args, cli.config.as_ref()).await,
         },
         Commands::Db(db) => match db.command {
-            DbSubcommands::Sync(args) => run_db_sync(&args, cli.dir.as_ref()).await,
-            DbSubcommands::List => run_db_list(cli.dir.as_ref()),
-            DbSubcommands::Normalize => run_db_normalize(cli.dir.as_ref()),
-            DbSubcommands::TmdbLookup(args) => run_db_tmdb_lookup(&args, cli.dir.as_ref()).await,
+            DbSubcommands::Sync(args) => run_db_sync(&args, cli.config.as_ref()).await,
+            DbSubcommands::List => run_db_list(cli.config.as_ref()),
+            DbSubcommands::Normalize => run_db_normalize(cli.config.as_ref()),
+            DbSubcommands::TmdbLookup(args) => run_db_tmdb_lookup(&args, cli.config.as_ref()).await,
         },
         Commands::Jlse(jlse) => match jlse.command {
-            JlseSubcommands::Channel(args) => run_jlse_channel(&args, cli.dir.as_ref()),
-            JlseSubcommands::Param(args) => run_jlse_param(&args, cli.dir.as_ref()),
-            JlseSubcommands::Run(args) => run_jlse_run(&args, cli.dir.as_ref()),
-            JlseSubcommands::Tsduck(args) => run_jlse_tsduck(&args, cli.dir.as_ref()),
+            JlseSubcommands::Channel(args) => run_jlse_channel(&args, cli.config.as_ref()),
+            JlseSubcommands::Param(args) => run_jlse_param(&args, cli.config.as_ref()),
+            JlseSubcommands::Run(args) => run_jlse_run(&args, cli.config.as_ref()),
+            JlseSubcommands::Tsduck(args) => run_jlse_tsduck(&args, cli.config.as_ref()),
         },
         Commands::Epgstation(cmd) => match cmd.command {
             EpgstationSubcommands::Encode(args) => {
-                run_epgstation_encode(&args, cli.dir.as_ref()).await
+                run_epgstation_encode(&args, cli.config.as_ref()).await
             }
         },
-        Commands::Init => run_init(cli.dir.as_ref()),
+        Commands::Init => run_init(cli.config.as_ref()),
         Commands::Completion(comp) => {
             let mut cmd = Cli::command();
             clap_complete::generate(comp.shell, &mut cmd, "dtvmgr", &mut std::io::stdout());
@@ -2818,8 +2828,11 @@ fn spawn_file_check_worker(
     clippy::as_conversions,
     clippy::cast_possible_wrap
 )]
-async fn run_epgstation_encode(args: &EpgstationEncodeArgs, dir: Option<&PathBuf>) -> Result<()> {
-    let config_path = resolve_config_path(dir).context("failed to resolve config path")?;
+async fn run_epgstation_encode(
+    args: &EpgstationEncodeArgs,
+    config_file: Option<&PathBuf>,
+) -> Result<()> {
+    let config_path = resolve_config_path(config_file).context("failed to resolve config path")?;
     let config = AppConfig::load(&config_path).context("failed to load config")?;
     let base_url = config
         .epgstation
@@ -2859,7 +2872,7 @@ async fn run_epgstation_encode(args: &EpgstationEncodeArgs, dir: Option<&PathBuf
     let mut last_encode_queue: Option<EncodeQueueInfo> = None;
 
     // Open DB for caching
-    let data_dir = resolve_data_dir(dir).context("failed to resolve data directory")?;
+    let data_dir = resolve_data_dir(config_file).context("failed to resolve data directory")?;
     let conn = open_db(data_dir.as_ref()).context("failed to open database")?;
 
     // Set up terminal
@@ -3150,8 +3163,8 @@ async fn run_epgstation_encode(args: &EpgstationEncodeArgs, dir: Option<&PathBuf
 
 /// Initialize config file with default template.
 #[allow(clippy::print_stdout)]
-fn run_init(dir: Option<&PathBuf>) -> Result<()> {
-    let path = resolve_config_path(dir).context("failed to resolve config path")?;
+fn run_init(config_file: Option<&PathBuf>) -> Result<()> {
+    let path = resolve_config_path(config_file).context("failed to resolve config path")?;
     let default_config = AppConfig::default();
     let template = default_config.to_commented_toml();
 
