@@ -175,9 +175,13 @@ impl AppConfig {
     /// Returns an error if the file exists but cannot be read or parsed.
     pub fn load(path: &Path) -> Result<Self> {
         match std::fs::read_to_string(path) {
-            Ok(content) => toml::from_str(&content)
-                .with_context(|| format!("failed to parse {}", path.display())),
+            Ok(content) => {
+                tracing::info!(path = %path.display(), "loaded config");
+                toml::from_str(&content)
+                    .with_context(|| format!("failed to parse {}", path.display()))
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::warn!(path = %path.display(), "config not found, using defaults");
                 let config = Self::default();
                 let content = config.to_commented_toml();
                 // Best-effort write so users can discover all options.
