@@ -7,19 +7,12 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Row, Table};
 
 use super::state::{ActivePane, InputMode, TitleViewerState, TmdbFilter};
+use crate::tui::fmt::with_commas;
 
 /// Formats a number with thousands separators (e.g. 169940 -> "169,940").
-#[allow(clippy::arithmetic_side_effects)]
 fn fmt_num(n: usize) -> String {
-    let s = n.to_string();
-    let mut result = String::with_capacity(s.len() + s.len() / 3);
-    for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i).is_multiple_of(3) {
-            result.push(',');
-        }
-        result.push(c);
-    }
-    result
+    #[allow(clippy::as_conversions)]
+    with_commas(n as u64)
 }
 
 /// Draws the title viewer UI. Returns the main content area height for page size calculation.
