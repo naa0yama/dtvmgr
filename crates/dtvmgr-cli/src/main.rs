@@ -7,6 +7,7 @@ mod tui;
 
 use std::collections::{BTreeSet, HashSet};
 use std::io::BufRead;
+use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -2855,6 +2856,7 @@ async fn run_epgstation_encode(args: &EpgstationEncodeArgs, dir: Option<&PathBuf
     let limit = args.limit;
     let mut offset: u64 = 0;
     let mut selected = std::collections::BTreeSet::<u64>::new();
+    let mut last_encode_queue: Option<EncodeQueueInfo> = None;
 
     // Open DB for caching
     let data_dir = resolve_data_dir(dir).context("failed to resolve data directory")?;
@@ -3005,8 +3007,9 @@ async fn run_epgstation_encode(args: &EpgstationEncodeArgs, dir: Option<&PathBuf
             config.epgstation.default_directory.as_deref(),
             page,
         );
-        // Carry over selections across pages
-        state.selected.clone_from(&selected);
+        // Carry over selections and encode queue across pages (move, not clone)
+        state.selected = mem::take(&mut selected);
+        state.encode_queue = last_encode_queue.take();
 
         // Inner loop: on Refresh, keep state and enqueue a new file check request.
         // Old page's result_tx.send() returns Err (rx dropped) and is ignored; DB writes
@@ -3053,8 +3056,9 @@ async fn run_epgstation_encode(args: &EpgstationEncodeArgs, dir: Option<&PathBuf
             break r;
         };
 
-        // Preserve selections before potentially continuing
-        selected.clone_from(&state.selected);
+        // Preserve selections and encode queue before potentially continuing (move back)
+        selected = mem::take(&mut state.selected);
+        last_encode_queue = state.encode_queue.take();
 
         match result {
             SelectorResult::Confirmed => break state,
