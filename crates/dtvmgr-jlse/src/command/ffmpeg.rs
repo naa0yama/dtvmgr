@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
+use dtvmgr_tsduck::command::apply_pdeathsig;
 use tracing::debug;
 
 use crate::progress::{self, ProgressEvent};
@@ -362,10 +363,10 @@ pub fn run_with_progress(
     );
     debug!(cmd = %binary.display(), ?args, "running ffmpeg with progress");
 
-    let mut child = Command::new(binary)
-        .args(&args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+    let mut cmd = Command::new(binary);
+    cmd.args(&args).stdout(Stdio::null()).stderr(Stdio::piped());
+    apply_pdeathsig(&mut cmd);
+    let mut child = cmd
         .spawn()
         .with_context(|| format!("failed to spawn {}", binary.display()))?;
 
