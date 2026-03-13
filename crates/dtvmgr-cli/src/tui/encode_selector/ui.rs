@@ -116,8 +116,24 @@ fn draw_recording_list(frame: &mut Frame, state: &mut EncodeSelectorState) {
     if let Some((fetched, total)) = state.sync_progress {
         let _ = write!(count_parts, " | Syncing: {fetched}/{total}");
     }
-    if let Some((checked, total)) = state.file_check_progress {
-        let _ = write!(count_parts, " | Checking: {checked}/{total}");
+    if let Some(wp) = &state.file_check_progress {
+        match wp.checking {
+            Some((checked, total)) => {
+                if wp.pending > 0 {
+                    let _ = write!(
+                        count_parts,
+                        " | Checking: {checked}/{total} (+{} queued)",
+                        wp.pending
+                    );
+                } else {
+                    let _ = write!(count_parts, " | Checking: {checked}/{total}");
+                }
+            }
+            None if wp.pending > 0 => {
+                let _ = write!(count_parts, " | Queued: {}", wp.pending);
+            }
+            None => {}
+        }
     }
     let _ = write!(
         count_parts,

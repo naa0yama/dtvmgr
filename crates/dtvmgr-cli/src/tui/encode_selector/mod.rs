@@ -16,7 +16,8 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use self::state::{
-    EncodeSelectorState, InputMode, SelectorResult, SettingsField, SyncMessage, WizardStep,
+    EncodeSelectorState, FileCheckWorkerProgress, InputMode, SelectorResult, SettingsField,
+    SyncMessage, WizardStep,
 };
 use self::state::{FileCheckMessage, QueueMessage};
 
@@ -66,8 +67,17 @@ pub async fn run_encode_selector(
     sync_rx: Option<&mpsc::Receiver<SyncMessage>>,
     file_check_rx: Option<&mpsc::Receiver<FileCheckMessage>>,
     queue_rx: Option<&mpsc::Receiver<QueueMessage>>,
+    progress_rx: &tokio::sync::watch::Receiver<FileCheckWorkerProgress>,
 ) -> Result<SelectorResult> {
-    run_event_loop(terminal, state, sync_rx, file_check_rx, queue_rx).await
+    run_event_loop(
+        terminal,
+        state,
+        sync_rx,
+        file_check_rx,
+        queue_rx,
+        progress_rx,
+    )
+    .await
 }
 
 /// Draws a loading indicator with optional file check progress.
@@ -98,6 +108,7 @@ async fn run_event_loop(
     sync_rx: Option<&mpsc::Receiver<SyncMessage>>,
     file_check_rx: Option<&mpsc::Receiver<FileCheckMessage>>,
     queue_rx: Option<&mpsc::Receiver<QueueMessage>>,
+    progress_rx: &tokio::sync::watch::Receiver<FileCheckWorkerProgress>,
 ) -> Result<SelectorResult> {
     loop {
         // Drain background sync messages.
@@ -125,18 +136,23 @@ async fn run_event_loop(
                     } => {
                         state.update_file_exists(recorded_id, exists);
                         had_updates = true;
-                        if let Some((checked, _)) = &mut state.file_check_progress {
-                            *checked = checked.saturating_add(1);
-                        }
                     }
                     FileCheckMessage::Complete => {
-                        state.file_check_progress = None;
                         had_updates = true;
                     }
                 }
             }
             if had_updates {
                 state.rebuild_filter();
+            }
+        }
+
+        // Read global worker progress from watch channel.
+        {
+            let wp = *progress_rx.borrow();
+            let new_progress = wp.is_active().then_some(wp);
+            if state.file_check_progress != new_progress {
+                state.file_check_progress = new_progress;
             }
         }
 

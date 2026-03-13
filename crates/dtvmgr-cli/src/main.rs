@@ -8,7 +8,8 @@ mod tui;
 use std::collections::{BTreeSet, HashSet};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -25,8 +26,9 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::config::{AppConfig, load_or_fetch, resolve_config_path, resolve_data_dir};
 use crate::tui::encode_selector::state::{
-    EncodeQueueInfo, EncodeRow, EncodeSelectorState, FileCheckMessage, PageInfo, QueueMessage,
-    RunningEncodeItem, SelectorResult, SyncMessage,
+    EncodeQueueInfo, EncodeRow, EncodeSelectorState, FileCheckMessage, FileCheckRequest,
+    FileCheckWorkerProgress, PageInfo, QueueMessage, RunningEncodeItem, SelectorResult,
+    SyncMessage,
 };
 use crate::tui::run_channel_selector;
 use crate::tui::state::{ChannelEntry, ChannelGroup};
@@ -2759,37 +2761,53 @@ fn collect_files_to_check(
     to_check
 }
 
-/// Spawns a background task that checks file existence for a set of video files.
+/// Spawns a single long-lived worker that processes file existence check requests sequentially.
 ///
-/// Returns the receiver for progress/completion messages and the number of files to check.
-fn spawn_file_check_task(
-    files_to_check: Vec<(i64, i64)>,
+/// Each request contains a batch of files to check and a result channel for the requesting page.
+/// Only one API call is ever in-flight at a time. Old page results silently fail to send when
+/// the receiver is dropped, but DB updates still complete (useful for caching).
+fn spawn_file_check_worker(
     client: &EpgStationClient,
-    data_dir: Option<&std::path::PathBuf>,
-) -> (std::sync::mpsc::Receiver<FileCheckMessage>, usize) {
-    let total = files_to_check.len();
-    let (tx, rx) = std::sync::mpsc::channel::<FileCheckMessage>();
+    data_dir: Option<&PathBuf>,
+    mut req_rx: tokio::sync::mpsc::Receiver<FileCheckRequest>,
+    progress_tx: tokio::sync::watch::Sender<FileCheckWorkerProgress>,
+    pending: Arc<AtomicUsize>,
+) {
     let bg_client = client.clone();
     let bg_data_dir = data_dir.cloned();
     tokio::spawn(async move {
-        let Ok(bg_conn) = open_db(bg_data_dir.as_ref()) else {
-            let _ = tx.send(FileCheckMessage::Complete);
+        let Ok(conn) = open_db(bg_data_dir.as_ref()) else {
             return;
         };
-        let now_str = chrono::Utc::now().to_rfc3339();
-        for (vf_id, recorded_id) in files_to_check {
-            #[allow(clippy::cast_sign_loss, clippy::as_conversions)]
-            let exists = bg_client.check_video_file_exists(vf_id as u64).await;
-            let _ = dtvmgr_db::update_file_exists(&bg_conn, vf_id, exists, &now_str);
-            #[allow(clippy::cast_sign_loss, clippy::as_conversions)]
-            let _ = tx.send(FileCheckMessage::Result {
-                recorded_id: recorded_id as u64,
-                exists,
+        while let Some(req) = req_rx.recv().await {
+            let p = pending.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
+            let total = req.files.len();
+            let _ = progress_tx.send(FileCheckWorkerProgress {
+                pending: p,
+                checking: Some((0, total)),
+            });
+            let now_str = chrono::Utc::now().to_rfc3339();
+            for (i, (vf_id, recorded_id)) in req.files.iter().enumerate() {
+                #[allow(clippy::cast_sign_loss, clippy::as_conversions)]
+                let exists = bg_client.check_video_file_exists(*vf_id as u64).await;
+                let _ = dtvmgr_db::update_file_exists(&conn, *vf_id, exists, &now_str);
+                #[allow(clippy::cast_sign_loss, clippy::as_conversions)]
+                let _ = req.result_tx.send(FileCheckMessage::Result {
+                    recorded_id: *recorded_id as u64,
+                    exists,
+                });
+                let _ = progress_tx.send(FileCheckWorkerProgress {
+                    pending: pending.load(Ordering::Relaxed),
+                    checking: Some((i.saturating_add(1), total)),
+                });
+            }
+            let _ = req.result_tx.send(FileCheckMessage::Complete);
+            let _ = progress_tx.send(FileCheckWorkerProgress {
+                pending: pending.load(Ordering::Relaxed),
+                checking: None,
             });
         }
-        let _ = tx.send(FileCheckMessage::Complete);
     });
-    (rx, total)
 }
 
 #[allow(
@@ -2938,6 +2956,19 @@ async fn run_epgstation_encode(args: &EpgstationEncodeArgs, dir: Option<&PathBuf
         });
     }
 
+    // Spawn a single file-check worker; page loop sends requests through this channel.
+    let (check_req_tx, check_req_rx) = tokio::sync::mpsc::channel::<FileCheckRequest>(4);
+    let pending = Arc::new(AtomicUsize::new(0));
+    let (progress_tx, progress_rx) =
+        tokio::sync::watch::channel(FileCheckWorkerProgress::default());
+    spawn_file_check_worker(
+        &client,
+        data_dir.as_ref(),
+        check_req_rx,
+        progress_tx,
+        Arc::clone(&pending),
+    );
+
     let state = loop {
         terminal.clear().context("failed to clear terminal")?;
 
@@ -2977,16 +3008,23 @@ async fn run_epgstation_encode(args: &EpgstationEncodeArgs, dir: Option<&PathBuf
         // Carry over selections across pages
         state.selected.clone_from(&selected);
 
-        // Inner loop: on Refresh, keep state and re-spawn file check only.
-        // Old task's tx.send() returns Err (rx dropped) and is ignored; DB writes
+        // Inner loop: on Refresh, keep state and enqueue a new file check request.
+        // Old page's result_tx.send() returns Err (rx dropped) and is ignored; DB writes
         // still complete so no work is wasted.
         let mut is_force = false;
         let result = loop {
             let files_to_check = collect_files_to_check(&cached_page, is_force);
-            let (file_check_rx, total_checks) =
-                spawn_file_check_task(files_to_check, &client, data_dir.as_ref());
-            state.file_check_progress = if total_checks > 0 {
-                Some((0, total_checks))
+            let total_checks = files_to_check.len();
+            let file_check_rx = if total_checks > 0 {
+                let (file_check_tx, rx) = std::sync::mpsc::channel::<FileCheckMessage>();
+                pending.fetch_add(1, Ordering::Relaxed);
+                let _ = check_req_tx
+                    .send(FileCheckRequest {
+                        files: files_to_check,
+                        result_tx: file_check_tx,
+                    })
+                    .await;
+                Some(rx)
             } else {
                 None
             };
@@ -2995,8 +3033,9 @@ async fn run_epgstation_encode(args: &EpgstationEncodeArgs, dir: Option<&PathBuf
                 &mut terminal,
                 &mut state,
                 sync_rx_opt.as_ref(),
-                Some(&file_check_rx),
+                file_check_rx.as_ref(),
                 Some(&queue_rx),
+                &progress_rx,
             )
             .await
             {

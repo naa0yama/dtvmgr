@@ -38,6 +38,31 @@ pub enum SyncMessage {
     Complete,
 }
 
+/// Global worker progress, shared via watch channel.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FileCheckWorkerProgress {
+    /// Batches waiting in queue (not including current).
+    pub pending: usize,
+    /// Current batch progress, if actively processing.
+    pub checking: Option<(usize, usize)>,
+}
+
+impl FileCheckWorkerProgress {
+    /// Returns `true` when the worker is processing or has queued batches.
+    #[must_use]
+    pub const fn is_active(self) -> bool {
+        self.checking.is_some() || self.pending > 0
+    }
+}
+
+/// A batch of file existence checks to enqueue to the worker.
+pub struct FileCheckRequest {
+    /// Files to check: `(video_file_id, recorded_id)`.
+    pub files: Vec<(i64, i64)>,
+    /// Channel to send results back to the current page's TUI.
+    pub result_tx: std::sync::mpsc::Sender<FileCheckMessage>,
+}
+
 /// Message from a background file existence check task.
 #[derive(Debug, Clone)]
 pub enum FileCheckMessage {
@@ -231,8 +256,8 @@ pub struct EncodeSelectorState {
     hidden_count: usize,
     /// Background sync progress: `(fetched, total)`.
     pub sync_progress: Option<(usize, usize)>,
-    /// Background file check progress: `(checked, total)`.
-    pub file_check_progress: Option<(usize, usize)>,
+    /// Background file check worker progress (global, from watch channel).
+    pub file_check_progress: Option<FileCheckWorkerProgress>,
     /// Encode queue status for header display.
     pub encode_queue: Option<EncodeQueueInfo>,
 }
