@@ -1,5 +1,19 @@
 # Changelog
 
+## [v0.2.0](https://github.com/naa0yama/dtvmgr/compare/v0.1.6...v0.2.0) - 2026-03-13
+
+### Dependency Updates 👒
+
+- chore(deps): update dependency github:rust-secure-code/cargo-auditable to v0.7.4 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/64
+- chore(deps): update taiki-e/install-action action to v2.68.19 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/66
+- chore(deps): update github/codeql-action action to v4.32.6 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/68
+
+### Other Changes
+
+- refactor(cli): flatten TmdbApiConfig into TmdbConfig by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/67
+- feat: add EPGStation encode command with TUI selector by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/69
+- fix(ci): prevent tagpr failure on pull_request labeled event by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/70
+
 ## [v0.1.6](https://github.com/naa0yama/dtvmgr/compare/v0.1.5...v0.1.6) - 2026-03-11
 
 ### Documentation 🗒️
