@@ -53,10 +53,12 @@ run = "cargo test --doc"
 
 [tasks.coverage]
 description = "Generate LCOV coverage report"
+env = { OTEL_EXPORTER_OTLP_ENDPOINT = "" }
 run = "cargo llvm-cov --lcov --output-path target/lcov.info"
 
 [tasks."coverage:html"]
 description = "Generate HTML coverage report and open"
+env = { OTEL_EXPORTER_OTLP_ENDPOINT = "" }
 run = "cargo llvm-cov --html --open"
 
 [tasks.fmt]
