@@ -36,5 +36,6 @@ else
 fi
 
 chmod +x .githooks/*
+git config --local --unset core.hookspath || true
 mise settings add trusted_config_paths /app
 mise install
