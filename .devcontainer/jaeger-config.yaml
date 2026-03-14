@@ -1,0 +1,48 @@
+# Jaeger v2 all-in-one configuration for local development.
+# Receives OTLP traces/logs via HTTP and provides the Jaeger UI.
+#
+# Ports:
+#   4318  - OTLP HTTP receiver (traces, logs)
+#   16687 - Jaeger Query UI (HTTP, proxied via Caddy on :16686)
+#   16685 - Jaeger Query (gRPC)
+
+service:
+  extensions: [jaeger_storage, jaeger_query]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [jaeger_storage_exporter]
+  telemetry:
+    logs:
+      level: warn
+    metrics:
+      level: none
+
+extensions:
+  jaeger_query:
+    storage:
+      traces: mem_store
+    http:
+      endpoint: localhost:16687
+
+  jaeger_storage:
+    backends:
+      mem_store:
+        memory:
+          max_traces: 100000
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: localhost:4317
+      http:
+        endpoint: localhost:4318
+
+processors:
+  batch:
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: mem_store
