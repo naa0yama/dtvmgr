@@ -543,8 +543,8 @@ tracing::info!("Process completed successfully");
 
 #### OpenTelemetry 対応（`otel` feature 有効時）
 
-コンテナ環境等で OpenTelemetry (OTLP) によるトレースエクスポートが必要な場合、
-`--features otel` でビルドし、環境変数 `OTEL_EXPORTER_OTLP_ENDPOINT` を設定する。
+OTel はデフォルト feature として有効。環境変数 `OTEL_EXPORTER_OTLP_ENDPOINT` を設定すると
+OTLP エクスポートが有効になる(未設定時は何もしない)。OTel なしでビルドする場合は `--no-default-features` を指定。
 
 ```rust
 // otel feature 有効時の初期化（main.rs）
@@ -560,11 +560,11 @@ tracing_subscriber::registry()
 **ビルド方法:**
 
 ```bash
-# ターミナル用（OTel なし）
+# 通常ビルド（OTel 有効）
 cargo build --release
 
-# コンテナ用（OTel 対応）
-cargo build --release --features otel
+# OTel なしビルド
+cargo build --release --no-default-features
 ```
 
 **コンテナ実行時の環境変数:**
@@ -698,11 +698,11 @@ std = [] # no-std対応の場合
 
 ```toml
 [features]
-default = []
-otel = [...]  # OpenTelemetry 対応（コンテナ環境向け）
+default = ["otel"]
+otel = [...]  # OpenTelemetry 対応（デフォルト有効）
 ```
 
-- `otel`: OpenTelemetry トレースエクスポート機能を有効化。コンテナビルド時に `--features otel` で指定
+- `otel`: OpenTelemetry トレースエクスポート機能。デフォルト有効。`--no-default-features` で無効化可能
 
 ## 15. コードレビュー基準
 

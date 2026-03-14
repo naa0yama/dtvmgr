@@ -78,9 +78,9 @@ struct Cli {
 
 ## OTel / Tracing Setup
 
-- Default build: `tracing-subscriber` with `fmt` layer only.
-- OTel build: `cargo build --features otel` (via `mise run build -- --features otel`).
-- Set `OTEL_EXPORTER_OTLP_ENDPOINT` env var to enable OTLP export.
+- OTel is enabled by default (`default = ["otel"]`).
+- Set `OTEL_EXPORTER_OTLP_ENDPOINT` env var to enable OTLP export (no-op when unset).
+- Build without OTel: `cargo build --no-default-features`.
 - Feature flag in `Cargo.toml`:
   ```toml
   [features]
