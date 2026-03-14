@@ -1,0 +1,25 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Jaeger: Start",
+			"type": "shell",
+			"command": "mise run jaeger",
+			"isBackground": true,
+			"problemMatcher": [],
+			"presentation": {
+				"reveal": "never",
+				"panel": "dedicated"
+			},
+			"runOptions": {
+				"runOn": "folderOpen"
+			}
+		},
+		{
+			"label": "Jaeger: Stop",
+			"type": "shell",
+			"command": "mise run jaeger:stop",
+			"problemMatcher": []
+		}
+	]
+}

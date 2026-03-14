@@ -2424,20 +2424,26 @@ async fn main() -> Result<()> {
     }
 
     #[cfg(feature = "otel")]
-    {
+    let tracer_provider = {
         let env_filter =
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
         let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
 
-        let otel_layer = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        let (otel_layer, provider) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
             .ok()
+            .filter(|ep| !ep.is_empty())
             .and_then(|_| {
                 let exporter = opentelemetry_otlp::SpanExporter::builder()
                     .with_http()
                     .build()
                     .ok()?;
 
+                let resource = opentelemetry_sdk::Resource::builder()
+                    .with_service_name(env!("CARGO_PKG_NAME"))
+                    .build();
+
                 let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                    .with_resource(resource)
                     .with_simple_exporter(exporter)
                     .build();
 
@@ -2445,20 +2451,25 @@ async fn main() -> Result<()> {
                     &tracer_provider,
                     env!("CARGO_PKG_NAME"),
                 );
-                opentelemetry::global::set_tracer_provider(tracer_provider);
 
-                Some(tracing_opentelemetry::layer().with_tracer(tracer))
-            });
+                Some((
+                    tracing_opentelemetry::layer().with_tracer(tracer),
+                    tracer_provider,
+                ))
+            })
+            .unzip();
 
         tracing_subscriber::registry()
             .with(env_filter)
             .with(fmt_layer)
             .with(otel_layer)
             .init();
-    }
+
+        provider
+    };
 
     let cli = Cli::parse();
-    match cli.command {
+    let result = match cli.command {
         Commands::Syoboi(cmd) => match cmd.command {
             SyoboiSubcommands::Prog(args) => run_syoboi_prog(&args, cli.config.as_ref()).await,
             SyoboiSubcommands::Titles(args) => run_syoboi_titles(&args).await,
@@ -2500,7 +2511,19 @@ async fn main() -> Result<()> {
             clap_complete::generate(comp.shell, &mut cmd, "dtvmgr", &mut std::io::stdout());
             Ok(())
         }
+    };
+
+    #[cfg(feature = "otel")]
+    if let Some(provider) = tracer_provider {
+        // Run shutdown on a blocking thread to avoid dropping an internal
+        // runtime inside the async context (causes panic with simple exporter).
+        tokio::task::spawn_blocking(move || provider.shutdown())
+            .await
+            .context("OTel shutdown task panicked")?
+            .context("failed to shutdown OTel tracer provider")?;
     }
+
+    result
 }
 
 /// Converts an API `RecordedItem` page to cached DB items.

@@ -145,11 +145,15 @@ mise run miri             # 未定義動作検出
 mise run pre-commit       # fmt:check + clippy:strict + ast-grep + lint:gh
 ```
 
-### OTel 対応ビルド
+### OTel 対応
+
+OTel はデフォルトで有効です。`OTEL_EXPORTER_OTLP_ENDPOINT` を設定すると OTLP エクスポートが有効になります。
 
 ```bash
-cargo build -p dtvmgr-cli --features otel
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 dtvmgr jlse run ...
+
+# OTel なしでビルドする場合
+cargo build -p dtvmgr-cli --no-default-features
 ```
 
 ## ライセンス

@@ -20,8 +20,6 @@
 	"features": {
 		"ghcr.io/devcontainers/features/github-cli:1": {}
 	},
-	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	// "forwardPorts": [],
 	// Add another local file mount.
 	"mounts": [
 		// Claude Code
@@ -49,12 +47,13 @@
 				"ryanluker.vscode-coverage-gutters", // Coverage Gutters
 				"tamasfe.even-better-toml", // 			Even Better TOML
 				"usernamehw.errorlens", // 				Error Lens
-				"vadimcn.vscode-lldb", // 				CodeLLDB
-				"xyz.local-history" // 					Local History
+				"vadimcn.vscode-lldb" // 				CodeLLDB
 			],
 			"settings": {
 				"window.title": "${localWorkspaceFolderBasename}${separator}${dirty}${activeEditorShort}${separator}${rootName}${separator}${profileName}${separator}${appName}",
-				"dprint.path": "/home/cuser/.local/share/mise/shims/dprint"
+				"dprint.path": "/home/cuser/.local/share/mise/shims/dprint",
+				"remote.autoForwardPorts": false,
+				"remote.autoForwardPortsList": [16686]
 			}
 		}
 	},

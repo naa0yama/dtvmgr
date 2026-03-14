@@ -8,25 +8,26 @@
 
 All tasks use `mise run <task>`:
 
-| Task                  | Command                                     |
-| --------------------- | ------------------------------------------- |
-| Build                 | `mise run build`                            |
-| Test                  | `mise run test`                             |
-| TDD watch             | `mise run test:watch`                       |
-| Doc tests             | `mise run test:doc`                         |
-| Format                | `mise run fmt`                              |
-| Format check          | `mise run fmt:check`                        |
-| Lint (clippy)         | `mise run clippy`                           |
-| Lint strict           | `mise run clippy:strict`                    |
-| AST rules             | `mise run ast-grep`                         |
-| Pre-commit (required) | `mise run pre-commit`                       |
-| Coverage              | `mise run coverage`                         |
-| Deny (licenses/deps)  | `mise run deny`                             |
-| Miri (UB detection)   | `mise run miri`                             |
-| Build (OTel)          | `cargo build -p dtvmgr-cli --features otel` |
-| Clean (full)          | `mise run clean`                            |
-| Clean (sweep)         | `mise run clean:sweep`                      |
-| Clean (cache)         | `mise run clean:cache`                      |
+| Task                  | Command                  |
+| --------------------- | ------------------------ |
+| Build                 | `mise run build`         |
+| Test                  | `mise run test`          |
+| TDD watch             | `mise run test:watch`    |
+| Doc tests             | `mise run test:doc`      |
+| Format                | `mise run fmt`           |
+| Format check          | `mise run fmt:check`     |
+| Lint (clippy)         | `mise run clippy`        |
+| Lint strict           | `mise run clippy:strict` |
+| AST rules             | `mise run ast-grep`      |
+| Pre-commit (required) | `mise run pre-commit`    |
+| Coverage              | `mise run coverage`      |
+| Deny (licenses/deps)  | `mise run deny`          |
+| Miri (UB detection)   | `mise run miri`          |
+| Jaeger (start)        | `mise run jaeger`        |
+| Jaeger (stop)         | `mise run jaeger:stop`   |
+| Clean (full)          | `mise run clean`         |
+| Clean (sweep)         | `mise run clean:sweep`   |
+| Clean (cache)         | `mise run clean:cache`   |
 
 ## Commit Convention
 
@@ -51,7 +52,7 @@ Allowed types: feat, update, fix, style, refactor, docs, perf, test, build, ci, 
 
 - **Imports**: All `use` statements at file top level, grouped: `std` -> external crates -> `crate`/`super`. No wildcards (`*`). Aliases (`as`) permitted for name conflicts and re-exports.
 - **Error handling**: Never use bare `?`. Always add `.context()` or `.with_context()`.
-- **Logging**: Use `tracing` crate, not `println!` / `dbg!`. For container/OTel support, build with `--features otel` and set `OTEL_EXPORTER_OTLP_ENDPOINT` env var.
+- **Logging**: Use `tracing` crate, not `println!` / `dbg!`. OTel support is enabled by default; set `OTEL_EXPORTER_OTLP_ENDPOINT` to activate OTLP export (pre-configured in `mise.toml`). Run `mise run jaeger` for local trace collection. Use `--no-default-features` to build without OTel.
 - **Tests**: Arrange / Act / Assert pattern. Unit tests in `#[cfg(test)] mod tests`, integration tests in `tests/`. `#![allow(clippy::unwrap_used)]` is permitted in test code.
 - See [docs/project_rules.md](./docs/project_rules.md) for full details.
 
