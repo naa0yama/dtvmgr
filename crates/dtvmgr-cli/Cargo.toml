@@ -13,7 +13,7 @@ name = "dtvmgr"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["otel"]
 otel = [
 	"dep:opentelemetry",
 	"dep:opentelemetry_sdk",
