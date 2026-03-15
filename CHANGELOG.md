@@ -1,5 +1,24 @@
 # Changelog
 
+## [v0.2.1](https://github.com/naa0yama/dtvmgr/compare/v0.2.0...v0.2.1) - 2026-03-15
+### Documentation 🗒️
+- build(cli): enable otel feature by default by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/76
+- refactor(skills): delegate project skills to global shared skills by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/80
+### Dependency Updates 📦
+- chore(deps): update taiki-e/install-action action to v2.68.20 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/74
+- chore(deps): update taiki-e/install-action action to v2.68.21 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/75
+- chore(deps): update taiki-e/install-action action to v2.68.22 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/78
+- chore(deps): update taiki-e/install-action action to v2.68.23 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/81
+- chore(deps): update rust crate libc to v0.2.183 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/79
+- chore(deps): update all action update by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/83
+- chore(deps): update taiki-e/install-action action to v2.68.25 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/85
+### Other Changes
+- refactor(cli): rename --dir to --config by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/71
+- refactor: consolidate set_pdeathsig into shared apply_pdeathsig helper by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/73
+- fix(ci): skip container cleanup when package does not exist by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/77
+- Update initializeCommand.sh by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/82
+- chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/84
+
 ## [v0.2.0](https://github.com/naa0yama/dtvmgr/compare/v0.1.6...v0.2.0) - 2026-03-13
 
 ### Dependency Updates 👒
