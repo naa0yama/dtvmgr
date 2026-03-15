@@ -51,6 +51,15 @@ description = "Run doc tests"
 env = { OTEL_EXPORTER_OTLP_ENDPOINT = "" }
 run = "cargo test --doc"
 
+[tasks."test:trace"]
+description = "Run tests with OTel tracing (restarts Jaeger for clean traces)"
+run = """
+mise run jaeger:stop
+mise run jaeger
+echo 'Jaeger restarted with clean state'
+cargo test --all-targets
+"""
+
 [tasks.coverage]
 description = "Generate LCOV coverage report"
 env = { OTEL_EXPORTER_OTLP_ENDPOINT = "" }
@@ -139,22 +148,21 @@ cargo cache --autoclean
 description = "Start Jaeger all-in-one (OTLP HTTP :4318, UI :16686)"
 env = { OTEL_EXPORTER_OTLP_ENDPOINT = "" }
 run = """
-if pgrep -x jaeger > /dev/null 2>&1; then
-  echo 'Jaeger is already running'
+if pgrep -x jaeger > /dev/null 2>&1 && pgrep -x caddy > /dev/null 2>&1; then
+  echo 'Jaeger is already running.'
   exit 0
 fi
-jaeger --config .devcontainer/jaeger-config.yaml &
-JAEGER_PID=$!
+pgrep -x caddy > /dev/null 2>&1 && pkill -x caddy
+pgrep -x jaeger > /dev/null 2>&1 && pkill -x jaeger
+setsid bash -c 'jaeger --config .devcontainer/jaeger-config.yaml &>/dev/null' &
 timeout 30 bash -c 'until echo > /dev/tcp/localhost/4318; do sleep 0.2; done' 2>/dev/null
-caddy run --config .devcontainer/Caddyfile --adapter caddyfile &
-CADDY_PID=$!
+setsid bash -c 'caddy run --config .devcontainer/Caddyfile --adapter caddyfile &>/dev/null' &
 echo 'Jaeger started (UI via Caddy: http://localhost:16686)'
-wait $JAEGER_PID $CADDY_PID
 """
 
 [tasks."jaeger:stop"]
 description = "Stop Jaeger and Caddy"
 run = """
-pkill -x caddy 2>/dev/null || true
-pkill -x jaeger 2>/dev/null || true
+pkill -x caddy 2>/dev/null && timeout 5 bash -c 'while pgrep -x caddy > /dev/null; do sleep 0.1; done' || true
+pkill -x jaeger 2>/dev/null && timeout 5 bash -c 'while pgrep -x jaeger > /dev/null; do sleep 0.1; done' || true
 """

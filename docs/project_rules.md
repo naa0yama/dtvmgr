@@ -352,6 +352,38 @@ mod tests {
 }
 ```
 
+### 5.3 ブランチカバレッジ
+
+ユニットテストは **100% ブランチカバレッジ** を目標とする。TDD の RED フェーズで以下の手順を行う:
+
+1. 実装対象の関数/モジュールの分岐構造を列挙する(`if`, `match`, `?`, `Option`, `Result`)
+2. 各分岐に対するテストケースを設計する
+3. テスト不可能な分岐には `NOTEST` コメントを実装コード側に追加する
+
+#### `NOTEST` コメントフォーマット
+
+```rust
+// NOTEST(category): <why> — <what the branch does>
+```
+
+| category      | 用途                                                |
+| ------------- | --------------------------------------------------- |
+| `unreachable` | 型/ロジック上到達不可能だがコンパイラが検出できない |
+| `io`          | ファイルシステム・ネットワーク等の外部 I/O 依存     |
+| `ffi`         | FFI/C バインディング経由でテスト環境では実行不可    |
+| `env`         | 環境変数やランタイム環境に依存                      |
+| `infra`       | テストインフラの制約(mock 困難、外部サービス依存等) |
+
+#### コード例
+
+```rust
+match result {
+    Ok(v) => v,
+    // NOTEST(unreachable): validated upstream — error on XML parse failure
+    Err(_) => return Err(MyError::ParseFailed),
+}
+```
+
 ## 6. CI/CD
 
 ### 6.1 必須チェック(`mise run` 経由)
@@ -383,7 +415,8 @@ mise run zigbuild:all    # Tier 1 targets
 
 - **Warning一切禁止**
 - **フォーマット違反禁止**
-- **カバレッジ目標**: 80%以上
+- **プロジェクト全体カバレッジ目標**: 80%以上(CI 閾値: 75%)
+- **ユニットテストカバレッジ目標**: 100%(ブランチカバレッジ)
 
 ### 6.3 Miri 互換性
 
