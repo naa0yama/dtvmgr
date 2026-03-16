@@ -277,7 +277,10 @@ impl JlseEncode {
                     .as_ref()
                     .and_then(|i| i.filter_hw_device.as_ref())
                     .is_some();
-                if needs_hwupload {
+                let has_hwupload = filter
+                    .split(',')
+                    .any(|seg| seg.trim_start().starts_with("hwupload"));
+                if needs_hwupload && !has_hwupload {
                     args.push(format!("hwupload=extra_hw_frames=64,{filter}"));
                 } else {
                     args.push(filter.clone());
@@ -1115,6 +1118,64 @@ mod tests {
         // Assert — filter unchanged, no hwupload
         let vf_idx = args.iter().position(|a| a == "-vf").unwrap();
         assert_eq!(args[vf_idx + 1], "yadif=mode=send_frame");
+    }
+
+    #[test]
+    fn test_to_output_args_hwupload_skipped_when_already_at_start() {
+        // Arrange — user already specified hwupload at the beginning
+        let encode = JlseEncode {
+            input: Some(EncodeInput {
+                init_hw_device: Some("qsv=hw".to_owned()),
+                filter_hw_device: Some("hw".to_owned()),
+                ..EncodeInput::default()
+            }),
+            video: Some(EncodeVideo {
+                codec: Some("av1_qsv".to_owned()),
+                filter: Some("hwupload=extra_hw_frames=32,vpp_qsv=framerate=30".to_owned()),
+                ..EncodeVideo::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert — no duplicate hwupload prepended
+        let vf_idx = args.iter().position(|a| a == "-vf").unwrap();
+        assert_eq!(
+            args[vf_idx + 1],
+            "hwupload=extra_hw_frames=32,vpp_qsv=framerate=30"
+        );
+    }
+
+    #[test]
+    fn test_to_output_args_hwupload_skipped_when_in_middle() {
+        // Arrange — user placed hwupload in the middle of the chain
+        let encode = JlseEncode {
+            input: Some(EncodeInput {
+                init_hw_device: Some("qsv=hw".to_owned()),
+                filter_hw_device: Some("hw".to_owned()),
+                ..EncodeInput::default()
+            }),
+            video: Some(EncodeVideo {
+                codec: Some("av1_qsv".to_owned()),
+                filter: Some(
+                    "scale=1280:720,hwupload=extra_hw_frames=64,vpp_qsv=framerate=30".to_owned(),
+                ),
+                ..EncodeVideo::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert — no duplicate hwupload prepended
+        let vf_idx = args.iter().position(|a| a == "-vf").unwrap();
+        assert_eq!(
+            args[vf_idx + 1],
+            "scale=1280:720,hwupload=extra_hw_frames=64,vpp_qsv=framerate=30"
+        );
     }
 
     // ── stream specifier auto-append ────────────────────────
