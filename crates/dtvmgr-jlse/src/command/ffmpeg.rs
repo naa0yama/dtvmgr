@@ -272,7 +272,16 @@ impl JlseEncode {
             }
             if let Some(ref filter) = video.filter {
                 args.push("-vf".to_owned());
-                args.push(filter.clone());
+                let needs_hwupload = self
+                    .input
+                    .as_ref()
+                    .and_then(|i| i.filter_hw_device.as_ref())
+                    .is_some();
+                if needs_hwupload {
+                    args.push(format!("hwupload=extra_hw_frames=64,{filter}"));
+                } else {
+                    args.push(filter.clone());
+                }
             }
             append_extra_with_specifier(&mut args, &video.extra, "v");
         }
@@ -1055,6 +1064,57 @@ mod tests {
         // Assert — no -map 0:a because has_settings is false
         assert!(!args.contains(&"-map".to_owned()));
         assert!(args.is_empty());
+    }
+
+    // ── hwupload auto-prepend ──────────────────────────────
+
+    #[test]
+    fn test_to_output_args_hwupload_prepended_when_filter_hw_device_set() {
+        // Arrange — AVS + QSV HW encode: filter_hw_device triggers hwupload
+        let encode = JlseEncode {
+            input: Some(EncodeInput {
+                init_hw_device: Some("qsv=hw".to_owned()),
+                filter_hw_device: Some("hw".to_owned()),
+                ..EncodeInput::default()
+            }),
+            video: Some(EncodeVideo {
+                codec: Some("av1_qsv".to_owned()),
+                filter: Some("vpp_qsv=framerate=30".to_owned()),
+                ..EncodeVideo::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert — hwupload prepended to filter string
+        let vf_idx = args.iter().position(|a| a == "-vf").unwrap();
+        assert_eq!(
+            args[vf_idx + 1],
+            "hwupload=extra_hw_frames=64,vpp_qsv=framerate=30"
+        );
+    }
+
+    #[test]
+    fn test_to_output_args_no_hwupload_without_filter_hw_device() {
+        // Arrange — SW encode: no filter_hw_device, filter used as-is
+        let encode = JlseEncode {
+            input: Some(EncodeInput::default()),
+            video: Some(EncodeVideo {
+                codec: Some("libx264".to_owned()),
+                filter: Some("yadif=mode=send_frame".to_owned()),
+                ..EncodeVideo::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert — filter unchanged, no hwupload
+        let vf_idx = args.iter().position(|a| a == "-vf").unwrap();
+        assert_eq!(args[vf_idx + 1], "yadif=mode=send_frame");
     }
 
     // ── stream specifier auto-append ────────────────────────
