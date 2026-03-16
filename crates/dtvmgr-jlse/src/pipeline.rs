@@ -377,6 +377,12 @@ pub fn run_pipeline(
         }
         debug!("ffmpeg encoding completed");
 
+        // Post-encode duration validation
+        if !ctx.skip_duration_check {
+            validate::check_post_encode_duration(&bins.ffprobe, &output_file)
+                .context("post-encode duration check failed")?;
+        }
+
         // Save EIT XML alongside encoded output
         if let Some(ref eit_src) = mkv_metadata.eit_xml_path {
             let eit_dest = output_file.with_extension("eit.xml");

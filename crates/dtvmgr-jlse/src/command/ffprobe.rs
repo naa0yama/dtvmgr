@@ -1,6 +1,6 @@
 //! Wrapper for the `ffprobe` external command.
 //!
-//! Extracts frame rate and sample rate from media files.
+//! Extracts frame rate, sample rate, and stream durations from media files.
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -82,6 +82,30 @@ pub fn parse_frame_rate(s: &str) -> Result<FrameRate> {
         numerator,
         denominator,
     })
+}
+
+/// Query the duration of a specific stream in `input_file` using `ffprobe`.
+///
+/// Returns `Ok(None)` if the stream does not exist or reports `N/A`.
+///
+/// # Errors
+///
+/// Returns an error if `ffprobe` fails or the output cannot be parsed as `f64`.
+pub fn get_stream_duration(binary: &Path, input_file: &Path, stream: &str) -> Result<Option<f64>> {
+    let args = build_probe_args(input_file, stream, "stream=duration");
+    let os_args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    let stdout = super::run_capture(binary, &os_args)
+        .with_context(|| format!("failed to get stream duration for {stream}"))?;
+
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() || trimmed == "N/A" {
+        return Ok(None);
+    }
+
+    let dur: f64 = trimmed
+        .parse()
+        .with_context(|| format!("invalid stream duration: {trimmed:?}"))?;
+    Ok(Some(dur))
 }
 
 /// Query the total duration of `input_file` in seconds using `ffprobe`.
@@ -374,6 +398,79 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
+    }
+
+    // ── get_stream_duration via write_script ───────────────
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_get_stream_duration_some() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let script = super::super::test_utils::write_script(
+            dir.path(),
+            "ffprobe.sh",
+            "#!/bin/sh\necho '1234.567'",
+        );
+        let input = dir.path().join("video.mkv");
+        std::fs::write(&input, "dummy").unwrap();
+
+        // Act
+        let dur = get_stream_duration(&script, &input, "v:0").unwrap();
+
+        // Assert
+        assert!((dur.unwrap() - 1234.567).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_get_stream_duration_empty() {
+        // Arrange: no stream → empty output
+        let dir = tempfile::tempdir().unwrap();
+        let script =
+            super::super::test_utils::write_script(dir.path(), "ffprobe.sh", "#!/bin/sh\necho ''");
+        let input = dir.path().join("video.mkv");
+        std::fs::write(&input, "dummy").unwrap();
+
+        // Act
+        let dur = get_stream_duration(&script, &input, "v:0").unwrap();
+
+        // Assert
+        assert_eq!(dur, None);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_get_stream_duration_na() {
+        // Arrange: ffprobe reports N/A
+        let dir = tempfile::tempdir().unwrap();
+        let script = super::super::test_utils::write_script(
+            dir.path(),
+            "ffprobe.sh",
+            "#!/bin/sh\necho 'N/A'",
+        );
+        let input = dir.path().join("video.mkv");
+        std::fs::write(&input, "dummy").unwrap();
+
+        // Act
+        let dur = get_stream_duration(&script, &input, "a:0").unwrap();
+
+        // Assert
+        assert_eq!(dur, None);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_get_stream_duration_failure() {
+        // Arrange: ffprobe exits with error
+        let dir = tempfile::tempdir().unwrap();
+        let script =
+            super::super::test_utils::write_script(dir.path(), "ffprobe.sh", "#!/bin/sh\nexit 1");
+        let input = dir.path().join("video.mkv");
+        std::fs::write(&input, "dummy").unwrap();
+
+        // Act / Assert
+        assert!(get_stream_duration(&script, &input, "v:0").is_err());
     }
 
     #[test]
