@@ -154,6 +154,7 @@ if pgrep -x jaeger > /dev/null 2>&1 && pgrep -x caddy > /dev/null 2>&1; then
 fi
 pgrep -x caddy > /dev/null 2>&1 && pkill -x caddy
 pgrep -x jaeger > /dev/null 2>&1 && pkill -x jaeger
+.devcontainer/generate-jaeger-ui-config.sh
 setsid bash -c 'jaeger --config .devcontainer/jaeger-config.yaml &>/dev/null' &
 timeout 30 bash -c 'until echo > /dev/tcp/localhost/4318; do sleep 0.2; done' 2>/dev/null
 setsid bash -c 'caddy run --config .devcontainer/Caddyfile --adapter caddyfile &>/dev/null' &

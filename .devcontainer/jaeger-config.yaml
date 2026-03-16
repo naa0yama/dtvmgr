@@ -23,6 +23,8 @@ extensions:
   jaeger_query:
     storage:
       traces: mem_store
+    ui:
+      config_file: .devcontainer/.jaeger-ui-generated.js
     http:
       endpoint: localhost:16687
 
