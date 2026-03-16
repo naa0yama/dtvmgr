@@ -4,8 +4,8 @@
 use anyhow::Result;
 
 use super::types::{
-    Channel, EncodeInfoResponse, EncodeRequest, EncodeResponse, EpgConfig, RecordedParams,
-    RecordedResponse,
+    Channel, EncodeInfoResponse, EncodeRequest, EncodeResponse, EpgConfig, RecordedItem,
+    RecordedParams, RecordedResponse,
 };
 
 /// `EPGStation` API trait.
@@ -21,6 +21,13 @@ pub trait LocalEpgStationApi {
     ///
     /// Returns an error if the HTTP request or JSON parsing fails.
     async fn get_recorded(&self, params: &RecordedParams) -> Result<RecordedResponse>;
+
+    /// Fetches a single recorded program by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request or JSON parsing fails.
+    async fn get_recorded_by_id(&self, id: u64) -> Result<RecordedItem>;
 
     /// Fetches broadcast channel list.
     ///

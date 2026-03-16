@@ -12,12 +12,25 @@ use url::Url;
 use super::api::LocalEpgStationApi;
 use super::rate_limiter::EpgStationRateLimiter;
 use super::types::{
-    Channel, EncodeInfoResponse, EncodeRequest, EncodeResponse, EpgConfig, RecordedParams,
-    RecordedResponse,
+    Channel, EncodeInfoResponse, EncodeRequest, EncodeResponse, EpgConfig, RecordedItem,
+    RecordedParams, RecordedResponse,
 };
 
 /// Default base URL for local `EPGStation`.
 const DEFAULT_BASE_URL: &str = "http://localhost:8888/api/";
+
+/// Maximum response body length recorded in span attributes.
+const SPAN_BODY_MAX_LEN: usize = 2048;
+
+/// Truncates a response body for span attribute recording.
+fn truncate_for_span(body: &str) -> &str {
+    if body.len() <= SPAN_BODY_MAX_LEN {
+        return body;
+    }
+    // Find a valid UTF-8 boundary at or before the limit.
+    let end = body.floor_char_boundary(SPAN_BODY_MAX_LEN);
+    &body[..end]
+}
 
 /// Maximum number of retries for HTTP 429 responses.
 const MAX_RETRIES: u32 = 3;
@@ -121,7 +134,12 @@ impl EpgStationClient {
 
     /// Sends a GET request with rate limiting and returns parsed JSON.
     /// Retries up to `MAX_RETRIES` times on HTTP 429.
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(
+        http.method = "GET",
+        http.path = path,
+        http.status_code = tracing::field::Empty,
+        http.response.body = tracing::field::Empty,
+    ))]
     async fn get_json<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
@@ -161,7 +179,9 @@ impl EpgStationClient {
                 }
             };
 
+            let span = tracing::Span::current();
             let status = response.status();
+            span.record("http.status_code", i64::from(status.as_u16()));
 
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 retries = retries.saturating_add(1);
@@ -183,6 +203,7 @@ impl EpgStationClient {
                     .text()
                     .await
                     .unwrap_or_else(|_| String::from("<failed to read body>"));
+                span.record("http.response.body", &body);
                 bail!("EPGStation API error (HTTP {status}): {body}");
             }
 
@@ -190,22 +211,34 @@ impl EpgStationClient {
                 .text()
                 .await
                 .with_context(|| format!("failed to read response body: {path}"))?;
+            span.record("http.response.body", truncate_for_span(&body));
             let raw_result: std::result::Result<T, _> = serde_json::from_str(&body);
-            let parsed =
-                raw_result.with_context(|| format!("failed to decode JSON response: {path}"))?;
+            let parsed = raw_result
+                .with_context(|| format!("failed to decode JSON response: {path} body={body}"))?;
             return Ok(parsed);
         }
     }
 
     /// Sends a POST request with JSON body and rate limiting.
     /// Retries up to `MAX_RETRIES` times on HTTP 429.
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(
+        http.method = "POST",
+        http.path = path,
+        http.status_code = tracing::field::Empty,
+        http.request.body = tracing::field::Empty,
+        http.response.body = tracing::field::Empty,
+    ))]
     async fn post_json<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
         body: &(impl serde::Serialize + Sync),
     ) -> Result<T> {
         self.rate_limiter.lock().await.wait().await;
+
+        let span = tracing::Span::current();
+        if let Ok(request_json) = serde_json::to_string(body) {
+            span.record("http.request.body", &request_json);
+        }
 
         let url = self
             .base_url
@@ -240,6 +273,7 @@ impl EpgStationClient {
             };
 
             let status = response.status();
+            span.record("http.status_code", i64::from(status.as_u16()));
 
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 retries = retries.saturating_add(1);
@@ -257,20 +291,23 @@ impl EpgStationClient {
             }
 
             if !status.is_success() {
-                let body = response
+                let resp_body = response
                     .text()
                     .await
                     .unwrap_or_else(|_| String::from("<failed to read body>"));
-                bail!("EPGStation API error (HTTP {status}): {body}");
+                span.record("http.response.body", &resp_body);
+                bail!("EPGStation API error (HTTP {status}): {resp_body}");
             }
 
-            let body = response
+            let resp_body = response
                 .text()
                 .await
                 .with_context(|| format!("failed to read response body: {path}"))?;
-            let raw_result: std::result::Result<T, _> = serde_json::from_str(&body);
-            let parsed =
-                raw_result.with_context(|| format!("failed to decode JSON response: {path}"))?;
+            span.record("http.response.body", truncate_for_span(&resp_body));
+            let raw_result: std::result::Result<T, _> = serde_json::from_str(&resp_body);
+            let parsed = raw_result.with_context(|| {
+                format!("failed to decode JSON response: {path} body={resp_body}")
+            })?;
             return Ok(parsed);
         }
     }
@@ -323,6 +360,15 @@ impl LocalEpgStationApi for EpgStationClient {
             query.push(("keyword", v.clone()));
         }
         self.get_json("recorded", &query).await
+    }
+
+    #[instrument(skip_all)]
+    async fn get_recorded_by_id(&self, id: u64) -> Result<RecordedItem> {
+        self.get_json(
+            &format!("recorded/{id}"),
+            &[("isHalfWidth", String::from("true"))],
+        )
+        .await
     }
 
     #[instrument(skip_all)]
@@ -454,13 +500,13 @@ mod tests {
     #[test]
     fn test_parse_encode_response() {
         // Arrange
-        let json = r#"{"encodeProgramId": 42}"#;
+        let json = r#"{"encodeId": 42}"#;
 
         // Act
         let response: EncodeResponse = serde_json::from_str(json).unwrap();
 
         // Assert
-        assert_eq!(response.encode_program_id, 42);
+        assert_eq!(response.encode_id, 42);
     }
 
     #[test]
@@ -630,7 +676,7 @@ mod tests {
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/api/encode"))
             .respond_with(
-                wiremock::ResponseTemplate::new(200).set_body_string(r#"{"encodeProgramId": 42}"#),
+                wiremock::ResponseTemplate::new(200).set_body_string(r#"{"encodeId": 42}"#),
             )
             .mount(&mock_server)
             .await;
@@ -657,7 +703,7 @@ mod tests {
         let response = client.add_encode(&request).await.unwrap();
 
         // Assert
-        assert_eq!(response.encode_program_id, 42);
+        assert_eq!(response.encode_id, 42);
     }
 
     #[cfg_attr(miri, ignore)]
