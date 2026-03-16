@@ -7,7 +7,10 @@ on:
         description: "Release tag"
         required: true
         type: string
-    outputs: {}
+    outputs:
+      artifacts:
+        description: "List of built artifacts"
+        value: ${{ jobs.build-matrix.outputs.artifacts }}
 
 permissions: {}
 
@@ -27,6 +30,10 @@ jobs:
     permissions:
       contents: read # Required to checkout the repository
       actions: write # Required to upload artifacts
+      id-token: write # Required for build provenance attestation
+      attestations: write # Required for build provenance attestation
+    outputs:
+      artifacts: ${{ steps.collect-artifacts.outputs.artifacts }}
     strategy:
       fail-fast: false
       matrix:
@@ -45,6 +52,7 @@ jobs:
         id: versions
         run: |
           sccache_version=$(grep -E '^ARG SCCACHE_VERSION=v?[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | sed -E 's/ARG SCCACHE_VERSION=(v?[0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+          auditable_version=$(grep -E 'cargo-auditable' mise.toml | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/')
 
           # For workspace projects, find the CLI crate that defines the [[bin]] target
           cli_toml="crates/dtvmgr-cli/Cargo.toml"
@@ -57,6 +65,7 @@ jobs:
 
           {
             echo "sccache=${sccache_version}"
+            echo "auditable=${auditable_version}"
             echo "binary_name=${binary_name}"
           } >> "$GITHUB_OUTPUT"
 
@@ -65,27 +74,20 @@ jobs:
         with:
           sccache: ${{ steps.versions.outputs.sccache }}
 
+      - name: Install cargo-auditable
+        uses: taiki-e/install-action@a37010ded18ff788be4440302bd6830b1ae50d8b # v2.68.25
+        with:
+          tool: cargo-auditable@${{ steps.versions.outputs.auditable }}
+
       - name: Build release binary
         env:
           TARGET: ${{ matrix.target }}
           BINARY_NAME: ${{ steps.versions.outputs.binary_name }}
         run: |
           set -euxo pipefail
-          cargo build --release --target "${TARGET}" --bin "${BINARY_NAME}" --verbose
+          cargo auditable build --release --target "${TARGET}" --bin "${BINARY_NAME}" --verbose
 
-      - name: Package binary as tar.gz
-        id: package
-        env:
-          BINARY_NAME: ${{ steps.versions.outputs.binary_name }}
-          TAG: ${{ inputs.tag }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          set -euo pipefail
-          asset_name="${BINARY_NAME}-${TAG}-${TARGET}.tar.gz"
-          tar -czf "${asset_name}" -C "target/${TARGET}/release" "${BINARY_NAME}"
-          echo "asset_name=${asset_name}" >> "$GITHUB_OUTPUT"
-
-      - name: Upload release asset
+      - name: Upload binary artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         env:
           BINARY_NAME: ${{ steps.versions.outputs.binary_name }}
@@ -93,6 +95,25 @@ jobs:
           TARGET: ${{ matrix.target }}
         with:
           name: ${{ env.BINARY_NAME }}-${{ env.TAG }}-${{ env.TARGET }}
-          path: ${{ steps.package.outputs.asset_name }}
+          path: target/${{ env.TARGET }}/release/${{ env.BINARY_NAME }}
           if-no-files-found: error
           retention-days: 7
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        env:
+          BINARY_NAME: ${{ steps.versions.outputs.binary_name }}
+          TARGET: ${{ matrix.target }}
+        with:
+          subject-path: target/${{ env.TARGET }}/release/${{ env.BINARY_NAME }}
+
+      - name: Collect artifact info
+        id: collect-artifacts
+        env:
+          BINARY_NAME: ${{ steps.versions.outputs.binary_name }}
+          TAG: ${{ inputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          artifact_name="${BINARY_NAME}-${TAG}-${TARGET}"
+          binary_path="target/${TARGET}/release/${BINARY_NAME}"
+          echo "artifacts=${artifact_name}:${binary_path}" >> "$GITHUB_OUTPUT"
