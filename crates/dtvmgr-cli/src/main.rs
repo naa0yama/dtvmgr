@@ -117,6 +117,15 @@ struct EpgstationEncodeArgs {
     /// Number of recordings to fetch (default: 100).
     #[arg(short, long, default_value_t = 100)]
     limit: u64,
+    /// Directly encode a specific recorded item (skip TUI).
+    #[arg(long)]
+    record_id: Option<u64>,
+    /// Encode preset name (used with --record-id; falls back to config default).
+    #[arg(short, long)]
+    mode: Option<String>,
+    /// Remove original file after encoding.
+    #[arg(long, default_value_t = false)]
+    remove_original: bool,
 }
 
 /// Arguments for the `completion` subcommand.
@@ -2444,7 +2453,7 @@ async fn main() -> Result<()> {
 
                 let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
                     .with_resource(resource)
-                    .with_simple_exporter(exporter)
+                    .with_batch_exporter(exporter)
                     .build();
 
                 let tracer = opentelemetry::trace::TracerProvider::tracer(
@@ -2515,11 +2524,8 @@ async fn main() -> Result<()> {
 
     #[cfg(feature = "otel")]
     if let Some(provider) = tracer_provider {
-        // Run shutdown on a blocking thread to avoid dropping an internal
-        // runtime inside the async context (causes panic with simple exporter).
-        tokio::task::spawn_blocking(move || provider.shutdown())
-            .await
-            .context("OTel shutdown task panicked")?
+        provider
+            .shutdown()
             .context("failed to shutdown OTel tracer provider")?;
     }
 
@@ -2844,6 +2850,59 @@ fn spawn_file_check_worker(
     });
 }
 
+/// Direct encode mode: fetch a single recorded item and submit an encode job.
+#[allow(clippy::print_stdout)]
+async fn run_epgstation_encode_direct(
+    client: &EpgStationClient,
+    config: &AppConfig,
+    record_id: u64,
+    args: &EpgstationEncodeArgs,
+) -> Result<()> {
+    let recorded = client
+        .get_recorded_by_id(record_id)
+        .await
+        .with_context(|| format!("failed to fetch recorded item {record_id}"))?;
+
+    let source = recorded
+        .video_files
+        .iter()
+        .find(|vf| vf.file_type == "ts")
+        .context("no ts video file found for this recorded item")?;
+
+    let mode = args
+        .mode
+        .clone()
+        .or_else(|| config.epgstation.default_preset.clone())
+        .context("--mode is required (no default_preset in config)")?;
+
+    let parent_dir = config.epgstation.default_directory.clone();
+    let is_save_same_directory = parent_dir.is_none();
+
+    let request = EncodeRequest {
+        recorded_id: record_id,
+        source_video_file_id: source.id,
+        mode,
+        parent_dir,
+        directory: None,
+        is_save_same_directory,
+        remove_original: args.remove_original,
+    };
+
+    let request_json =
+        serde_json::to_string_pretty(&request).context("failed to serialize encode request")?;
+    println!("Request:\n{request_json}");
+
+    match client.add_encode(&request).await {
+        Ok(resp) => {
+            println!("Success: encode_id={}", resp.encode_id);
+        }
+        Err(e) => {
+            println!("Error: {e:#}");
+        }
+    }
+    Ok(())
+}
+
 #[allow(
     clippy::too_many_lines,
     clippy::print_stdout,
@@ -2874,6 +2933,11 @@ async fn run_epgstation_encode(
         ))
         .build()
         .context("failed to build EPGStation client")?;
+
+    // Direct mode: skip TUI and submit a single encode job.
+    if let Some(record_id) = args.record_id {
+        return run_epgstation_encode_direct(&client, &config, record_id, args).await;
+    }
 
     // Fetch channels and config once (shared across pages)
     let (channels_result, config_result) = tokio::join!(client.get_channels(), client.get_config());
@@ -3007,7 +3071,7 @@ async fn run_epgstation_encode(
         Arc::clone(&pending),
     );
 
-    let state = loop {
+    loop {
         terminal.clear().context("failed to clear terminal")?;
 
         // Load current page from DB cache
@@ -3097,11 +3161,69 @@ async fn run_epgstation_encode(
         last_encode_queue = state.encode_queue.take();
 
         match result {
-            SelectorResult::Confirmed => break state,
+            SelectorResult::Confirmed => {
+                // Submit encode jobs, then return to the selection screen.
+                let confirmed_rows: Vec<_> = state
+                    .rows
+                    .iter()
+                    .filter(|row| selected.contains(&row.recorded_id))
+                    .collect();
+
+                for row in &confirmed_rows {
+                    let Some(source_id) = row.source_video_file_id else {
+                        tracing::warn!(
+                            recorded_id = row.recorded_id,
+                            "skipping: no source video file"
+                        );
+                        continue;
+                    };
+
+                    let request = EncodeRequest {
+                        recorded_id: row.recorded_id,
+                        source_video_file_id: source_id,
+                        mode: state.settings.mode.clone(),
+                        parent_dir: if state.settings.is_save_same_directory {
+                            None
+                        } else {
+                            Some(state.settings.parent_dir.clone())
+                        },
+                        directory: if state.settings.directory.is_empty()
+                            || state.settings.is_save_same_directory
+                        {
+                            None
+                        } else {
+                            Some(state.settings.directory.clone())
+                        },
+                        is_save_same_directory: state.settings.is_save_same_directory,
+                        remove_original: state.settings.remove_original,
+                    };
+
+                    match client.add_encode(&request).await {
+                        Ok(resp) => {
+                            tracing::info!(
+                                recorded_id = row.recorded_id,
+                                encode_id = resp.encode_id,
+                                name = %row.name,
+                                "encode job queued"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                recorded_id = row.recorded_id,
+                                name = %row.name,
+                                error = %e,
+                                "failed to queue encode job"
+                            );
+                        }
+                    }
+                }
+
+                // Clear selections and continue to the recording list.
+                selected.clear();
+            }
             SelectorResult::Cancelled => {
                 crate::tui::encode_selector::teardown_terminal()
                     .context("failed to tear down terminal")?;
-                println!("Cancelled.");
                 return Ok(());
             }
             SelectorResult::PageNext => {
@@ -3113,75 +3235,7 @@ async fn run_epgstation_encode(
             // Refresh is fully handled by the inner loop above.
             SelectorResult::Refresh => {}
         }
-    };
-
-    // Tear down terminal after exiting the pagination loop
-    crate::tui::encode_selector::teardown_terminal().context("failed to tear down terminal")?;
-
-    // Submit encode jobs
-    let selected_rows: Vec<_> = state
-        .rows
-        .iter()
-        .filter(|row| state.selected.contains(&row.recorded_id))
-        .collect();
-
-    let mut success_count: usize = 0;
-    let mut fail_count: usize = 0;
-
-    for row in &selected_rows {
-        let Some(source_id) = row.source_video_file_id else {
-            tracing::warn!(
-                recorded_id = row.recorded_id,
-                "skipping: no source video file"
-            );
-            fail_count = fail_count.saturating_add(1);
-            continue;
-        };
-
-        let request = EncodeRequest {
-            recorded_id: row.recorded_id,
-            source_video_file_id: source_id,
-            mode: state.settings.mode.clone(),
-            parent_dir: if state.settings.is_save_same_directory {
-                None
-            } else {
-                Some(state.settings.parent_dir.clone())
-            },
-            directory: if state.settings.directory.is_empty()
-                || state.settings.is_save_same_directory
-            {
-                None
-            } else {
-                Some(state.settings.directory.clone())
-            },
-            is_save_same_directory: state.settings.is_save_same_directory,
-            remove_original: state.settings.remove_original,
-        };
-
-        match client.add_encode(&request).await {
-            Ok(resp) => {
-                tracing::info!(
-                    recorded_id = row.recorded_id,
-                    encode_program_id = resp.encode_program_id,
-                    name = %row.name,
-                    "encode job queued"
-                );
-                success_count = success_count.saturating_add(1);
-            }
-            Err(e) => {
-                tracing::error!(
-                    recorded_id = row.recorded_id,
-                    name = %row.name,
-                    error = %e,
-                    "failed to queue encode job"
-                );
-                fail_count = fail_count.saturating_add(1);
-            }
-        }
     }
-
-    println!("Encode jobs submitted: {success_count} success, {fail_count} failed");
-    Ok(())
 }
 
 /// Initialize config file with default template.
