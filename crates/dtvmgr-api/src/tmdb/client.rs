@@ -10,8 +10,9 @@ use tokio::sync::Mutex;
 use tracing::instrument;
 use url::Url;
 
+use crate::rate_limiter::SimpleRateLimiter;
+
 use super::api::LocalTmdbApi;
-use super::rate_limiter::TmdbRateLimiter;
 use super::types::{
     SearchMultiParams, TmdbAlternativeTitlesResponse, TmdbErrorResponse, TmdbGenreListResponse,
     TmdbMediaType, TmdbSearchMultiResponse, TmdbTvDetails, TmdbTvSeason,
@@ -55,7 +56,7 @@ pub struct TmdbClient {
     /// Bearer API token.
     api_token: Secret,
     /// Rate limiter.
-    rate_limiter: Arc<Mutex<TmdbRateLimiter>>,
+    rate_limiter: Arc<Mutex<SimpleRateLimiter>>,
 }
 
 /// Builder for `TmdbClient`.
@@ -127,7 +128,9 @@ impl TmdbClientBuilder {
 
         let rate_limiter = self
             .min_interval
-            .map_or_else(TmdbRateLimiter::default_interval, TmdbRateLimiter::new);
+            .map_or_else(super::rate_limiter::default_limiter, |interval| {
+                SimpleRateLimiter::new(interval, "tmdb")
+            });
 
         let http_client = Client::builder()
             .user_agent(&user_agent)
@@ -151,44 +154,24 @@ impl TmdbClient {
         TmdbClientBuilder::new()
     }
 
-    /// Sends a GET request with Bearer auth, query params, and rate limiting.
-    /// Retries up to `MAX_RETRIES` times on HTTP 429.
-    #[instrument(skip_all, fields(
-        otel.kind = "Client",
-        http.method = "GET",
-        http.path = path,
-        http.url = tracing::field::Empty,
-        http.status_code = tracing::field::Empty,
-        http.response.body = tracing::field::Empty,
-    ), err(level = "error"))]
-    async fn get_json<T: serde::de::DeserializeOwned>(
+    /// Sends a request with rate limiting, retry on 429, and JSON parsing.
+    ///
+    /// TMDB-specific: parses `TmdbErrorResponse` for structured error messages.
+    async fn request_with_retry<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
-        query: &[(&str, String)],
+        #[cfg_attr(not(feature = "otel"), allow(unused_variables))] method: &'static str,
+        build_request: impl Fn() -> reqwest::RequestBuilder,
     ) -> Result<T> {
         self.rate_limiter.lock().await.wait().await;
 
-        let url = self
-            .base_url
-            .join(path)
-            .with_context(|| format!("failed to join URL path: {path}"))?;
-
-        let auth_value =
-            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.api_token.expose()))
-                .context("invalid API token for Authorization header")?;
-
+        #[cfg(feature = "otel")]
+        let request_start = std::time::Instant::now();
         let mut retries = 0u32;
         loop {
-            let mut request = self
-                .http_client
-                .get(url.clone())
-                .query(query)
+            let request = build_request()
                 .build()
                 .with_context(|| format!("failed to build request: {path}"))?;
-
-            request
-                .headers_mut()
-                .insert(reqwest::header::AUTHORIZATION, auth_value.clone());
 
             // SECURITY: URL does not contain auth token (Bearer is in header)
             tracing::Span::current().record("http.url", tracing::field::display(request.url()));
@@ -196,19 +179,7 @@ impl TmdbClient {
             let response = match self.http_client.execute(request).await {
                 Ok(resp) => resp,
                 Err(e) => {
-                    let kind = if e.is_timeout() {
-                        "timeout"
-                    } else if e.is_connect() {
-                        "connection error"
-                    } else if e.is_body() {
-                        "body error"
-                    } else if e.is_decode() {
-                        "decode error"
-                    } else if e.is_redirect() {
-                        "too many redirects"
-                    } else {
-                        "request error"
-                    };
+                    let kind = crate::classify_reqwest_error(&e);
                     if let Some(status) = e.status() {
                         tracing::Span::current()
                             .record("http.status_code", i64::from(status.as_u16()));
@@ -222,6 +193,9 @@ impl TmdbClient {
             span.record("http.status_code", i64::from(status.as_u16()));
 
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                #[cfg(feature = "otel")]
+                crate::metrics::record_rate_limit_hit("tmdb");
+
                 retries = retries.saturating_add(1);
                 if retries > MAX_RETRIES {
                     bail!("TMDB API rate limit exceeded after {MAX_RETRIES} retries: {path}");
@@ -258,11 +232,43 @@ impl TmdbClient {
                 .await
                 .with_context(|| format!("failed to read response body: {path}"))?;
             span.record("http.response.body", body.as_str());
-            let raw_result: std::result::Result<T, _> = serde_json::from_str(&body);
-            let parsed =
-                raw_result.with_context(|| format!("failed to decode JSON response: {path}"))?;
+            let parsed: T = serde_json::from_str(&body)
+                .with_context(|| format!("failed to decode JSON response: {path}"))?;
+
+            #[cfg(feature = "otel")]
+            crate::metrics::record_request_duration("tmdb", method, request_start);
+
             return Ok(parsed);
         }
+    }
+
+    /// Sends a GET request with Bearer auth, query params, and rate limiting.
+    #[instrument(skip_all, fields(
+        otel.kind = "Client",
+        http.method = "GET",
+        http.path = path,
+        http.url = tracing::field::Empty,
+        http.status_code = tracing::field::Empty,
+        http.response.body = tracing::field::Empty,
+    ), err(level = "error"))]
+    async fn get_json<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<T> {
+        let url = self
+            .base_url
+            .join(path)
+            .with_context(|| format!("failed to join URL path: {path}"))?;
+
+        let token = self.api_token.expose();
+        self.request_with_retry(path, "GET", || {
+            self.http_client
+                .get(url.clone())
+                .query(query)
+                .bearer_auth(token)
+        })
+        .await
     }
 }
 

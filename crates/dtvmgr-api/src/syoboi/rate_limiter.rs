@@ -43,6 +43,8 @@ impl SyoboiRateLimiter {
     /// Sleeps until all three rate limit tiers are satisfied.
     #[allow(clippy::arithmetic_side_effects)]
     pub async fn wait(&mut self) {
+        #[cfg(feature = "otel")]
+        let wait_start = Instant::now();
         let now = Instant::now();
 
         // 1. Purge expired timestamps
@@ -91,6 +93,10 @@ impl SyoboiRateLimiter {
         self.last_request = Some(now);
         self.hourly_window.push_back(now);
         self.daily_window.push_back(now);
+
+        // 6. Record wait duration metric
+        #[cfg(feature = "otel")]
+        crate::metrics::record_rate_limit_wait("syoboi", wait_start);
     }
 
     /// Removes expired entries from sliding windows.
