@@ -1,12 +1,12 @@
-//! Pre-encode duration validation.
+//! Duration validation for the encoding pipeline.
 //!
-//! Compares the original TS duration against the CM-cut AVS duration
-//! to detect cut errors before encoding begins.
+//! Provides both pre-encode validation (TS vs AVS duration ratio) and
+//! post-encode validation (video vs audio stream duration drift).
 
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use tracing::info;
+use tracing::{info, instrument};
 
 use crate::command::ffprobe;
 use crate::types::DurationCheckRule;
@@ -51,6 +51,7 @@ pub const DEFAULT_RULES: &[DurationCheckRule] = &[
 ///
 /// Returns an error if the TS duration is zero or if the ratio is
 /// below the threshold for the matching rule.
+#[instrument(skip_all, err(level = "error"))]
 #[allow(clippy::module_name_repetitions)]
 pub fn validate_duration_ratio(
     ts_duration_secs: f64,
@@ -109,21 +110,66 @@ pub fn validate_duration_ratio(
 /// # Errors
 ///
 /// Returns an error if ffprobe fails or the duration ratio is too low.
+#[instrument(skip_all, err(level = "error"))]
 pub fn check_pre_encode_duration(
     ffprobe_bin: &Path,
     ts_file: &Path,
     avs_file: &Path,
     rules: Option<&[DurationCheckRule]>,
 ) -> Result<f64> {
-    let ts_duration = ffprobe::get_duration(ffprobe_bin, ts_file)
+    let ts_duration = ffprobe::duration(ffprobe_bin, ts_file)
         .with_context(|| format!("failed to get TS duration: {}", ts_file.display()))?;
-    let avs_duration = ffprobe::get_duration(ffprobe_bin, avs_file)
+    let avs_duration = ffprobe::duration(ffprobe_bin, avs_file)
         .with_context(|| format!("failed to get AVS duration: {}", avs_file.display()))?;
 
     let effective_rules = rules.unwrap_or(DEFAULT_RULES);
     validate_duration_ratio(ts_duration, avs_duration, effective_rules)
         .context("duration ratio validation failed")?;
     Ok(avs_duration)
+}
+
+/// Maximum allowed drift between video and audio durations in seconds.
+const MAX_DRIFT_SECS: f64 = 5.0;
+
+/// Validate post-encode video/audio stream durations.
+///
+/// Queries the video (`v:0`) and audio (`a:0`) stream durations from
+/// the encoded output file. Detects two failure modes:
+///
+/// 1. Video duration is missing/zero while audio exists → all frames dropped
+/// 2. Video and audio durations differ by more than 5 seconds → abnormal
+///
+/// # Errors
+///
+/// Returns an error if ffprobe fails or the durations indicate an abnormal encode.
+#[instrument(skip_all, err(level = "error"))]
+pub fn check_post_encode_duration(ffprobe_bin: &Path, output_file: &Path) -> Result<()> {
+    let video_dur = ffprobe::stream_duration(ffprobe_bin, output_file, "v:0")
+        .context("failed to get video stream duration")?;
+    let audio_dur = ffprobe::stream_duration(ffprobe_bin, output_file, "a:0")
+        .context("failed to get audio stream duration")?;
+
+    validate_post_encode_durations(video_dur, audio_dur)
+}
+
+/// Pure validation logic for post-encode durations.
+///
+/// Separated from I/O for unit testing.
+fn validate_post_encode_durations(video_dur: Option<f64>, audio_dur: Option<f64>) -> Result<()> {
+    info!(video = ?video_dur, audio = ?audio_dur, "post-encode duration check");
+
+    match (video_dur, audio_dur) {
+        (None | Some(0.0), Some(a)) if a > 0.0 => bail!(
+            "video stream has no duration but audio is {a:.1}s — \
+             likely all video frames were dropped"
+        ),
+        (Some(v), Some(a)) if (v - a).abs() > MAX_DRIFT_SECS => bail!(
+            "video ({v:.1}s) and audio ({a:.1}s) durations differ by \
+             {diff:.1}s (threshold: {MAX_DRIFT_SECS}s)",
+            diff = (v - a).abs(),
+        ),
+        _ => Ok(()),
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────
@@ -371,6 +417,82 @@ mod tests {
         let result = check_pre_encode_duration(&script, &ts_file, &avs_file, None);
 
         // Assert
+        assert!(result.is_err());
+    }
+
+    // ── validate_post_encode_durations ──────────────────────
+
+    #[test]
+    fn post_encode_video_none_audio_present_fails() {
+        // Arrange: video missing, audio 1800s → all frames dropped
+        // Act / Assert
+        let result = validate_post_encode_durations(None, Some(1800.0));
+        assert!(result.is_err());
+        let msg = format!("{:#}", result.unwrap_err());
+        assert!(
+            msg.contains("no duration"),
+            "expected 'no duration' in: {msg}"
+        );
+    }
+
+    #[test]
+    fn post_encode_video_zero_audio_present_fails() {
+        // Arrange: video 0.0, audio 1800s → all frames dropped
+        // Act / Assert
+        let result = validate_post_encode_durations(Some(0.0), Some(1800.0));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn post_encode_drift_exceeds_threshold_fails() {
+        // Arrange: video 1800s, audio 1794s → drift 6s > 5s
+        // Act / Assert
+        let result = validate_post_encode_durations(Some(1800.0), Some(1794.0));
+        assert!(result.is_err());
+        let msg = format!("{:#}", result.unwrap_err());
+        assert!(msg.contains("differ by"), "expected 'differ by' in: {msg}");
+    }
+
+    #[test]
+    fn post_encode_drift_within_threshold_passes() {
+        // Arrange: video 1800s, audio 1796s → drift 4s ≤ 5s
+        // Act / Assert
+        assert!(validate_post_encode_durations(Some(1800.0), Some(1796.0)).is_ok());
+    }
+
+    #[test]
+    fn post_encode_exact_match_passes() {
+        // Arrange: video == audio
+        // Act / Assert
+        assert!(validate_post_encode_durations(Some(1800.0), Some(1800.0)).is_ok());
+    }
+
+    #[test]
+    fn post_encode_both_none_passes() {
+        // Arrange: both streams missing (e.g. audio-only encode)
+        // Act / Assert
+        assert!(validate_post_encode_durations(None, None).is_ok());
+    }
+
+    #[test]
+    fn post_encode_video_present_audio_none_passes() {
+        // Arrange: video-only output
+        // Act / Assert
+        assert!(validate_post_encode_durations(Some(1800.0), None).is_ok());
+    }
+
+    #[test]
+    fn post_encode_drift_at_boundary_passes() {
+        // Arrange: exactly 5.0s drift → not exceeding threshold
+        // Act / Assert
+        assert!(validate_post_encode_durations(Some(1800.0), Some(1795.0)).is_ok());
+    }
+
+    #[test]
+    fn post_encode_audio_longer_than_video_drift_exceeds() {
+        // Arrange: audio longer than video by 6s
+        // Act / Assert
+        let result = validate_post_encode_durations(Some(1794.0), Some(1800.0));
         assert!(result.is_err());
     }
 

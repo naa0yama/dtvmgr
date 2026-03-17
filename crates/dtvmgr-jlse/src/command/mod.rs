@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 use dtvmgr_tsduck::command::apply_pdeathsig;
-use tracing::debug;
+use tracing::{info, instrument};
 
 /// Spawn a command, inherit stdout/stderr, and check exit status.
 ///
@@ -24,8 +24,9 @@ use tracing::debug;
 ///
 /// Returns an error if the command cannot be spawned or exits with a
 /// non-zero status code.
+#[instrument(skip_all, err(level = "error"))]
 pub fn run(program: &Path, args: &[&OsStr]) -> Result<()> {
-    debug!(cmd = %program.display(), ?args, "running command");
+    info!(cmd = %program.display(), ?args, "running command");
 
     let mut cmd = Command::new(program);
     cmd.args(args);
@@ -58,8 +59,9 @@ pub fn run(program: &Path, args: &[&OsStr]) -> Result<()> {
 ///
 /// Returns an error if the command cannot be spawned or exits with a
 /// non-zero status code.
+#[instrument(skip_all, err(level = "error"))]
 pub fn run_logged(program: &Path, args: &[&OsStr], on_log: &dyn Fn(&str)) -> Result<()> {
-    debug!(cmd = %program.display(), ?args, "running command (logged)");
+    info!(cmd = %program.display(), ?args, "running command (logged)");
 
     let mut cmd = Command::new(program);
     cmd.args(args).stdout(Stdio::null()).stderr(Stdio::piped());
@@ -100,8 +102,9 @@ pub fn run_logged(program: &Path, args: &[&OsStr], on_log: &dyn Fn(&str)) -> Res
 ///
 /// Returns an error if the command cannot be spawned, exits with a
 /// non-zero status code, or stdout is not valid UTF-8.
+#[instrument(skip_all, err(level = "error"))]
 pub fn run_capture(program: &Path, args: &[&OsStr]) -> Result<String> {
-    debug!(cmd = %program.display(), ?args, "running command (capture)");
+    info!(cmd = %program.display(), ?args, "running command (capture)");
 
     let mut cmd = Command::new(program);
     cmd.args(args);

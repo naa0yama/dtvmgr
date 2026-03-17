@@ -8,7 +8,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use regex::Regex;
-use tracing::debug;
+use tracing::{debug, instrument};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::types::Channel;
@@ -21,6 +21,7 @@ use crate::types::Channel;
 /// # Errors
 ///
 /// Returns an error if the file cannot be read or parsed.
+#[instrument(skip_all, err(level = "error"))]
 pub fn load_channels(csv_path: &Path) -> Result<Vec<Channel>> {
     let data = std::fs::read_to_string(csv_path)
         .with_context(|| format!("failed to read channel list: {}", csv_path.display()))?;
@@ -84,6 +85,7 @@ pub fn lookup_channel_by_sids(channels: &[Channel], sids: &[u32]) -> Option<Chan
 /// 3. Filename pattern matching (fallback)
 ///
 /// Returns `None` if no channel matches.
+#[instrument(skip_all)]
 #[must_use]
 #[allow(clippy::module_name_repetitions)]
 pub fn detect_channel_with_sid(
@@ -135,6 +137,7 @@ pub fn detect_channel_with_sid(
 /// without PAT SID lookup.
 ///
 /// Returns `None` if no channel matches.
+#[instrument(skip_all)]
 #[must_use]
 #[allow(clippy::module_name_repetitions)]
 pub fn detect_channel(

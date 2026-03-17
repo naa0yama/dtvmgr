@@ -224,8 +224,8 @@ pub struct EncodeRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EncodeResponse {
-    /// Encode program ID (queue entry ID).
-    pub encode_program_id: u64,
+    /// Encode queue entry ID.
+    pub encode_id: u64,
 }
 
 // --- Encode Queue ---

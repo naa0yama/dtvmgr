@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
+use tracing::instrument;
 
 /// A cached channel group.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +34,7 @@ pub struct CachedChannel {
 /// # Errors
 ///
 /// Returns an error if the database operation fails.
+#[instrument(skip_all, err(level = "error"))]
 pub fn upsert_channel_groups(conn: &Connection, groups: &[CachedChannelGroup]) -> Result<usize> {
     let tx = conn
         .unchecked_transaction()
@@ -72,6 +74,7 @@ pub fn upsert_channel_groups(conn: &Connection, groups: &[CachedChannelGroup]) -
 /// # Errors
 ///
 /// Returns an error if the database query fails.
+#[instrument(skip_all, err(level = "error"))]
 pub fn load_channel_groups(conn: &Connection) -> Result<Vec<CachedChannelGroup>> {
     let mut stmt = conn
         .prepare("SELECT ch_gid, ch_group_name, ch_group_order FROM channel_groups ORDER BY ch_group_order")
@@ -101,6 +104,7 @@ pub fn load_channel_groups(conn: &Connection) -> Result<Vec<CachedChannelGroup>>
 ///
 /// Returns an error if the database operation fails.
 #[allow(clippy::module_name_repetitions)]
+#[instrument(skip_all, err(level = "error"))]
 pub fn upsert_channels(conn: &Connection, channels: &[CachedChannel]) -> Result<usize> {
     let tx = conn
         .unchecked_transaction()
@@ -137,6 +141,7 @@ pub fn upsert_channels(conn: &Connection, channels: &[CachedChannel]) -> Result<
 ///
 /// Returns an error if the database query fails.
 #[allow(clippy::module_name_repetitions)]
+#[instrument(skip_all, err(level = "error"))]
 pub fn load_channels(conn: &Connection) -> Result<Vec<CachedChannel>> {
     let mut stmt = conn
         .prepare("SELECT ch_id, ch_gid, ch_name FROM channels ORDER BY ch_id")

@@ -7,6 +7,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use tracing::instrument;
 
 /// Concatenate multiple AVS files into a single output file using
 /// `Import()` directives.
@@ -17,6 +18,7 @@ use anyhow::{Context, Result};
 /// # Errors
 ///
 /// Returns an error if the output file cannot be written.
+#[instrument(skip_all, err(level = "error"))]
 pub fn concat(output_path: &Path, input_files: &[&Path]) -> Result<()> {
     let mut content = String::new();
 
@@ -38,6 +40,7 @@ pub fn concat(output_path: &Path, input_files: &[&Path]) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the output file cannot be written.
+#[instrument(skip_all, err(level = "error"))]
 pub fn create_cutcm(output: &Path, input_avs: &Path, cut_avs: &Path) -> Result<()> {
     concat(output, &[input_avs, cut_avs])
 }
@@ -51,6 +54,7 @@ pub fn create_cutcm(output: &Path, input_avs: &Path, cut_avs: &Path) -> Result<(
 /// # Errors
 ///
 /// Returns an error if the output file cannot be written.
+#[instrument(skip_all, err(level = "error"))]
 pub fn create_cutcm_logo(
     output: &Path,
     input_avs: &Path,

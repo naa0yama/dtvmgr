@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 
 use anyhow::{Context, Result};
 use regex::Regex;
-use tracing::debug;
+use tracing::{debug, instrument};
 
 /// Regex for `Trim(start,end)` AVS commands (shared with `ffmpeg_filter`).
 ///
@@ -280,6 +280,7 @@ fn update_part_cut(b_part_exist: &mut u32, n_part: &mut u32, chapter_type: Chapt
 /// Create chapter entries from Trim frame positions and structure analysis.
 ///
 /// Implements the state-machine algorithm from the original `chapter_jls.js`.
+#[instrument(skip_all)]
 #[allow(
     clippy::too_many_lines,
     clippy::arithmetic_side_effects,
@@ -447,6 +448,7 @@ fn format_time(msec: u64) -> String {
 /// # Errors
 ///
 /// Returns an error if the file cannot be written.
+#[instrument(skip_all, err(level = "error"))]
 pub fn write_org(output_path: &Path, chapters: &[ChapterEntry]) -> Result<()> {
     write_ffmetadata(output_path, chapters, false)
 }
@@ -456,6 +458,7 @@ pub fn write_org(output_path: &Path, chapters: &[ChapterEntry]) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the file cannot be written.
+#[instrument(skip_all, err(level = "error"))]
 pub fn write_cut(output_path: &Path, chapters: &[ChapterEntry]) -> Result<()> {
     write_ffmetadata(output_path, chapters, true)
 }
@@ -501,6 +504,7 @@ fn write_ffmetadata(output_path: &Path, chapters: &[ChapterEntry], skip_cut: boo
 /// # Errors
 ///
 /// Returns an error if the file cannot be written.
+#[instrument(skip_all, err(level = "error"))]
 pub fn write_tvt(output_path: &Path, chapters: &[ChapterEntry]) -> Result<()> {
     let mut content = String::from("c-");
     let mut last_msec: u64 = 0;
@@ -554,6 +558,7 @@ pub fn write_tvt(output_path: &Path, chapters: &[ChapterEntry]) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if any file cannot be written.
+#[instrument(skip_all, err(level = "error"))]
 pub fn write_all(chapters: &[ChapterEntry], org: &Path, cut: &Path, tvt: &Path) -> Result<()> {
     write_org(org, chapters).with_context(|| "failed to write ORG chapters")?;
     write_cut(cut, chapters).with_context(|| "failed to write CUT chapters")?;

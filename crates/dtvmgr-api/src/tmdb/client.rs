@@ -153,7 +153,14 @@ impl TmdbClient {
 
     /// Sends a GET request with Bearer auth, query params, and rate limiting.
     /// Retries up to `MAX_RETRIES` times on HTTP 429.
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(
+        otel.kind = "Client",
+        http.method = "GET",
+        http.path = path,
+        http.url = tracing::field::Empty,
+        http.status_code = tracing::field::Empty,
+        http.response.body = tracing::field::Empty,
+    ), err(level = "error"))]
     async fn get_json<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
@@ -183,7 +190,8 @@ impl TmdbClient {
                 .headers_mut()
                 .insert(reqwest::header::AUTHORIZATION, auth_value.clone());
 
-            tracing::debug!(url = %request.url(), "TMDB API request");
+            // SECURITY: URL does not contain auth token (Bearer is in header)
+            tracing::Span::current().record("http.url", tracing::field::display(request.url()));
 
             let response = match self.http_client.execute(request).await {
                 Ok(resp) => resp,
@@ -192,16 +200,26 @@ impl TmdbClient {
                         "timeout"
                     } else if e.is_connect() {
                         "connection error"
+                    } else if e.is_body() {
+                        "body error"
+                    } else if e.is_decode() {
+                        "decode error"
                     } else if e.is_redirect() {
                         "too many redirects"
                     } else {
                         "request error"
                     };
-                    bail!("{kind}: {path}");
+                    if let Some(status) = e.status() {
+                        tracing::Span::current()
+                            .record("http.status_code", i64::from(status.as_u16()));
+                    }
+                    bail!("{kind}: {path}: {e:#}");
                 }
             };
 
+            let span = tracing::Span::current();
             let status = response.status();
+            span.record("http.status_code", i64::from(status.as_u16()));
 
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 retries = retries.saturating_add(1);
@@ -223,6 +241,7 @@ impl TmdbClient {
                     .text()
                     .await
                     .unwrap_or_else(|_| String::from("<failed to read body>"));
+                span.record("http.response.body", &body);
                 if let Ok(error_response) = serde_json::from_str::<TmdbErrorResponse>(&body) {
                     bail!(
                         "TMDB API error (HTTP {}): code={}, message={}",
@@ -238,6 +257,7 @@ impl TmdbClient {
                 .text()
                 .await
                 .with_context(|| format!("failed to read response body: {path}"))?;
+            span.record("http.response.body", body.as_str());
             let raw_result: std::result::Result<T, _> = serde_json::from_str(&body);
             let parsed =
                 raw_result.with_context(|| format!("failed to decode JSON response: {path}"))?;
@@ -247,14 +267,14 @@ impl TmdbClient {
 }
 
 impl LocalTmdbApi for TmdbClient {
-    #[instrument(skip_all)]
+    #[instrument(skip_all, err(level = "error"))]
     async fn tv_details(&self, series_id: u64, language: &str) -> Result<TmdbTvDetails> {
         let path = format!("tv/{series_id}");
         let query = [("language", String::from(language))];
         self.get_json(&path, &query).await
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip_all, err(level = "error"))]
     async fn tv_season(
         &self,
         series_id: u64,
@@ -266,19 +286,19 @@ impl LocalTmdbApi for TmdbClient {
         self.get_json(&path, &query).await
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip_all, err(level = "error"))]
     async fn genre_tv_list(&self, language: &str) -> Result<TmdbGenreListResponse> {
         self.get_json("genre/tv/list", &[("language", String::from(language))])
             .await
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip_all, err(level = "error"))]
     async fn genre_movie_list(&self, language: &str) -> Result<TmdbGenreListResponse> {
         self.get_json("genre/movie/list", &[("language", String::from(language))])
             .await
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip_all, err(level = "error"))]
     async fn search_multi(&self, params: &SearchMultiParams) -> Result<TmdbSearchMultiResponse> {
         let query: Vec<(&str, String)> = vec![
             ("query", params.query.clone()),
@@ -289,7 +309,7 @@ impl LocalTmdbApi for TmdbClient {
         self.get_json("search/multi", &query).await
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip_all, err(level = "error"))]
     async fn alternative_titles(
         &self,
         media_type: TmdbMediaType,

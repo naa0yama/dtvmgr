@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
+use tracing::instrument;
 
 /// A cached `EPGStation` recorded item.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +67,7 @@ pub struct CachedVideoFile {
 /// # Errors
 ///
 /// Returns an error if the database operation fails.
+#[instrument(skip_all, err(level = "error"))]
 pub fn upsert_recorded_items(
     conn: &Connection,
     items: &[CachedRecordedItem],
@@ -171,6 +173,7 @@ pub fn upsert_recorded_items(
 ///
 /// Returns an error if the database query fails.
 #[allow(clippy::type_complexity)]
+#[instrument(skip_all, err(level = "error"))]
 pub fn load_recorded_items_page(
     conn: &Connection,
     offset: i64,
@@ -221,6 +224,7 @@ pub fn load_recorded_items_page(
 /// # Errors
 ///
 /// Returns an error if the database query fails.
+#[instrument(skip_all, err(level = "error"))]
 pub fn load_recorded_items(
     conn: &Connection,
 ) -> Result<Vec<(CachedRecordedItem, Vec<CachedVideoFile>)>> {
@@ -233,6 +237,7 @@ pub fn load_recorded_items(
 /// # Errors
 ///
 /// Returns an error if the database operation fails.
+#[instrument(skip_all, err(level = "error"))]
 pub fn delete_recorded_items_not_in(conn: &Connection, ids: &[i64]) -> Result<usize> {
     if ids.is_empty() {
         let deleted = conn
@@ -275,7 +280,8 @@ pub fn delete_recorded_items_not_in(conn: &Connection, ids: &[i64]) -> Result<us
 /// # Errors
 ///
 /// Returns an error if the database query fails.
-pub fn get_newest_start_at(conn: &Connection) -> Result<Option<i64>> {
+#[instrument(skip_all, err(level = "error"))]
+pub fn newest_start_at(conn: &Connection) -> Result<Option<i64>> {
     conn.query_row("SELECT MAX(start_at) FROM epg_recorded_items", [], |row| {
         row.get(0)
     })
@@ -287,6 +293,7 @@ pub fn get_newest_start_at(conn: &Connection) -> Result<Option<i64>> {
 /// # Errors
 ///
 /// Returns an error if the database operation fails.
+#[instrument(skip_all, err(level = "error"))]
 pub fn update_file_exists(
     conn: &Connection,
     video_file_id: i64,
@@ -306,6 +313,7 @@ pub fn update_file_exists(
 /// # Errors
 ///
 /// Returns an error if the database operation fails.
+#[instrument(skip_all, err(level = "error"))]
 pub fn invalidate_file_exists(conn: &Connection, recorded_id: i64) -> Result<()> {
     conn.execute(
         "UPDATE epg_video_files SET file_exists = NULL, file_checked_at = NULL WHERE recorded_id = ?1",
@@ -560,14 +568,14 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_get_newest_start_at() {
+    fn test_newest_start_at() {
         // Arrange
         let (conn, _dir) = setup_db();
         let items = vec![make_item(1, 1_000_000), make_item(2, 5_000_000)];
         upsert_recorded_items(&conn, &items, &[]).unwrap();
 
         // Act
-        let newest = get_newest_start_at(&conn).unwrap();
+        let newest = newest_start_at(&conn).unwrap();
 
         // Assert
         assert_eq!(newest, Some(5_000_000));
@@ -575,12 +583,12 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_get_newest_start_at_empty() {
+    fn test_newest_start_at_empty() {
         // Arrange
         let (conn, _dir) = setup_db();
 
         // Act
-        let newest = get_newest_start_at(&conn).unwrap();
+        let newest = newest_start_at(&conn).unwrap();
 
         // Assert
         assert_eq!(newest, None);

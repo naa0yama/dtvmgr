@@ -4,8 +4,8 @@
 use anyhow::Result;
 
 use super::types::{
-    Channel, EncodeInfoResponse, EncodeRequest, EncodeResponse, EpgConfig, RecordedParams,
-    RecordedResponse,
+    Channel, EncodeInfoResponse, EncodeRequest, EncodeResponse, EpgConfig, RecordedItem,
+    RecordedParams, RecordedResponse,
 };
 
 /// `EPGStation` API trait.
@@ -20,21 +20,28 @@ pub trait LocalEpgStationApi {
     /// # Errors
     ///
     /// Returns an error if the HTTP request or JSON parsing fails.
-    async fn get_recorded(&self, params: &RecordedParams) -> Result<RecordedResponse>;
+    async fn fetch_recorded(&self, params: &RecordedParams) -> Result<RecordedResponse>;
+
+    /// Fetches a single recorded program by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request or JSON parsing fails.
+    async fn fetch_recorded_by_id(&self, id: u64) -> Result<RecordedItem>;
 
     /// Fetches broadcast channel list.
     ///
     /// # Errors
     ///
     /// Returns an error if the HTTP request or JSON parsing fails.
-    async fn get_channels(&self) -> Result<Vec<Channel>>;
+    async fn fetch_channels(&self) -> Result<Vec<Channel>>;
 
     /// Fetches server configuration (encode presets and recorded directories).
     ///
     /// # Errors
     ///
     /// Returns an error if the HTTP request or JSON parsing fails.
-    async fn get_config(&self) -> Result<EpgConfig>;
+    async fn fetch_config(&self) -> Result<EpgConfig>;
 
     /// Adds an encode job to the queue.
     ///
@@ -48,7 +55,7 @@ pub trait LocalEpgStationApi {
     /// # Errors
     ///
     /// Returns an error if the HTTP request or JSON parsing fails.
-    async fn get_encode_queue(&self) -> Result<EncodeInfoResponse>;
+    async fn fetch_encode_queue(&self) -> Result<EncodeInfoResponse>;
 
     /// Checks whether a video file exists on the `EPGStation` server.
     ///

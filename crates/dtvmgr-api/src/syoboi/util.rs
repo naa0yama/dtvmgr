@@ -54,7 +54,7 @@ pub fn parse_sub_titles(raw: &str) -> Vec<(u32, String)> {
 ///
 /// Returns an error if `params.range` is `None`, any underlying API request
 /// fails, or timestamp conversion fails.
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 pub async fn lookup_all_programs(
     api: &(impl LocalSyoboiApi + Sync),
     params: &ProgLookupParams,

@@ -7,7 +7,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
-use tracing::debug;
+use tracing::{debug, instrument};
 
 use crate::types::Channel;
 
@@ -20,6 +20,7 @@ use crate::types::Channel;
 ///
 /// Returns an error if the command cannot be spawned or exits with a
 /// non-zero status code.
+#[instrument(skip_all, err(level = "error"))]
 pub fn run(
     binary: &Path,
     avs_file: &Path,
@@ -40,6 +41,7 @@ pub fn run(
 ///
 /// Returns an error if the command cannot be spawned or exits with a
 /// non-zero status code.
+#[instrument(skip_all, err(level = "error"))]
 pub fn run_logged(
     binary: &Path,
     avs_file: &Path,
@@ -68,6 +70,7 @@ pub fn run_logged(
 /// Returns an error if no channel is provided or no matching logo file
 /// is found. Without a logo, `chapter_exe` accuracy degrades
 /// significantly.
+#[instrument(skip_all, err(level = "error"))]
 pub fn select_logo(logo_dir: &Path, channel: Option<&Channel>) -> Result<PathBuf> {
     let Some(ch) = channel else {
         bail!("no channel detected; cannot select logo file");
@@ -105,6 +108,7 @@ pub fn select_logo(logo_dir: &Path, channel: Option<&Channel>) -> Result<PathBuf
 /// 2. `<name>.lgd2`
 /// 3. If `name` starts with `"SID"`, scan for `<name>-*.lgd` and return
 ///    the one with the highest numeric suffix.
+#[instrument(skip_all)]
 #[must_use]
 pub fn find_logo(logo_dir: &Path, name: &str) -> Option<PathBuf> {
     // Try exact .lgd
@@ -163,6 +167,7 @@ fn find_sid_logo(logo_dir: &Path, prefix: &str) -> Option<PathBuf> {
 /// Build the argument list for `logoframe`.
 ///
 /// Format: `<avs> -logo <logo> -oa <txt_output> -o <avs_output>`
+#[instrument(skip_all)]
 #[must_use]
 pub fn build_args(
     avs_file: &Path,

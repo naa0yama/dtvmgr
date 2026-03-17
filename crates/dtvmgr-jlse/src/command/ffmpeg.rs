@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 use dtvmgr_tsduck::command::apply_pdeathsig;
-use tracing::debug;
+use tracing::{info, instrument};
 
 use crate::progress::{self, ProgressEvent};
 use crate::types::JlseEncode;
@@ -69,6 +69,7 @@ pub struct MkvMetadata {
 ///
 /// Returns an error if the command cannot be spawned or exits
 /// with a non-zero status code.
+#[instrument(skip_all, err(level = "error"))]
 pub fn run(
     binary: &Path,
     avs_file: &Path,
@@ -272,7 +273,19 @@ impl JlseEncode {
             }
             if let Some(ref filter) = video.filter {
                 args.push("-vf".to_owned());
-                args.push(filter.clone());
+                let needs_hwupload = self
+                    .input
+                    .as_ref()
+                    .and_then(|i| i.filter_hw_device.as_ref())
+                    .is_some();
+                let has_hwupload = filter
+                    .split(',')
+                    .any(|seg| seg.trim_start().starts_with("hwupload"));
+                if needs_hwupload && !has_hwupload {
+                    args.push(format!("hwupload=extra_hw_frames=64,{filter}"));
+                } else {
+                    args.push(filter.clone());
+                }
             }
             append_extra_with_specifier(&mut args, &video.extra, "v");
         }
@@ -341,6 +354,7 @@ impl JlseEncode {
 ///
 /// Returns an error if the command cannot be spawned or exits
 /// with a non-zero status code.
+#[instrument(skip_all, err(level = "error"))]
 #[allow(clippy::too_many_arguments)]
 pub fn run_with_progress(
     binary: &Path,
@@ -361,7 +375,7 @@ pub fn run_with_progress(
         input_options,
         extra_options,
     );
-    debug!(cmd = %binary.display(), ?args, "running ffmpeg with progress");
+    info!(cmd = %binary.display(), ?args, "running ffmpeg with progress");
 
     let mut cmd = Command::new(binary);
     cmd.args(&args).stdout(Stdio::null()).stderr(Stdio::piped());
@@ -1055,6 +1069,115 @@ mod tests {
         // Assert — no -map 0:a because has_settings is false
         assert!(!args.contains(&"-map".to_owned()));
         assert!(args.is_empty());
+    }
+
+    // ── hwupload auto-prepend ──────────────────────────────
+
+    #[test]
+    fn test_to_output_args_hwupload_prepended_when_filter_hw_device_set() {
+        // Arrange — AVS + QSV HW encode: filter_hw_device triggers hwupload
+        let encode = JlseEncode {
+            input: Some(EncodeInput {
+                init_hw_device: Some("qsv=hw".to_owned()),
+                filter_hw_device: Some("hw".to_owned()),
+                ..EncodeInput::default()
+            }),
+            video: Some(EncodeVideo {
+                codec: Some("av1_qsv".to_owned()),
+                filter: Some("vpp_qsv=framerate=30".to_owned()),
+                ..EncodeVideo::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert — hwupload prepended to filter string
+        let vf_idx = args.iter().position(|a| a == "-vf").unwrap();
+        assert_eq!(
+            args[vf_idx + 1],
+            "hwupload=extra_hw_frames=64,vpp_qsv=framerate=30"
+        );
+    }
+
+    #[test]
+    fn test_to_output_args_no_hwupload_without_filter_hw_device() {
+        // Arrange — SW encode: no filter_hw_device, filter used as-is
+        let encode = JlseEncode {
+            input: Some(EncodeInput::default()),
+            video: Some(EncodeVideo {
+                codec: Some("libx264".to_owned()),
+                filter: Some("yadif=mode=send_frame".to_owned()),
+                ..EncodeVideo::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert — filter unchanged, no hwupload
+        let vf_idx = args.iter().position(|a| a == "-vf").unwrap();
+        assert_eq!(args[vf_idx + 1], "yadif=mode=send_frame");
+    }
+
+    #[test]
+    fn test_to_output_args_hwupload_skipped_when_already_at_start() {
+        // Arrange — user already specified hwupload at the beginning
+        let encode = JlseEncode {
+            input: Some(EncodeInput {
+                init_hw_device: Some("qsv=hw".to_owned()),
+                filter_hw_device: Some("hw".to_owned()),
+                ..EncodeInput::default()
+            }),
+            video: Some(EncodeVideo {
+                codec: Some("av1_qsv".to_owned()),
+                filter: Some("hwupload=extra_hw_frames=32,vpp_qsv=framerate=30".to_owned()),
+                ..EncodeVideo::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert — no duplicate hwupload prepended
+        let vf_idx = args.iter().position(|a| a == "-vf").unwrap();
+        assert_eq!(
+            args[vf_idx + 1],
+            "hwupload=extra_hw_frames=32,vpp_qsv=framerate=30"
+        );
+    }
+
+    #[test]
+    fn test_to_output_args_hwupload_skipped_when_in_middle() {
+        // Arrange — user placed hwupload in the middle of the chain
+        let encode = JlseEncode {
+            input: Some(EncodeInput {
+                init_hw_device: Some("qsv=hw".to_owned()),
+                filter_hw_device: Some("hw".to_owned()),
+                ..EncodeInput::default()
+            }),
+            video: Some(EncodeVideo {
+                codec: Some("av1_qsv".to_owned()),
+                filter: Some(
+                    "scale=1280:720,hwupload=extra_hw_frames=64,vpp_qsv=framerate=30".to_owned(),
+                ),
+                ..EncodeVideo::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert — no duplicate hwupload prepended
+        let vf_idx = args.iter().position(|a| a == "-vf").unwrap();
+        assert_eq!(
+            args[vf_idx + 1],
+            "scale=1280:720,hwupload=extra_hw_frames=64,vpp_qsv=framerate=30"
+        );
     }
 
     // ── stream specifier auto-append ────────────────────────

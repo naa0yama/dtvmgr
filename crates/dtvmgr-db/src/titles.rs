@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
+use tracing::instrument;
 
 /// A cached title with optional TMDB mapping.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +49,7 @@ pub struct CachedTitle {
 
 /// Parses a comma-separated keyword string into a Vec, filtering empty entries.
 #[must_use]
+#[instrument(skip_all)]
 pub fn parse_keywords(raw: Option<String>) -> Vec<String> {
     raw.map(|s| {
         s.split(',')
@@ -77,6 +79,7 @@ const KEYWORD_EXCLUDE_PREFIXES: &[&str] = &["wikipedia:", "wikiedia:", "legwork:
 /// - Empty / whitespace-only entries
 /// - Keywords exactly matching title or `short_title`
 #[must_use]
+#[instrument(skip_all)]
 pub fn filter_keywords(keywords: &[String], title: &str, short_title: Option<&str>) -> Vec<String> {
     keywords
         .iter()
@@ -116,6 +119,7 @@ pub fn filter_keywords(keywords: &[String], title: &str, short_title: Option<&st
 ///
 /// Returns an error if the database operation fails.
 #[allow(clippy::module_name_repetitions)]
+#[instrument(skip_all, err(level = "error"))]
 pub fn upsert_titles(conn: &Connection, titles: &[CachedTitle]) -> Result<usize> {
     let tx = conn
         .unchecked_transaction()
@@ -186,6 +190,7 @@ pub fn upsert_titles(conn: &Connection, titles: &[CachedTitle]) -> Result<usize>
 ///
 /// Returns an error if the database query fails.
 #[allow(clippy::module_name_repetitions)]
+#[instrument(skip_all, err(level = "error"))]
 pub fn load_titles(conn: &Connection) -> Result<Vec<CachedTitle>> {
     let mut stmt = conn
         .prepare(
@@ -236,6 +241,7 @@ pub fn load_titles(conn: &Connection) -> Result<Vec<CachedTitle>> {
 ///
 /// Returns an error if the database query fails.
 #[allow(clippy::module_name_repetitions)]
+#[instrument(skip_all, err(level = "error"))]
 pub fn load_titles_by_tids(conn: &Connection, tids: &[u32]) -> Result<Vec<CachedTitle>> {
     if tids.is_empty() {
         return Ok(Vec::new());
@@ -300,6 +306,7 @@ pub fn load_titles_by_tids(conn: &Connection, tids: &[u32]) -> Result<Vec<Cached
 /// # Errors
 ///
 /// Returns an error if the database operation fails.
+#[instrument(skip_all, err(level = "error"))]
 pub fn update_tmdb_mapping(
     conn: &Connection,
     tid: u32,
@@ -323,6 +330,7 @@ pub fn update_tmdb_mapping(
 /// # Errors
 ///
 /// Returns an error if the database operation fails.
+#[instrument(skip_all, err(level = "error"))]
 pub fn update_tmdb_search_result(
     conn: &Connection,
     tid: u32,
@@ -361,6 +369,7 @@ pub fn update_tmdb_search_result(
 /// # Errors
 ///
 /// Returns an error if the database operation fails.
+#[instrument(skip_all, err(level = "error"))]
 pub fn update_tmdb_last_updated(conn: &Connection, tid: u32, timestamp: &str) -> Result<()> {
     conn.execute(
         "UPDATE titles SET tmdb_last_updated = ?1 WHERE tid = ?2",
@@ -377,6 +386,7 @@ pub fn update_tmdb_last_updated(conn: &Connection, tid: u32, timestamp: &str) ->
 /// # Errors
 ///
 /// Returns an error if the database operation fails.
+#[instrument(skip_all, err(level = "error"))]
 pub fn delete_titles_by_cat_not_in(conn: &Connection, allowed_cats: &[u32]) -> Result<usize> {
     if allowed_cats.is_empty() {
         let deleted = conn

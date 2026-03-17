@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
+use tracing::instrument;
 
 use super::migrations::run_migrations;
 
@@ -15,6 +16,7 @@ use super::migrations::run_migrations;
 /// # Errors
 ///
 /// Returns an error if the database cannot be opened or migrations fail.
+#[instrument(skip_all, err(level = "error"))]
 pub fn open_db(dir: Option<&PathBuf>) -> Result<Connection> {
     let db_path = resolve_db_path(dir)?;
 

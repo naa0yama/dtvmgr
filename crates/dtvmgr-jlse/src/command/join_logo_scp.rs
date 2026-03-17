@@ -7,6 +7,7 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 use anyhow::Result;
+use tracing::instrument;
 
 use crate::types::DetectionParam;
 
@@ -16,6 +17,7 @@ use crate::types::DetectionParam;
 ///
 /// Returns an error if the command cannot be spawned or exits with a
 /// non-zero status code.
+#[instrument(skip_all, err(level = "error"))]
 pub fn run(
     binary: &Path,
     logoframe_txt: &Path,
@@ -43,6 +45,7 @@ pub fn run(
 ///
 /// Returns an error if the command cannot be spawned or exits with a
 /// non-zero status code.
+#[instrument(skip_all, err(level = "error"))]
 #[allow(clippy::too_many_arguments)]
 pub fn run_logged(
     binary: &Path,
@@ -71,6 +74,7 @@ pub fn run_logged(
 /// The `-flags` argument is omitted when `param.flags` is empty.
 /// `param.options` is split on whitespace and appended as individual
 /// arguments.
+#[instrument(skip_all)]
 #[must_use]
 pub fn build_args(
     logoframe_txt: &Path,

@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use tracing::{debug, info};
+use tracing::{debug, info, instrument};
 
 use crate::avs;
 use crate::channel;
@@ -67,6 +67,7 @@ pub struct PipelineContext {
 ///
 /// Returns an error if any pipeline step fails (validation, file I/O,
 /// external command execution, etc.).
+#[instrument(skip_all, err(level = "error"))]
 #[allow(
     clippy::module_name_repetitions,
     clippy::too_many_lines,
@@ -289,7 +290,7 @@ pub fn run_pipeline(
     // Step 11: (optional) FFmpeg filter generation
     if ctx.filter {
         info!("generating ffmpeg filter");
-        let fps = command::ffprobe::get_frame_rate(&bins.ffprobe, &input)?;
+        let fps = command::ffprobe::frame_rate(&bins.ffprobe, &input)?;
         output::ffmpeg_filter::create(&paths.output_avs_cut, &paths.output_filter_cut, &fps)?;
         debug!("ffmpeg filter generation completed");
     }
@@ -351,7 +352,7 @@ pub fn run_pipeline(
                 name: "FFmpeg".to_owned(),
             });
             let duration = avs_duration.unwrap_or_else(|| {
-                command::ffprobe::get_duration(&bins.ffprobe, avs_file).unwrap_or(0.0)
+                command::ffprobe::duration(&bins.ffprobe, avs_file).unwrap_or(0.0)
             });
             command::ffmpeg::run_with_progress(
                 &bins.ffmpeg,
@@ -376,6 +377,12 @@ pub fn run_pipeline(
             )?;
         }
         debug!("ffmpeg encoding completed");
+
+        // Post-encode duration validation
+        if !ctx.skip_duration_check {
+            validate::check_post_encode_duration(&bins.ffprobe, &output_file)
+                .context("post-encode duration check failed")?;
+        }
 
         // Save EIT XML alongside encoded output
         if let Some(ref eit_src) = mkv_metadata.eit_xml_path {

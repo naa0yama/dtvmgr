@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use tracing::debug;
+use tracing::{debug, instrument};
 
 use crate::command::ffprobe::FrameRate;
 use crate::output::chapter::TRIM_RE;
@@ -102,6 +102,7 @@ pub fn generate_filter(segments: &[TrimSegment], fps: &FrameRate) -> String {
 ///
 /// Returns an error if the AVS file cannot be read, the filter
 /// cannot be generated, or the output file cannot be written.
+#[instrument(skip_all, err(level = "error"))]
 pub fn create(avs_cut_path: &Path, output_path: &Path, fps: &FrameRate) -> Result<()> {
     let content = std::fs::read_to_string(avs_cut_path)
         .with_context(|| format!("failed to read AVS cut file: {}", avs_cut_path.display()))?;
