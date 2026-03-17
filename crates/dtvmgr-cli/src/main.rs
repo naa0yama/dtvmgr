@@ -1,5 +1,32 @@
 //! dtvmgr - TV program data management CLI.
 
+/// `OTel` metrics instruments for CLI commands.
+#[cfg(feature = "otel")]
+mod cli_metrics {
+    use std::sync::LazyLock;
+
+    use opentelemetry::metrics::{Counter, Meter};
+
+    /// Shared meter for dtvmgr-cli.
+    static METER: LazyLock<Meter> = LazyLock::new(|| opentelemetry::global::meter("dtvmgr-cli"));
+
+    /// Records processed during DB sync.
+    pub static DB_SYNC_RECORDS: LazyLock<Counter<u64>> = LazyLock::new(|| {
+        METER
+            .u64_counter("dtvmgr.db.sync.records")
+            .with_description("Records processed during DB sync")
+            .build()
+    });
+
+    /// TMDB lookup outcomes by type.
+    pub static TMDB_LOOKUP_OUTCOMES: LazyLock<Counter<u64>> = LazyLock::new(|| {
+        METER
+            .u64_counter("dtvmgr.tmdb.lookup.outcomes")
+            .with_description("TMDB lookup outcomes by type")
+            .build()
+    });
+}
+
 /// Application configuration (TOML).
 mod config;
 /// Terminal UI components.
@@ -938,6 +965,35 @@ async fn run_db_sync(args: &DbSyncArgs, config_file: Option<&PathBuf>) -> Result
         programs_changed,
     );
 
+    #[cfg(feature = "otel")]
+    {
+        use opentelemetry::KeyValue;
+        #[allow(clippy::as_conversions)]
+        {
+            cli_metrics::DB_SYNC_RECORDS.add(
+                titles_changed as u64,
+                &[
+                    KeyValue::new("table", "titles"),
+                    KeyValue::new("op", "upserted"),
+                ],
+            );
+            cli_metrics::DB_SYNC_RECORDS.add(
+                programs_changed as u64,
+                &[
+                    KeyValue::new("table", "programs"),
+                    KeyValue::new("op", "upserted"),
+                ],
+            );
+            cli_metrics::DB_SYNC_RECORDS.add(
+                ch_changed as u64,
+                &[
+                    KeyValue::new("table", "channels"),
+                    KeyValue::new("op", "upserted"),
+                ],
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -1531,6 +1587,22 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, config_file: Option<&PathBu
         mapped = mapped_count,
         "TMDB lookup complete"
     );
+
+    #[cfg(feature = "otel")]
+    {
+        use opentelemetry::KeyValue;
+        #[allow(clippy::as_conversions)]
+        {
+            cli_metrics::TMDB_LOOKUP_OUTCOMES
+                .add(success_count as u64, &[KeyValue::new("outcome", "success")]);
+            cli_metrics::TMDB_LOOKUP_OUTCOMES
+                .add(skip_count as u64, &[KeyValue::new("outcome", "skipped")]);
+            cli_metrics::TMDB_LOOKUP_OUTCOMES
+                .add(error_count as u64, &[KeyValue::new("outcome", "error")]);
+            cli_metrics::TMDB_LOOKUP_OUTCOMES
+                .add(mapped_count as u64, &[KeyValue::new("outcome", "mapped")]);
+        }
+    }
 
     // Apply discovered season_id values back to mapping entries
     if !season_id_updates.is_empty() {
@@ -2479,7 +2551,7 @@ async fn main() -> Result<()> {
     }
 
     #[cfg(feature = "otel")]
-    let tracer_provider = {
+    let (tracer_provider, logger_provider, meter_provider) = {
         let env_filter =
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
         let fmt_layer = tracing_subscriber::fmt::layer()
@@ -2490,11 +2562,16 @@ async fn main() -> Result<()> {
                 tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::stderr)
             });
 
-        let (otel_layer, provider) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        let otel_parts = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
             .ok()
             .filter(|ep| !ep.is_empty())
             .and_then(|_| {
-                let exporter = opentelemetry_otlp::SpanExporter::builder()
+                let span_exporter = opentelemetry_otlp::SpanExporter::builder()
+                    .with_http()
+                    .build()
+                    .ok()?;
+
+                let log_exporter = opentelemetry_otlp::LogExporter::builder()
                     .with_http()
                     .build()
                     .ok()?;
@@ -2504,8 +2581,28 @@ async fn main() -> Result<()> {
                     .build();
 
                 let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                    .with_resource(resource.clone())
+                    .with_batch_exporter(span_exporter)
+                    .build();
+
+                let metric_exporter = opentelemetry_otlp::MetricExporter::builder()
+                    .with_http()
+                    .build()
+                    .ok()?;
+
+                let meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+                    .with_resource(resource.clone())
+                    .with_reader(
+                        opentelemetry_sdk::metrics::PeriodicReader::builder(metric_exporter)
+                            .build(),
+                    )
+                    .build();
+
+                opentelemetry::global::set_meter_provider(meter_provider.clone());
+
+                let logger_provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
                     .with_resource(resource)
-                    .with_batch_exporter(exporter)
+                    .with_batch_exporter(log_exporter)
                     .build();
 
                 let tracer = opentelemetry::trace::TracerProvider::tracer(
@@ -2513,20 +2610,35 @@ async fn main() -> Result<()> {
                     env!("CARGO_PKG_NAME"),
                 );
 
+                let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+                let log_layer =
+                    opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(
+                        &logger_provider,
+                    );
+
                 Some((
-                    tracing_opentelemetry::layer().with_tracer(tracer),
+                    otel_layer,
+                    log_layer,
                     tracer_provider,
+                    logger_provider,
+                    meter_provider,
                 ))
-            })
-            .unzip();
+            });
+
+        let (otel_layer, log_layer, tracer_provider, logger_provider, meter_provider) =
+            match otel_parts {
+                Some((o, l, tp, lp, mp)) => (Some(o), Some(l), Some(tp), Some(lp), Some(mp)),
+                None => (None, None, None, None, None),
+            };
 
         tracing_subscriber::registry()
             .with(env_filter)
             .with(fmt_layer)
             .with(otel_layer)
+            .with(log_layer)
             .init();
 
-        provider
+        (tracer_provider, logger_provider, meter_provider)
     };
 
     let result = match cli.command {
@@ -2574,13 +2686,31 @@ async fn main() -> Result<()> {
     };
 
     #[cfg(feature = "otel")]
-    if let Some(provider) = tracer_provider {
-        provider
-            .force_flush()
-            .context("failed to flush OTel tracer provider")?;
-        provider
-            .shutdown()
-            .context("failed to shutdown OTel tracer provider")?;
+    {
+        if let Some(provider) = logger_provider {
+            provider
+                .force_flush()
+                .context("failed to flush OTel logger provider")?;
+            provider
+                .shutdown()
+                .context("failed to shutdown OTel logger provider")?;
+        }
+        if let Some(provider) = meter_provider {
+            provider
+                .force_flush()
+                .context("failed to flush OTel meter provider")?;
+            provider
+                .shutdown()
+                .context("failed to shutdown OTel meter provider")?;
+        }
+        if let Some(provider) = tracer_provider {
+            provider
+                .force_flush()
+                .context("failed to flush OTel tracer provider")?;
+            provider
+                .shutdown()
+                .context("failed to shutdown OTel tracer provider")?;
+        }
     }
 
     result

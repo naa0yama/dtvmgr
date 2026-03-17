@@ -586,9 +586,28 @@ OTLP エクスポートが有効になる(未設定時は何もしない)。OTel
 tracing_subscriber::registry()
     .with(env_filter)
     .with(fmt_layer)
-    .with(otel_layer) // Option<Layer>: None なら無視
+    .with(otel_layer)     // Option<Layer>: None なら無視（トレーススパン）
+    .with(log_layer)      // Option<Layer>: None なら無視（ログエクスポート）
     .init();
 ```
+
+`tracing` イベント(`info!`, `warn!`, `error!`, `debug!`)は `OpenTelemetryTracingBridge` を介して
+OTel LogRecord としても OTLP エンドポイントにエクスポートされる。既存の `tracing` 呼び出しの変更は不要。
+
+**メトリクスエクスポート:**
+
+`dtvmgr-api` クレートに optional `otel` feature を追加し、HTTP クライアントとレートリミッターの
+メトリクスを `opentelemetry::global::meter()` 経由で記録する。`MeterProvider` 未設定時は no-op。
+`dtvmgr-cli` の `otel` feature 有効時に `dtvmgr-api/otel` も連動して有効化される。
+
+| メトリクス名                                  | 種別      | 説明                           |
+| --------------------------------------------- | --------- | ------------------------------ |
+| `dtvmgr.http.client.request.duration`         | Histogram | HTTP リクエスト所要時間(秒)    |
+| `dtvmgr.http.client.request.retries`          | Counter   | HTTP リトライ回数              |
+| `dtvmgr.http.client.rate_limit.hits`          | Counter   | HTTP 429 レスポンス回数        |
+| `dtvmgr.http.client.rate_limit.wait_duration` | Histogram | レートリミッター待機時間(秒)   |
+| `dtvmgr.db.sync.records`                      | Counter   | DB sync で処理されたレコード数 |
+| `dtvmgr.tmdb.lookup.outcomes`                 | Counter   | TMDB ルックアップ結果          |
 
 **ビルド方法:**
 
@@ -735,7 +754,7 @@ default = ["otel"]
 otel = [...]  # OpenTelemetry 対応（デフォルト有効）
 ```
 
-- `otel`: OpenTelemetry トレースエクスポート機能。デフォルト有効。`--no-default-features` で無効化可能
+- `otel`: OpenTelemetry トレース・ログ・メトリクスエクスポート機能。デフォルト有効。`--no-default-features` で無効化可能。`dtvmgr-api` クレートの `otel` feature も連動して有効化される
 
 ## 15. コードレビュー基準
 
