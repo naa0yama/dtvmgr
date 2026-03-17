@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 use dtvmgr_tsduck::command::apply_pdeathsig;
-use tracing::debug;
+use tracing::{info, instrument};
 
 use crate::progress::{self, ProgressEvent};
 use crate::types::JlseEncode;
@@ -69,6 +69,7 @@ pub struct MkvMetadata {
 ///
 /// Returns an error if the command cannot be spawned or exits
 /// with a non-zero status code.
+#[instrument(skip_all, err(level = "error"))]
 pub fn run(
     binary: &Path,
     avs_file: &Path,
@@ -353,6 +354,7 @@ impl JlseEncode {
 ///
 /// Returns an error if the command cannot be spawned or exits
 /// with a non-zero status code.
+#[instrument(skip_all, err(level = "error"))]
 #[allow(clippy::too_many_arguments)]
 pub fn run_with_progress(
     binary: &Path,
@@ -373,7 +375,7 @@ pub fn run_with_progress(
         input_options,
         extra_options,
     );
-    debug!(cmd = %binary.display(), ?args, "running ffmpeg with progress");
+    info!(cmd = %binary.display(), ?args, "running ffmpeg with progress");
 
     let mut cmd = Command::new(binary);
     cmd.args(&args).stdout(Stdio::null()).stderr(Stdio::piped());

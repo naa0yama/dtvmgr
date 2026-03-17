@@ -22,8 +22,8 @@ pub use programs::{
     delete_programs_by_tids_not_in, load_programs, load_programs_by_tids, upsert_programs,
 };
 pub use recorded::{
-    delete_recorded_items_not_in, get_newest_start_at, invalidate_file_exists, load_recorded_items,
-    load_recorded_items_page, update_file_exists, upsert_recorded_items,
+    delete_recorded_items_not_in, invalidate_file_exists, load_recorded_items,
+    load_recorded_items_page, newest_start_at, update_file_exists, upsert_recorded_items,
 };
 pub use rusqlite::Connection;
 pub use titles::{

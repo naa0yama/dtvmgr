@@ -6,6 +6,7 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
+use tracing::instrument;
 
 /// Video frame rate as a numerator/denominator pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,7 +22,8 @@ pub struct FrameRate {
 /// # Errors
 ///
 /// Returns an error if `ffprobe` fails or the output cannot be parsed.
-pub fn get_frame_rate(binary: &Path, input_file: &Path) -> Result<FrameRate> {
+#[instrument(skip_all, err(level = "error"))]
+pub fn frame_rate(binary: &Path, input_file: &Path) -> Result<FrameRate> {
     let args = build_frame_rate_args(input_file);
     let os_args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
     let stdout = super::run_capture(binary, &os_args)
@@ -36,7 +38,8 @@ pub fn get_frame_rate(binary: &Path, input_file: &Path) -> Result<FrameRate> {
 /// # Errors
 ///
 /// Returns an error if `ffprobe` fails or the output cannot be parsed as `u32`.
-pub fn get_sample_rate(binary: &Path, input_file: &Path) -> Result<Option<u32>> {
+#[instrument(skip_all, err(level = "error"))]
+pub fn sample_rate(binary: &Path, input_file: &Path) -> Result<Option<u32>> {
     let args = build_sample_rate_args(input_file);
     let os_args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
     let stdout = super::run_capture(binary, &os_args)
@@ -91,7 +94,8 @@ pub fn parse_frame_rate(s: &str) -> Result<FrameRate> {
 /// # Errors
 ///
 /// Returns an error if `ffprobe` fails or the output cannot be parsed as `f64`.
-pub fn get_stream_duration(binary: &Path, input_file: &Path, stream: &str) -> Result<Option<f64>> {
+#[instrument(skip_all, err(level = "error"))]
+pub fn stream_duration(binary: &Path, input_file: &Path, stream: &str) -> Result<Option<f64>> {
     let args = build_probe_args(input_file, stream, "stream=duration");
     let os_args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
     let stdout = super::run_capture(binary, &os_args)
@@ -113,7 +117,8 @@ pub fn get_stream_duration(binary: &Path, input_file: &Path, stream: &str) -> Re
 /// # Errors
 ///
 /// Returns an error if `ffprobe` fails or the output cannot be parsed as `f64`.
-pub fn get_duration(binary: &Path, input_file: &Path) -> Result<f64> {
+#[instrument(skip_all, err(level = "error"))]
+pub fn duration(binary: &Path, input_file: &Path) -> Result<f64> {
     let args = build_duration_args(input_file);
     let os_args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
     let stdout = super::run_capture(binary, &os_args)
@@ -307,7 +312,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_get_frame_rate_via_script() {
+    fn test_frame_rate_via_script() {
         // Arrange: script that prints frame rate to stdout
         let dir = tempfile::tempdir().unwrap();
         let script = super::super::test_utils::write_script(
@@ -319,7 +324,7 @@ mod tests {
         std::fs::write(&input, "dummy").unwrap();
 
         // Act
-        let rate = get_frame_rate(&script, &input).unwrap();
+        let rate = frame_rate(&script, &input).unwrap();
 
         // Assert
         assert_eq!(rate.numerator, 30000);
@@ -328,7 +333,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_get_sample_rate_via_script() {
+    fn test_sample_rate_via_script() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();
         let script = super::super::test_utils::write_script(
@@ -340,7 +345,7 @@ mod tests {
         std::fs::write(&input, "dummy").unwrap();
 
         // Act
-        let rate = get_sample_rate(&script, &input).unwrap();
+        let rate = sample_rate(&script, &input).unwrap();
 
         // Assert
         assert_eq!(rate, Some(48000));
@@ -348,7 +353,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_get_sample_rate_empty_output() {
+    fn test_sample_rate_empty_output() {
         // Arrange: script outputs nothing (no audio stream)
         let dir = tempfile::tempdir().unwrap();
         let script =
@@ -357,7 +362,7 @@ mod tests {
         std::fs::write(&input, "dummy").unwrap();
 
         // Act
-        let rate = get_sample_rate(&script, &input).unwrap();
+        let rate = sample_rate(&script, &input).unwrap();
 
         // Assert
         assert_eq!(rate, None);
@@ -365,7 +370,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_get_duration_via_script() {
+    fn test_duration_via_script() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();
         let script = super::super::test_utils::write_script(
@@ -377,7 +382,7 @@ mod tests {
         std::fs::write(&input, "dummy").unwrap();
 
         // Act
-        let dur = get_duration(&script, &input).unwrap();
+        let dur = duration(&script, &input).unwrap();
 
         // Assert
         assert!((dur - 1800.5).abs() < f64::EPSILON);
@@ -385,7 +390,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_get_frame_rate_failure() {
+    fn test_frame_rate_failure() {
         // Arrange: script exits with error
         let dir = tempfile::tempdir().unwrap();
         let script =
@@ -394,17 +399,17 @@ mod tests {
         std::fs::write(&input, "dummy").unwrap();
 
         // Act
-        let result = get_frame_rate(&script, &input);
+        let result = frame_rate(&script, &input);
 
         // Assert
         assert!(result.is_err());
     }
 
-    // ── get_stream_duration via write_script ───────────────
+    // ── stream_duration via write_script ───────────────
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_get_stream_duration_some() {
+    fn test_stream_duration_some() {
         // Arrange
         let dir = tempfile::tempdir().unwrap();
         let script = super::super::test_utils::write_script(
@@ -416,7 +421,7 @@ mod tests {
         std::fs::write(&input, "dummy").unwrap();
 
         // Act
-        let dur = get_stream_duration(&script, &input, "v:0").unwrap();
+        let dur = stream_duration(&script, &input, "v:0").unwrap();
 
         // Assert
         assert!((dur.unwrap() - 1234.567).abs() < f64::EPSILON);
@@ -424,7 +429,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_get_stream_duration_empty() {
+    fn test_stream_duration_empty() {
         // Arrange: no stream → empty output
         let dir = tempfile::tempdir().unwrap();
         let script =
@@ -433,7 +438,7 @@ mod tests {
         std::fs::write(&input, "dummy").unwrap();
 
         // Act
-        let dur = get_stream_duration(&script, &input, "v:0").unwrap();
+        let dur = stream_duration(&script, &input, "v:0").unwrap();
 
         // Assert
         assert_eq!(dur, None);
@@ -441,7 +446,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_get_stream_duration_na() {
+    fn test_stream_duration_na() {
         // Arrange: ffprobe reports N/A
         let dir = tempfile::tempdir().unwrap();
         let script = super::super::test_utils::write_script(
@@ -453,7 +458,7 @@ mod tests {
         std::fs::write(&input, "dummy").unwrap();
 
         // Act
-        let dur = get_stream_duration(&script, &input, "a:0").unwrap();
+        let dur = stream_duration(&script, &input, "a:0").unwrap();
 
         // Assert
         assert_eq!(dur, None);
@@ -461,7 +466,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_get_stream_duration_failure() {
+    fn test_stream_duration_failure() {
         // Arrange: ffprobe exits with error
         let dir = tempfile::tempdir().unwrap();
         let script =
@@ -470,7 +475,7 @@ mod tests {
         std::fs::write(&input, "dummy").unwrap();
 
         // Act / Assert
-        assert!(get_stream_duration(&script, &input, "v:0").is_err());
+        assert!(stream_duration(&script, &input, "v:0").is_err());
     }
 
     #[test]

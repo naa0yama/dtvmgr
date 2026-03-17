@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
+use tracing::instrument;
 
 /// A cached program with optional TMDB mapping.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +52,7 @@ pub struct CachedProgram {
 ///
 /// Returns an error if the database operation fails.
 #[allow(clippy::module_name_repetitions)]
+#[instrument(skip_all, err(level = "error"))]
 pub fn upsert_programs(conn: &Connection, programs: &[CachedProgram]) -> Result<usize> {
     let tx = conn
         .unchecked_transaction()
@@ -119,6 +121,7 @@ pub fn upsert_programs(conn: &Connection, programs: &[CachedProgram]) -> Result<
 ///
 /// Returns an error if the database query fails.
 #[allow(clippy::module_name_repetitions)]
+#[instrument(skip_all, err(level = "error"))]
 pub fn load_programs(conn: &Connection) -> Result<Vec<CachedProgram>> {
     let mut stmt = conn
         .prepare(
@@ -145,6 +148,7 @@ pub fn load_programs(conn: &Connection) -> Result<Vec<CachedProgram>> {
 ///
 /// Returns an error if the database query fails.
 #[allow(clippy::module_name_repetitions)]
+#[instrument(skip_all, err(level = "error"))]
 pub fn load_programs_by_tids(conn: &Connection, tids: &[u32]) -> Result<Vec<CachedProgram>> {
     if tids.is_empty() {
         return Ok(Vec::new());
@@ -207,6 +211,7 @@ fn map_program_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CachedProgram> {
 /// # Errors
 ///
 /// Returns an error if the database operation fails.
+#[instrument(skip_all, err(level = "error"))]
 pub fn delete_programs_by_tids_not_in(conn: &Connection, valid_tids: &[u32]) -> Result<usize> {
     if valid_tids.is_empty() {
         let deleted = conn

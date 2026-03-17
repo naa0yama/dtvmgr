@@ -9,7 +9,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use regex::Regex;
-use tracing::debug;
+use tracing::{debug, instrument};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::types::{Channel, DetectionParam, Param};
@@ -27,6 +27,7 @@ const REGEX_META_CHARS: &[char] = &['.', '*', '+', '?', '|', '[', ']', '^'];
 /// # Errors
 ///
 /// Returns an error if the file cannot be read or parsed.
+#[instrument(skip_all, err(level = "error"))]
 pub fn load_params(csv_path: &Path) -> Result<Vec<Param>> {
     let data = std::fs::read_to_string(csv_path)
         .with_context(|| format!("failed to read param list: {}", csv_path.display()))?;
@@ -67,6 +68,7 @@ pub fn load_params(csv_path: &Path) -> Result<Vec<Param>> {
 ///
 /// Searches `params_jl1` first, then `params_jl2`, merging results.
 /// Fields from JL2 overwrite JL1 (equivalent to JS `Object.assign`).
+#[instrument(skip_all)]
 #[must_use]
 #[allow(clippy::module_name_repetitions)]
 pub fn detect_param(

@@ -19,19 +19,6 @@ use super::types::{
 /// Default base URL for local `EPGStation`.
 const DEFAULT_BASE_URL: &str = "http://localhost:8888/api/";
 
-/// Maximum response body length recorded in span attributes.
-const SPAN_BODY_MAX_LEN: usize = 2048;
-
-/// Truncates a response body for span attribute recording.
-fn truncate_for_span(body: &str) -> &str {
-    if body.len() <= SPAN_BODY_MAX_LEN {
-        return body;
-    }
-    // Find a valid UTF-8 boundary at or before the limit.
-    let end = body.floor_char_boundary(SPAN_BODY_MAX_LEN);
-    &body[..end]
-}
-
 /// Maximum number of retries for HTTP 429 responses.
 const MAX_RETRIES: u32 = 3;
 
@@ -135,11 +122,13 @@ impl EpgStationClient {
     /// Sends a GET request with rate limiting and returns parsed JSON.
     /// Retries up to `MAX_RETRIES` times on HTTP 429.
     #[instrument(skip_all, fields(
+        otel.kind = "Client",
         http.method = "GET",
         http.path = path,
+        http.url = tracing::field::Empty,
         http.status_code = tracing::field::Empty,
         http.response.body = tracing::field::Empty,
-    ))]
+    ), err(level = "error"))]
     async fn get_json<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
@@ -161,7 +150,7 @@ impl EpgStationClient {
                 .build()
                 .with_context(|| format!("failed to build request: {path}"))?;
 
-            tracing::debug!(url = %request.url(), "EPGStation API request");
+            tracing::Span::current().record("http.url", tracing::field::display(request.url()));
 
             let response = match self.http_client.execute(request).await {
                 Ok(resp) => resp,
@@ -170,12 +159,20 @@ impl EpgStationClient {
                         "timeout"
                     } else if e.is_connect() {
                         "connection error"
+                    } else if e.is_body() {
+                        "body error"
+                    } else if e.is_decode() {
+                        "decode error"
                     } else if e.is_redirect() {
                         "too many redirects"
                     } else {
                         "request error"
                     };
-                    bail!("{kind}: {path}");
+                    if let Some(status) = e.status() {
+                        tracing::Span::current()
+                            .record("http.status_code", i64::from(status.as_u16()));
+                    }
+                    bail!("{kind}: {path}: {e:#}");
                 }
             };
 
@@ -211,7 +208,7 @@ impl EpgStationClient {
                 .text()
                 .await
                 .with_context(|| format!("failed to read response body: {path}"))?;
-            span.record("http.response.body", truncate_for_span(&body));
+            span.record("http.response.body", body.as_str());
             let raw_result: std::result::Result<T, _> = serde_json::from_str(&body);
             let parsed = raw_result
                 .with_context(|| format!("failed to decode JSON response: {path} body={body}"))?;
@@ -222,12 +219,14 @@ impl EpgStationClient {
     /// Sends a POST request with JSON body and rate limiting.
     /// Retries up to `MAX_RETRIES` times on HTTP 429.
     #[instrument(skip_all, fields(
+        otel.kind = "Client",
         http.method = "POST",
         http.path = path,
+        http.url = tracing::field::Empty,
         http.status_code = tracing::field::Empty,
         http.request.body = tracing::field::Empty,
         http.response.body = tracing::field::Empty,
-    ))]
+    ), err(level = "error"))]
     async fn post_json<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
@@ -254,7 +253,7 @@ impl EpgStationClient {
                 .build()
                 .with_context(|| format!("failed to build request: {path}"))?;
 
-            tracing::debug!(url = %request.url(), "EPGStation API POST request");
+            span.record("http.url", tracing::field::display(request.url()));
 
             let response = match self.http_client.execute(request).await {
                 Ok(resp) => resp,
@@ -263,15 +262,24 @@ impl EpgStationClient {
                         "timeout"
                     } else if e.is_connect() {
                         "connection error"
+                    } else if e.is_body() {
+                        "body error"
+                    } else if e.is_decode() {
+                        "decode error"
                     } else if e.is_redirect() {
                         "too many redirects"
                     } else {
                         "request error"
                     };
-                    bail!("{kind}: {path}");
+                    if let Some(status) = e.status() {
+                        tracing::Span::current()
+                            .record("http.status_code", i64::from(status.as_u16()));
+                    }
+                    bail!("{kind}: {path}: {e:#}");
                 }
             };
 
+            let span = tracing::Span::current();
             let status = response.status();
             span.record("http.status_code", i64::from(status.as_u16()));
 
@@ -303,7 +311,7 @@ impl EpgStationClient {
                 .text()
                 .await
                 .with_context(|| format!("failed to read response body: {path}"))?;
-            span.record("http.response.body", truncate_for_span(&resp_body));
+            span.record("http.response.body", resp_body.as_str());
             let raw_result: std::result::Result<T, _> = serde_json::from_str(&resp_body);
             let parsed = raw_result.with_context(|| {
                 format!("failed to decode JSON response: {path} body={resp_body}")
@@ -339,7 +347,7 @@ impl EpgStationClient {
 
 impl LocalEpgStationApi for EpgStationClient {
     #[instrument(skip_all)]
-    async fn get_recorded(&self, params: &RecordedParams) -> Result<RecordedResponse> {
+    async fn fetch_recorded(&self, params: &RecordedParams) -> Result<RecordedResponse> {
         let mut query: Vec<(&str, String)> = Vec::new();
         if let Some(v) = params.has_original_file {
             query.push(("hasOriginalFile", v.to_string()));
@@ -363,7 +371,7 @@ impl LocalEpgStationApi for EpgStationClient {
     }
 
     #[instrument(skip_all)]
-    async fn get_recorded_by_id(&self, id: u64) -> Result<RecordedItem> {
+    async fn fetch_recorded_by_id(&self, id: u64) -> Result<RecordedItem> {
         self.get_json(
             &format!("recorded/{id}"),
             &[("isHalfWidth", String::from("true"))],
@@ -372,13 +380,13 @@ impl LocalEpgStationApi for EpgStationClient {
     }
 
     #[instrument(skip_all)]
-    async fn get_channels(&self) -> Result<Vec<Channel>> {
+    async fn fetch_channels(&self) -> Result<Vec<Channel>> {
         self.get_json("channels", &[("isHalfWidth", String::from("true"))])
             .await
     }
 
     #[instrument(skip_all)]
-    async fn get_config(&self) -> Result<EpgConfig> {
+    async fn fetch_config(&self) -> Result<EpgConfig> {
         self.get_json("config", &[]).await
     }
 
@@ -388,7 +396,7 @@ impl LocalEpgStationApi for EpgStationClient {
     }
 
     #[instrument(skip_all)]
-    async fn get_encode_queue(&self) -> Result<EncodeInfoResponse> {
+    async fn fetch_encode_queue(&self) -> Result<EncodeInfoResponse> {
         self.get_json("encode", &[("isHalfWidth", String::from("true"))])
             .await
     }
@@ -576,7 +584,7 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn test_get_recorded_via_http() {
+    async fn test_fetch_recorded_via_http() {
         // Arrange
         let mock_server = wiremock::MockServer::start().await;
         let json_body = include_str!("../../../../fixtures/epgstation/recorded.json");
@@ -602,7 +610,7 @@ mod tests {
         };
 
         // Act
-        let response = client.get_recorded(&params).await.unwrap();
+        let response = client.fetch_recorded(&params).await.unwrap();
 
         // Assert
         assert_eq!(response.total, 2);
@@ -611,7 +619,7 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn test_get_channels_via_http() {
+    async fn test_fetch_channels_via_http() {
         // Arrange
         let mock_server = wiremock::MockServer::start().await;
         let json_body = include_str!("../../../../fixtures/epgstation/channels.json");
@@ -631,7 +639,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let channels = client.get_channels().await.unwrap();
+        let channels = client.fetch_channels().await.unwrap();
 
         // Assert
         assert_eq!(channels.len(), 2);
@@ -640,7 +648,7 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn test_get_config_via_http() {
+    async fn test_fetch_config_via_http() {
         // Arrange
         let mock_server = wiremock::MockServer::start().await;
         let json_body = include_str!("../../../../fixtures/epgstation/config.json");
@@ -660,7 +668,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let config = client.get_config().await.unwrap();
+        let config = client.fetch_config().await.unwrap();
 
         // Assert
         assert!(!config.encode.is_empty());
@@ -729,7 +737,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let result: Result<Vec<Channel>> = client.get_channels().await;
+        let result: Result<Vec<Channel>> = client.fetch_channels().await;
 
         // Assert
         assert!(result.is_err());
@@ -763,7 +771,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let result: Result<Vec<Channel>> = client.get_channels().await;
+        let result: Result<Vec<Channel>> = client.fetch_channels().await;
 
         // Assert
         assert!(result.is_err());
@@ -848,8 +856,8 @@ mod tests {
 
         // Act
         let start = std::time::Instant::now();
-        let _: Vec<Channel> = client.get_channels().await.unwrap();
-        let _: Vec<Channel> = client.get_channels().await.unwrap();
+        let _: Vec<Channel> = client.fetch_channels().await.unwrap();
+        let _: Vec<Channel> = client.fetch_channels().await.unwrap();
         let elapsed = start.elapsed();
 
         // Assert: at least 100ms interval between two requests

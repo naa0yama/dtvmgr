@@ -6,6 +6,7 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 use anyhow::Result;
+use tracing::instrument;
 
 /// Run `chapter_exe` to detect chapters from the AVS file.
 ///
@@ -21,6 +22,7 @@ use anyhow::Result;
 ///
 /// Returns an error if the command cannot be spawned, exits with a
 /// non-zero exit code, or crashes without producing an output file.
+#[instrument(skip_all, err(level = "error"))]
 pub fn run(binary: &Path, avs_file: &Path, output_file: &Path) -> Result<()> {
     let args = build_args(avs_file, output_file);
     let os_args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
@@ -45,6 +47,7 @@ pub fn run(binary: &Path, avs_file: &Path, output_file: &Path) -> Result<()> {
 ///
 /// Returns an error if the command cannot be spawned, exits with a
 /// non-zero exit code, or crashes without producing an output file.
+#[instrument(skip_all, err(level = "error"))]
 pub fn run_logged(
     binary: &Path,
     avs_file: &Path,
@@ -69,6 +72,7 @@ pub fn run_logged(
 }
 
 /// Build the argument list for `chapter_exe`.
+#[instrument(skip_all)]
 #[must_use]
 pub fn build_args(avs_file: &Path, output_file: &Path) -> Vec<String> {
     vec![

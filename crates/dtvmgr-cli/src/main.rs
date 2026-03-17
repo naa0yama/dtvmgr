@@ -16,7 +16,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::{CommandFactory, Parser, Subcommand};
-use tracing::instrument;
+use tracing::{Instrument as _, instrument};
 use tracing_subscriber::filter::EnvFilter;
 #[cfg(not(feature = "otel"))]
 use tracing_subscriber::fmt;
@@ -450,7 +450,7 @@ struct TmdbTvSeasonArgs {
 ///
 /// Returns an error if the API client fails to build, time range is invalid,
 /// or the API request fails.
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 async fn run_syoboi_prog(args: &ProgArgs, config_file: Option<&PathBuf>) -> Result<()> {
     let client = SyoboiClient::builder()
         .user_agent(concat!(
@@ -461,14 +461,16 @@ async fn run_syoboi_prog(args: &ProgArgs, config_file: Option<&PathBuf>) -> Resu
         .build()
         .context("failed to build API client")?;
 
-    let range = resolve_time_range(args.time_since.as_deref(), args.time_until.as_deref())?;
+    let range = resolve_time_range(args.time_since.as_deref(), args.time_until.as_deref())
+        .context("failed to resolve time range")?;
     tracing::info!(
         "Time range: {} .. {}",
         range.start.format("%Y-%m-%d %H:%M:%S"),
         range.end.format("%Y-%m-%d %H:%M:%S"),
     );
 
-    let ch_ids = resolve_ch_ids(args.ch_ids.clone(), config_file)?;
+    let ch_ids = resolve_ch_ids(args.ch_ids.clone(), config_file)
+        .context("failed to resolve channel IDs")?;
 
     let params = ProgLookupParams {
         ch_ids: Some(ch_ids),
@@ -504,7 +506,7 @@ async fn run_syoboi_prog(args: &ProgArgs, config_file: Option<&PathBuf>) -> Resu
 /// # Errors
 ///
 /// Returns an error if the API client fails to build or the API request fails.
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 async fn run_syoboi_titles(args: &TitlesArgs) -> Result<()> {
     let client = SyoboiClient::builder()
         .user_agent(concat!(
@@ -660,6 +662,7 @@ fn to_cached_program(p: &SyoboiProgram) -> CachedProgram {
 /// rate-limited), retries up to `TITLE_CHUNK_MAX_RETRIES` times with
 /// exponential backoff starting at `TITLE_CHUNK_INITIAL_BACKOFF`.
 #[allow(clippy::arithmetic_side_effects)]
+#[instrument(skip_all, err(level = "error"))]
 async fn fetch_titles_chunked(
     client: &SyoboiClient,
     unique_tids: &[u32],
@@ -739,6 +742,7 @@ async fn fetch_titles_chunked(
 /// `all_fetched_tids` contains TIDs from all API-fetched titles (before cat
 /// filtering) and is used to distinguish cat-filtered skips from genuine
 /// FK misses.
+#[instrument(skip_all, err(level = "error"))]
 fn upsert_filtered_programs(
     conn: &dtvmgr_db::Connection,
     programs: &[SyoboiProgram],
@@ -785,6 +789,7 @@ fn upsert_filtered_programs(
 }
 
 /// Deletes titles and programs whose categories are not in the allowed set.
+#[instrument(skip_all, err(level = "error"))]
 fn cleanup_disallowed_cats(
     conn: &dtvmgr_db::Connection,
     allowed_cats: &HashSet<u32>,
@@ -810,22 +815,26 @@ fn cleanup_disallowed_cats(
     Ok(())
 }
 
+#[instrument(skip_all, err(level = "error"))]
+#[allow(clippy::too_many_lines)]
 async fn run_db_sync(args: &DbSyncArgs, config_file: Option<&PathBuf>) -> Result<()> {
-    let client = build_syoboi_client()?;
+    let client = build_syoboi_client().context("failed to build Syoboi client")?;
 
     let config_path = resolve_config_path(config_file).context("failed to resolve config path")?;
     let config = AppConfig::load(&config_path).context("failed to load config")?;
     let allowed_cats: HashSet<u32> = config.syoboi.titles.cat.iter().copied().collect();
     tracing::info!(?allowed_cats, "Category filter loaded from config");
 
-    let range = resolve_time_range(args.time_since.as_deref(), args.time_until.as_deref())?;
+    let range = resolve_time_range(args.time_since.as_deref(), args.time_until.as_deref())
+        .context("failed to resolve time range")?;
     tracing::info!(
         "Time range: {} .. {}",
         range.start.format("%Y-%m-%d %H:%M:%S"),
         range.end.format("%Y-%m-%d %H:%M:%S"),
     );
 
-    let ch_ids = resolve_ch_ids(args.ch_ids.clone(), config_file)?;
+    let ch_ids = resolve_ch_ids(args.ch_ids.clone(), config_file)
+        .context("failed to resolve channel IDs")?;
 
     let params = ProgLookupParams {
         ch_ids: Some(ch_ids),
@@ -844,7 +853,9 @@ async fn run_db_sync(args: &DbSyncArgs, config_file: Option<&PathBuf>) -> Result
     let unique_tids: Vec<u32> = all_fetched_tids.iter().copied().collect();
     tracing::info!("Fetching titles for {} unique TIDs...", unique_tids.len());
 
-    let all_titles = fetch_titles_chunked(&client, &unique_tids).await?;
+    let all_titles = fetch_titles_chunked(&client, &unique_tids)
+        .await
+        .context("failed to fetch titles in chunks")?;
     tracing::info!("Fetched {} titles total", all_titles.len());
 
     // Filter titles by allowed categories
@@ -913,9 +924,11 @@ async fn run_db_sync(args: &DbSyncArgs, config_file: Option<&PathBuf>) -> Result
         &valid_tids,
         &valid_ch_ids,
         &all_fetched_tids,
-    )?;
+    )
+    .context("failed to upsert filtered programs")?;
 
-    cleanup_disallowed_cats(&conn, &allowed_cats)?;
+    cleanup_disallowed_cats(&conn, &allowed_cats)
+        .context("failed to clean up disallowed categories")?;
 
     tracing::info!(
         "Sync complete: {} titles ({} changed), {} programs ({} changed)",
@@ -1037,6 +1050,7 @@ fn resolve_media_type(cat: Option<u32>, cat_movie: &HashSet<u32>) -> TmdbMediaTy
 }
 
 /// Fetches alternative titles and builds a `LookupOutcome::Success`.
+#[instrument(skip_all, err(level = "error"))]
 async fn fetch_alt_and_build_outcome(
     tmdb_client: &TmdbClient,
     tid: u32,
@@ -1078,6 +1092,7 @@ async fn fetch_alt_and_build_outcome(
 /// Returns `Ok(Some(LookupOutcome::Success(...)))` on match,
 /// `Ok(None)` when no result passes filters (caller should try next query),
 /// or `Ok(Some(LookupOutcome::Error))` / `Err` on API failure.
+#[instrument(skip_all, err(level = "error"))]
 async fn search_tmdb_filtered(
     tmdb_client: &TmdbClient,
     query: &str,
@@ -1122,7 +1137,8 @@ async fn search_tmdb_filtered(
                             &tv.original_name,
                             &tv.name,
                         )
-                        .await?;
+                        .await
+                        .context("failed to fetch alternative titles for TV")?;
                         return Ok(Some(outcome));
                     }
                 }
@@ -1144,7 +1160,8 @@ async fn search_tmdb_filtered(
                             &movie.original_title,
                             &movie.title,
                         )
-                        .await?;
+                        .await
+                        .context("failed to fetch alternative titles for Movie")?;
                         return Ok(Some(outcome));
                     }
                 }
@@ -1163,6 +1180,7 @@ async fn search_tmdb_filtered(
 
 /// Verifies a season number against TMDB `tv_details` and returns the verified
 /// `(season_number, season_id)`, or `None` if not applicable / not found.
+#[instrument(skip_all)]
 async fn verify_season_number(
     tmdb_client: &TmdbClient,
     tid: u32,
@@ -1193,7 +1211,7 @@ async fn verify_season_number(
 ///
 /// Tries `base_query` first, then falls back to filtered keywords from Syoboi.
 /// For TV results, verifies the extracted season number via `tv_details`.
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 async fn lookup_single_title(
     title: &CachedTitle,
     tmdb_client: &TmdbClient,
@@ -1219,7 +1237,8 @@ async fn lookup_single_title(
         expected_type,
         check_animation,
     )
-    .await?
+    .await
+    .context("TMDB search failed for base query")?
     {
         if let LookupOutcome::Success(tmdb_id, orig, name, alt, _) = outcome {
             let season_num = extract_season_number(&title.title, compiled_regex);
@@ -1250,7 +1269,8 @@ async fn lookup_single_title(
             expected_type,
             check_animation,
         )
-        .await?
+        .await
+        .context("TMDB search failed for keyword fallback")?
         {
             if let LookupOutcome::Success(tmdb_id, orig, name, alt, _) = outcome {
                 let season_num = extract_season_number(&title.title, compiled_regex);
@@ -1318,7 +1338,7 @@ fn filter_titles(titles: Vec<CachedTitle>, force: bool, retry_unmapped: bool) ->
 /// # Errors
 ///
 /// Returns an error if API calls or DB operations fail.
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 #[allow(clippy::too_many_lines)]
 async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, config_file: Option<&PathBuf>) -> Result<()> {
     let data_dir = resolve_data_dir(config_file).context("failed to resolve data directory")?;
@@ -1327,7 +1347,7 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, config_file: Option<&PathBu
     let config = AppConfig::load(&config_path).context("failed to load config")?;
 
     let language = resolve_tmdb_language(args.language.as_deref(), config_file);
-    let tmdb_client = build_tmdb_client(config_file)?;
+    let tmdb_client = build_tmdb_client(config_file).context("failed to build TMDB client")?;
 
     let mapping_dir = config_path
         .parent()
@@ -1563,7 +1583,7 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, config_file: Option<&PathBu
 ///
 /// Returns an error if neither env var nor config `api_key` is set, or the client
 /// fails to build.
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 fn build_tmdb_client(config_file: Option<&PathBuf>) -> Result<TmdbClient> {
     let api_token = if let Ok(token) = std::env::var("TMDB_API_TOKEN") {
         token
@@ -1607,7 +1627,7 @@ fn resolve_tmdb_language(cli_lang: Option<&str>, config_file: Option<&PathBuf>) 
 /// # Errors
 ///
 /// Returns an error if the TMDB client fails to build or the API request fails.
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 async fn run_tmdb_search_tv(args: &TmdbSearchTvArgs, config_file: Option<&PathBuf>) -> Result<()> {
     let client = build_tmdb_client(config_file)?;
     let language = resolve_tmdb_language(args.language.as_deref(), config_file);
@@ -1641,7 +1661,7 @@ async fn run_tmdb_search_tv(args: &TmdbSearchTvArgs, config_file: Option<&PathBu
 /// # Errors
 ///
 /// Returns an error if the TMDB client fails to build or the API request fails.
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 async fn run_tmdb_search_movie(
     args: &TmdbSearchMovieArgs,
     config_file: Option<&PathBuf>,
@@ -1677,7 +1697,7 @@ async fn run_tmdb_search_movie(
 /// # Errors
 ///
 /// Returns an error if the TMDB client fails to build or the API request fails.
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 async fn run_tmdb_tv_details(
     args: &TmdbTvDetailsArgs,
     config_file: Option<&PathBuf>,
@@ -1718,7 +1738,7 @@ async fn run_tmdb_tv_details(
 /// # Errors
 ///
 /// Returns an error if the TMDB client fails to build or the API request fails.
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 async fn run_tmdb_tv_season(args: &TmdbTvSeasonArgs, config_file: Option<&PathBuf>) -> Result<()> {
     let client = build_tmdb_client(config_file)?;
     let language = resolve_tmdb_language(args.language.as_deref(), config_file);
@@ -1802,7 +1822,7 @@ fn detect_target_from_middle(
 ///
 /// Returns an error if `TSDuck` fails or the EIT XML cannot be parsed.
 #[allow(clippy::print_stdout)]
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 fn run_jlse_tsduck(args: &JlseTsduckArgs, config_file: Option<&PathBuf>) -> Result<()> {
     let jlse_config = resolve_jlse_config(config_file)?;
     let bins = BinaryPaths::from_config(&jlse_config);
@@ -1937,7 +1957,7 @@ fn print_program_info(p: &dtvmgr_tsduck::eit::ProgramInfo, target_event_id: Opti
 ///
 /// Returns an error if the channel list cannot be loaded.
 #[allow(clippy::print_stdout)]
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 fn run_jlse_channel(args: &JlseChannelArgs, config_file: Option<&PathBuf>) -> Result<()> {
     let jlse_config = resolve_jlse_config(config_file)?;
     let data = DataPaths::from_config(&jlse_config);
@@ -1970,7 +1990,7 @@ fn run_jlse_channel(args: &JlseChannelArgs, config_file: Option<&PathBuf>) -> Re
 ///
 /// Returns an error if the param lists cannot be loaded.
 #[allow(clippy::print_stdout)]
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 fn run_jlse_param(args: &JlseParamArgs, config_file: Option<&PathBuf>) -> Result<()> {
     let jlse_config = resolve_jlse_config(config_file)?;
     let data = DataPaths::from_config(&jlse_config);
@@ -1996,11 +2016,12 @@ fn run_jlse_param(args: &JlseParamArgs, config_file: Option<&PathBuf>) -> Result
 ///
 /// Suppresses tracing output on the pipeline thread to prevent
 /// log lines from corrupting the TUI alternate screen.
+#[instrument(skip_all, err(level = "error"))]
 fn run_pipeline_with_tui(ctx: PipelineContext) -> Result<()> {
     let (tx, rx) = std::sync::mpsc::channel::<ProgressEvent>();
+    let parent_span = tracing::Span::current();
     let handle = std::thread::spawn(move || {
-        let noop = tracing::subscriber::NoSubscriber::new();
-        let _guard = tracing::subscriber::set_default(noop);
+        let _entered = parent_span.enter();
         let cb = move |event: ProgressEvent| {
             // Ignore send errors (receiver may have been dropped on quit)
             let _ = tx.send(event);
@@ -2017,7 +2038,7 @@ fn run_pipeline_with_tui(ctx: PipelineContext) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the pipeline fails.
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 fn run_jlse_run(args: &JlseRunArgs, config_file: Option<&PathBuf>) -> Result<()> {
     let jlse_config = resolve_jlse_config(config_file)?;
 
@@ -2124,7 +2145,7 @@ fn run_jlse_run(args: &JlseRunArgs, config_file: Option<&PathBuf>) -> Result<()>
 /// # Errors
 ///
 /// Returns an error if the client fails to build.
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 fn build_syoboi_client() -> Result<SyoboiClient> {
     SyoboiClient::builder()
         .user_agent(concat!(
@@ -2144,7 +2165,7 @@ fn build_syoboi_client() -> Result<SyoboiClient> {
 /// # Errors
 ///
 /// Returns an error if API calls, DB operations, or TUI fails.
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 async fn run_channels_select(config_file: Option<&PathBuf>) -> Result<()> {
     let client = build_syoboi_client()?;
 
@@ -2269,7 +2290,7 @@ fn build_tui_groups(
 /// # Errors
 ///
 /// Returns an error if config or DB operations fail.
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 fn run_channels_list(config_file: Option<&PathBuf>) -> Result<()> {
     let config_path = resolve_config_path(config_file).context("failed to resolve config path")?;
     let config = AppConfig::load(&config_path).context("failed to load config")?;
@@ -2310,7 +2331,7 @@ fn run_channels_list(config_file: Option<&PathBuf>) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if DB operations or TUI fails.
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 fn run_db_list(config_file: Option<&PathBuf>) -> Result<()> {
     let data_dir = resolve_data_dir(config_file).context("failed to resolve data directory")?;
     let conn = open_db(data_dir.as_ref()).context("failed to open database")?;
@@ -2374,7 +2395,7 @@ fn run_db_list(config_file: Option<&PathBuf>) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if DB operations, config I/O, or TUI fails.
-#[instrument(skip_all)]
+#[instrument(skip_all, err(level = "error"))]
 fn run_db_normalize(config_file: Option<&PathBuf>) -> Result<()> {
     let data_dir = resolve_data_dir(config_file).context("failed to resolve data directory")?;
     let conn = open_db(data_dir.as_ref()).context("failed to open database")?;
@@ -2421,22 +2442,53 @@ fn run_db_normalize(config_file: Option<&PathBuf>) -> Result<()> {
 ///
 /// Returns an error if subcommand execution fails.
 #[tokio::main(flavor = "current_thread")]
+#[allow(clippy::too_many_lines)]
 async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    // Detect TUI mode to suppress fmt output (alternate screen conflicts).
+    let tui_mode = match &cli.command {
+        Commands::Epgstation(cmd) => match &cmd.command {
+            EpgstationSubcommands::Encode(args) => args.record_id.is_none(),
+        },
+        Commands::Jlse(jlse) => match &jlse.command {
+            JlseSubcommands::Run(args) => args.tui,
+            _ => false,
+        },
+        _ => false,
+    };
+
     #[cfg(not(feature = "otel"))]
     {
-        fmt()
-            .with_env_filter(
-                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-            )
-            .with_target(false)
-            .init();
+        if tui_mode {
+            fmt()
+                .with_env_filter(
+                    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+                )
+                .with_target(false)
+                .with_writer(std::io::sink)
+                .init();
+        } else {
+            fmt()
+                .with_env_filter(
+                    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+                )
+                .with_target(false)
+                .init();
+        }
     }
 
     #[cfg(feature = "otel")]
     let tracer_provider = {
         let env_filter =
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-        let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .with_target(false)
+            .with_writer(if tui_mode {
+                tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::sink)
+            } else {
+                tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::stderr)
+            });
 
         let (otel_layer, provider) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
             .ok()
@@ -2477,7 +2529,6 @@ async fn main() -> Result<()> {
         provider
     };
 
-    let cli = Cli::parse();
     let result = match cli.command {
         Commands::Syoboi(cmd) => match cmd.command {
             SyoboiSubcommands::Prog(args) => run_syoboi_prog(&args, cli.config.as_ref()).await,
@@ -2524,6 +2575,9 @@ async fn main() -> Result<()> {
 
     #[cfg(feature = "otel")]
     if let Some(provider) = tracer_provider {
+        provider
+            .force_flush()
+            .context("failed to flush OTel tracer provider")?;
         provider
             .shutdown()
             .context("failed to shutdown OTel tracer provider")?;
@@ -2595,6 +2649,7 @@ fn convert_recorded_to_cached(
 /// Processes a fetched API page: converts records to cached form, upserts to DB,
 /// collects IDs, and reports progress. Returns updated total.
 #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
+#[instrument(skip_all, err(level = "error"))]
 fn process_fetched_page(
     conn: &dtvmgr_db::Connection,
     records: &[RecordedItem],
@@ -2617,6 +2672,7 @@ fn process_fetched_page(
 }
 
 /// Fetches a single page of recorded items from the API.
+#[instrument(skip_all, err(level = "error"))]
 async fn fetch_recorded_page(
     client: &EpgStationClient,
     limit: u64,
@@ -2632,12 +2688,13 @@ async fn fetch_recorded_page(
         keyword: keyword.map(String::from),
     };
     client
-        .get_recorded(&params)
+        .fetch_recorded(&params)
         .await
         .context("failed to fetch recorded programs")
 }
 
 /// Background sync: opens its own DB connection (required for `Send`).
+#[instrument(skip_all, err(level = "error"))]
 async fn sync_recorded_background(
     client: &EpgStationClient,
     data_dir: Option<&std::path::PathBuf>,
@@ -2681,6 +2738,7 @@ async fn sync_recorded_background(
 
 /// Blocking initial sync with terminal progress display.
 #[allow(clippy::future_not_send)]
+#[instrument(skip_all, err(level = "error"))]
 async fn sync_recorded_initial(
     client: &EpgStationClient,
     conn: &dtvmgr_db::Connection,
@@ -2815,43 +2873,51 @@ fn spawn_file_check_worker(
 ) {
     let bg_client = client.clone();
     let bg_data_dir = data_dir.cloned();
-    tokio::spawn(async move {
-        let Ok(conn) = open_db(bg_data_dir.as_ref()) else {
-            return;
-        };
-        while let Some(req) = req_rx.recv().await {
-            let p = pending.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
-            let total = req.files.len();
-            let _ = progress_tx.send(FileCheckWorkerProgress {
-                pending: p,
-                checking: Some((0, total)),
-            });
-            let now_str = chrono::Utc::now().to_rfc3339();
-            for (i, (vf_id, recorded_id)) in req.files.iter().enumerate() {
-                #[allow(clippy::cast_sign_loss, clippy::as_conversions)]
-                let exists = bg_client.check_video_file_exists(*vf_id as u64).await;
-                let _ = dtvmgr_db::update_file_exists(&conn, *vf_id, exists, &now_str);
-                #[allow(clippy::cast_sign_loss, clippy::as_conversions)]
-                let _ = req.result_tx.send(FileCheckMessage::Result {
-                    recorded_id: *recorded_id as u64,
-                    exists,
+    tokio::spawn(
+        async move {
+            let Ok(conn) = open_db(bg_data_dir.as_ref()) else {
+                return;
+            };
+            while let Some(req) = req_rx.recv().await {
+                let p = pending.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
+                let total = req.files.len();
+                let _ = progress_tx.send(FileCheckWorkerProgress {
+                    pending: p,
+                    checking: Some((0, total)),
                 });
+                let now_str = chrono::Utc::now().to_rfc3339();
+                for (i, (vf_id, recorded_id)) in req.files.iter().enumerate() {
+                    #[allow(clippy::cast_sign_loss, clippy::as_conversions)]
+                    let exists = bg_client.check_video_file_exists(*vf_id as u64).await;
+                    let _ = dtvmgr_db::update_file_exists(&conn, *vf_id, exists, &now_str);
+                    #[allow(clippy::cast_sign_loss, clippy::as_conversions)]
+                    let _ = req.result_tx.send(FileCheckMessage::Result {
+                        recorded_id: *recorded_id as u64,
+                        exists,
+                    });
+                    let _ = progress_tx.send(FileCheckWorkerProgress {
+                        pending: pending.load(Ordering::Relaxed),
+                        checking: Some((i.saturating_add(1), total)),
+                    });
+                }
+                let _ = req.result_tx.send(FileCheckMessage::Complete);
                 let _ = progress_tx.send(FileCheckWorkerProgress {
                     pending: pending.load(Ordering::Relaxed),
-                    checking: Some((i.saturating_add(1), total)),
+                    checking: None,
                 });
             }
-            let _ = req.result_tx.send(FileCheckMessage::Complete);
-            let _ = progress_tx.send(FileCheckWorkerProgress {
-                pending: pending.load(Ordering::Relaxed),
-                checking: None,
-            });
         }
-    });
+        .instrument({
+            let span = tracing::info_span!(parent: tracing::Span::none(), "file_check_worker");
+            span.follows_from(tracing::Span::current());
+            span
+        }),
+    );
 }
 
 /// Direct encode mode: fetch a single recorded item and submit an encode job.
 #[allow(clippy::print_stdout)]
+#[instrument(skip_all, err(level = "error"))]
 async fn run_epgstation_encode_direct(
     client: &EpgStationClient,
     config: &AppConfig,
@@ -2859,7 +2925,7 @@ async fn run_epgstation_encode_direct(
     args: &EpgstationEncodeArgs,
 ) -> Result<()> {
     let recorded = client
-        .get_recorded_by_id(record_id)
+        .fetch_recorded_by_id(record_id)
         .await
         .with_context(|| format!("failed to fetch recorded item {record_id}"))?;
 
@@ -2910,6 +2976,7 @@ async fn run_epgstation_encode_direct(
     clippy::as_conversions,
     clippy::cast_possible_wrap
 )]
+#[instrument(skip_all, err(level = "error"))]
 async fn run_epgstation_encode(
     args: &EpgstationEncodeArgs,
     config_file: Option<&PathBuf>,
@@ -2940,7 +3007,8 @@ async fn run_epgstation_encode(
     }
 
     // Fetch channels and config once (shared across pages)
-    let (channels_result, config_result) = tokio::join!(client.get_channels(), client.get_config());
+    let (channels_result, config_result) =
+        tokio::join!(client.fetch_channels(), client.fetch_config());
 
     let channels = channels_result.context("failed to fetch channels")?;
     let epg_config = config_result.context("failed to fetch EPGStation config")?;
@@ -2981,23 +3049,31 @@ async fn run_epgstation_encode(
         let bg_data_dir = data_dir.clone();
         let bg_keyword = args.keyword.clone();
         let bg_limit = limit;
-        tokio::spawn(async move {
-            let Ok((all_ids, bg_conn)) = sync_recorded_background(
-                &bg_client,
-                bg_data_dir.as_ref(),
-                bg_limit,
-                bg_keyword.as_deref(),
-                &sync_tx,
-            )
-            .await
-            else {
-                return;
-            };
-            if !all_ids.is_empty() {
-                let _ = dtvmgr_db::delete_recorded_items_not_in(&bg_conn, &all_ids);
+        tokio::spawn(
+            async move {
+                let Ok((all_ids, bg_conn)) = sync_recorded_background(
+                    &bg_client,
+                    bg_data_dir.as_ref(),
+                    bg_limit,
+                    bg_keyword.as_deref(),
+                    &sync_tx,
+                )
+                .await
+                else {
+                    return;
+                };
+                if !all_ids.is_empty() {
+                    let _ = dtvmgr_db::delete_recorded_items_not_in(&bg_conn, &all_ids);
+                }
+                let _ = sync_tx.send(SyncMessage::Complete);
             }
-            let _ = sync_tx.send(SyncMessage::Complete);
-        });
+            .instrument({
+                let span =
+                    tracing::info_span!(parent: tracing::Span::none(), "recorded_sync_worker");
+                span.follows_from(tracing::Span::current());
+                span
+            }),
+        );
         Some(sync_rx)
     } else {
         // No cache: do a blocking initial sync with progress
@@ -3029,33 +3105,41 @@ async fn run_epgstation_encode(
     let (queue_tx, queue_rx) = std::sync::mpsc::channel::<QueueMessage>();
     {
         let poll_client = client.clone();
-        tokio::spawn(async move {
-            let mut last_info: Option<EncodeQueueInfo> = None;
-            loop {
-                if let Ok(resp) = poll_client.get_encode_queue().await {
-                    let info = EncodeQueueInfo {
-                        running: resp
-                            .running_items
-                            .iter()
-                            .map(|item| RunningEncodeItem {
-                                name: item.recorded.name.clone(),
-                                mode: item.mode.clone(),
-                                percent: item.percent,
-                            })
-                            .collect(),
-                        waiting_count: resp.wait_items.len(),
-                    };
-                    // Only send if changed from last update.
-                    if last_info.as_ref() != Some(&info) {
-                        last_info = Some(info.clone());
-                        if queue_tx.send(QueueMessage::Update(info)).is_err() {
-                            break;
+        tokio::spawn(
+            async move {
+                let mut last_info: Option<EncodeQueueInfo> = None;
+                loop {
+                    if let Ok(resp) = poll_client.fetch_encode_queue().await {
+                        let info = EncodeQueueInfo {
+                            running: resp
+                                .running_items
+                                .iter()
+                                .map(|item| RunningEncodeItem {
+                                    name: item.recorded.name.clone(),
+                                    mode: item.mode.clone(),
+                                    percent: item.percent,
+                                })
+                                .collect(),
+                            waiting_count: resp.wait_items.len(),
+                        };
+                        // Only send if changed from last update.
+                        if last_info.as_ref() != Some(&info) {
+                            last_info = Some(info.clone());
+                            if queue_tx.send(QueueMessage::Update(info)).is_err() {
+                                break;
+                            }
                         }
                     }
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 }
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             }
-        });
+            .instrument({
+                let span =
+                    tracing::info_span!(parent: tracing::Span::none(), "encode_queue_poller");
+                span.follows_from(tracing::Span::current());
+                span
+            }),
+        );
     }
 
     // Spawn a single file-check worker; page loop sends requests through this channel.

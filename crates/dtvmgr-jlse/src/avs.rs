@@ -6,6 +6,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use tracing::instrument;
 
 /// Default stream index for audio.
 pub const STREAM_INDEX_NORMAL: i32 = 1;
@@ -19,6 +20,7 @@ pub const STREAM_INDEX_NORMAL: i32 = 1;
 /// # Errors
 ///
 /// Returns an error if the output file cannot be written.
+#[instrument(skip_all, err(level = "error"))]
 pub fn create(output_path: &Path, input_file: &Path, stream_index: i32) -> Result<()> {
     let ts_path = input_file.display();
 

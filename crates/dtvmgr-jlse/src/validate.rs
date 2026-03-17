@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use tracing::info;
+use tracing::{info, instrument};
 
 use crate::command::ffprobe;
 use crate::types::DurationCheckRule;
@@ -51,6 +51,7 @@ pub const DEFAULT_RULES: &[DurationCheckRule] = &[
 ///
 /// Returns an error if the TS duration is zero or if the ratio is
 /// below the threshold for the matching rule.
+#[instrument(skip_all, err(level = "error"))]
 #[allow(clippy::module_name_repetitions)]
 pub fn validate_duration_ratio(
     ts_duration_secs: f64,
@@ -109,15 +110,16 @@ pub fn validate_duration_ratio(
 /// # Errors
 ///
 /// Returns an error if ffprobe fails or the duration ratio is too low.
+#[instrument(skip_all, err(level = "error"))]
 pub fn check_pre_encode_duration(
     ffprobe_bin: &Path,
     ts_file: &Path,
     avs_file: &Path,
     rules: Option<&[DurationCheckRule]>,
 ) -> Result<f64> {
-    let ts_duration = ffprobe::get_duration(ffprobe_bin, ts_file)
+    let ts_duration = ffprobe::duration(ffprobe_bin, ts_file)
         .with_context(|| format!("failed to get TS duration: {}", ts_file.display()))?;
-    let avs_duration = ffprobe::get_duration(ffprobe_bin, avs_file)
+    let avs_duration = ffprobe::duration(ffprobe_bin, avs_file)
         .with_context(|| format!("failed to get AVS duration: {}", avs_file.display()))?;
 
     let effective_rules = rules.unwrap_or(DEFAULT_RULES);
@@ -140,10 +142,11 @@ const MAX_DRIFT_SECS: f64 = 5.0;
 /// # Errors
 ///
 /// Returns an error if ffprobe fails or the durations indicate an abnormal encode.
+#[instrument(skip_all, err(level = "error"))]
 pub fn check_post_encode_duration(ffprobe_bin: &Path, output_file: &Path) -> Result<()> {
-    let video_dur = ffprobe::get_stream_duration(ffprobe_bin, output_file, "v:0")
+    let video_dur = ffprobe::stream_duration(ffprobe_bin, output_file, "v:0")
         .context("failed to get video stream duration")?;
-    let audio_dur = ffprobe::get_stream_duration(ffprobe_bin, output_file, "a:0")
+    let audio_dur = ffprobe::stream_duration(ffprobe_bin, output_file, "a:0")
         .context("failed to get audio stream duration")?;
 
     validate_post_encode_durations(video_dur, audio_dur)

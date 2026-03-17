@@ -218,6 +218,14 @@ impl SyoboiClient {
     /// Retries up to `MAX_RETRIES` times on failure, waiting the rate limiter
     /// interval before each attempt. Logs warnings on each retry.
     /// Returns the HTTP status code alongside the parsed result.
+    #[instrument(skip_all, fields(
+        otel.kind = "Client",
+        http.method = "GET",
+        http.command = command,
+        http.url = tracing::field::Empty,
+        http.status_code = tracing::field::Empty,
+        http.response.body = tracing::field::Empty,
+    ), err(level = "error"))]
     async fn request_with_retry<T, F>(
         &self,
         command: &str,
@@ -249,7 +257,10 @@ impl SyoboiClient {
                 }
             };
 
+            let span = tracing::Span::current();
+            span.record("http.url", tracing::field::display(response.url()));
             let status = response.status();
+            span.record("http.status_code", i64::from(status.as_u16()));
             let headers = response.headers().clone();
             tracing::trace!(
                 %command,
@@ -297,8 +308,8 @@ impl SyoboiClient {
                 }
             };
 
+            span.record("http.response.body", xml.as_str());
             tracing::debug!(%command, body_len = xml.len(), "Response body received");
-            tracing::trace!(%command, body_preview = &xml[..xml.floor_char_boundary(500)], "Response body preview");
 
             match parse(&xml) {
                 Ok(result) => return Ok((status.as_u16(), result)),
@@ -361,7 +372,7 @@ impl SyoboiClient {
 }
 
 impl LocalSyoboiApi for SyoboiClient {
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(otel.kind = "Client"), err(level = "error"))]
     async fn lookup_titles(
         &self,
         tids: &[u32],
@@ -372,7 +383,7 @@ impl LocalSyoboiApi for SyoboiClient {
             .map(|(_, titles)| titles)
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(otel.kind = "Client"), err(level = "error"))]
     async fn lookup_programs(&self, params: &ProgLookupParams) -> Result<Vec<SyoboiProgram>> {
         let query = Self::build_prog_query(params);
 
@@ -385,7 +396,7 @@ impl LocalSyoboiApi for SyoboiClient {
         .map(|(_, data)| data)
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(otel.kind = "Client"), err(level = "error"))]
     async fn lookup_channels(&self, ch_ids: Option<&[u32]>) -> Result<Vec<SyoboiChannel>> {
         let mut query: Vec<(&str, String)> = vec![("Command", String::from("ChLookup"))];
         if let Some(ch_ids) = ch_ids {
@@ -406,7 +417,7 @@ impl LocalSyoboiApi for SyoboiClient {
         .map(|(_, data)| data)
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(otel.kind = "Client"), err(level = "error"))]
     async fn lookup_channel_groups(
         &self,
         ch_gids: Option<&[u32]>,
