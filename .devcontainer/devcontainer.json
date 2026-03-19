@@ -58,9 +58,9 @@
 		}
 	},
 	"portsAttributes": {
-		"16686": {
+		"5080": {
 			"onAutoForward": "notify",
-			"label": "Jaeger UI",
+			"label": "OpenObserve UI",
 			"requireLocalPort": false
 		}
 	},
