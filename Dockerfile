@@ -18,8 +18,8 @@ ARG CACHE_VERSION=0.8.3
 ARG MODULES_VERSION=v0.25.0
 ## renovate: datasource=github-releases packageName=mozilla/sccache versioning=semver automerge=true
 ARG SCCACHE_VERSION=v0.14.0
-## renovate: datasource=github-tags packageName=holmgr/cargo-sweep versioning=semver automerge=true
-ARG SWEEP_VERSION=0.8.0
+## renovate: datasource=github-releases packageName=holmgr/cargo-sweep versioning=semver automerge=true
+ARG SWEEP_VERSION=v0.8.0
 
 # retry dns and some http codes that might be transient errors
 ARG CURL_OPTS="-sfSL --retry 3 --retry-delay 2 --retry-connrefused"
@@ -246,7 +246,7 @@ if [ ! -f "${HOME}/.local/share/bash-completion/completions/mise" ]; then
 	~/.local/bin/mise completion bash --include-bash-completion-lib > "${HOME}/.local/share/bash-completion/completions/mise"
 fi
 
-# Claude Code
+# ~/.local/bin (Claude Code, OpenObserve, etc.)
 case ":$PATH:" in
 	*:"$HOME/.local/bin":*) ;;
 	*) export PATH="$HOME/.local/bin:$PATH" ;;
@@ -255,14 +255,6 @@ alias cc="claude --dangerously-skip-permissions"
 
 _DOC_
 EOF
-
-# Ref: https://docs.anthropic.com/en/docs/claude-code/setup#native-binary-installation-beta
-RUN echo "**** Install Claude Code ****" && \
-	set -euxo pipefail && \
-	curl -fsSL https://claude.ai/install.sh | bash && \
-	exec ${SHELL} -l && \
-	claude --version && \
-	type cc
 
 ENV PKG_CONFIG_PATH=/opt/ffmpeg/lib/pkgconfig \
 	LD_LIBRARY_PATH=/opt/ffmpeg/lib \

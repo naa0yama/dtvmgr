@@ -7,6 +7,8 @@ description: >-
   reviewing, or modifying .rs files, running builds/tests, or creating commits.
   Complements rust-implementation with project-specific rules.
 license: AGPL-3.0
+metadata:
+  updated: "2026-03-19T21:14:22+09:00"
 ---
 
 # Project Conventions — dtvmgr (Override)
@@ -35,6 +37,8 @@ Never run `cargo` directly. All tasks go through `mise run`:
 | Coverage       | `mise run coverage`                       |
 | Deny           | `mise run deny`                           |
 | Build w/o OTel | `mise run build -- --no-default-features` |
+| O2 (start)     | `mise run o2`                             |
+| O2 (stop)      | `mise run o2:stop`                        |
 
 ## Reference Files
 

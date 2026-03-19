@@ -58,6 +58,14 @@ jobs:
           restore-keys: |
             mise-v1-${{ runner.os }}-${{ runner.arch }}-
 
+      - name: Cache dprint plugins
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: ~/.cache/dprint
+          key: dprint-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('dprint.jsonc') }}
+          restore-keys: |
+            dprint-v1-${{ runner.os }}-${{ runner.arch }}-
+
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
           cache: false
@@ -92,13 +100,23 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Cache cross-compilation packages
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: ~/cross-apt-cache
+          key: cross-apt-${{ runner.arch }}-${{ matrix.target }}-v1
+
       - name: Install cross-compilation toolchain
         env:
           CROSS_PKGS: ${{ matrix.cross-pkgs }}
         run: |
+          mkdir -p ~/cross-apt-cache/partial
           sudo apt-get update -qq
           # shellcheck disable=SC2086
-          sudo apt-get install -y --no-install-recommends ${CROSS_PKGS}
+          sudo apt-get install -y --no-install-recommends \
+            -o Dir::Cache::Archives="${HOME}/cross-apt-cache" \
+            ${CROSS_PKGS}
+          sudo chown -R "$(id -u):$(id -g)" ~/cross-apt-cache
 
       - name: Add target
         env:
