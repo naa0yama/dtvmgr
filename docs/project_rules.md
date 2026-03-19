@@ -406,9 +406,6 @@ mise run build:release   # release build
 
 # カバレッジ
 mise run coverage        # code coverage report
-
-# クロスコンパイル
-mise run zigbuild:all    # Tier 1 targets
 ```
 
 ### 6.2 品質基準
@@ -472,21 +469,7 @@ fn test_builder_succeeds() {
 }
 ```
 
-### 6.4 クロスコンパイル対応
-
-```bash
-# Tier 1 targets（全て対応）
-mise run zigbuild:all
-# - aarch64-apple-darwin    (Apple Silicon macOS)
-# - aarch64-unknown-linux-gnu (ARM64 Linux)
-# - x86_64-pc-windows-gnu   (Windows)
-# - x86_64-unknown-linux-gnu (Intel/AMD Linux)
-
-# 個別ターゲット
-TARGET=x86_64-pc-windows-gnu mise run zigbuild
-```
-
-### 6.5 Git フック(`.githooks/` + `mise`)
+### 6.4 Git フック(`.githooks/` + `mise`)
 
 #### 事前チェック(pre-commit)
 
@@ -574,13 +557,14 @@ tracing::error!("Error occurred: {}", err);
 tracing::info!("Process completed successfully");
 ```
 
-#### OpenTelemetry 対応（`otel` feature 有効時）
+#### OpenTelemetry 対応（デフォルト有効）
 
-OTel はデフォルト feature として有効。環境変数 `OTEL_EXPORTER_OTLP_ENDPOINT` を設定すると
-OTLP エクスポートが有効になる(未設定時は何もしない)。OTel なしでビルドする場合は `--no-default-features` を指定。
+OTel support is enabled by default (`default = ["otel"]`).
+`OTEL_EXPORTER_OTLP_ENDPOINT` が設定されていれば OTLP エクスポートが有効になる。
+未設定(または空文字)の場合は `fmt` レイヤーのみ(従来と同じ動作)。
 
 ```rust
-// otel feature 有効時の初期化（main.rs）
+// main.rs の初期化（otel feature 有効時）
 // OTEL_EXPORTER_OTLP_ENDPOINT が設定されていれば OTel レイヤーが追加される
 // 未設定の場合は fmt のみ（従来と同じ動作）
 tracing_subscriber::registry()
@@ -593,25 +577,27 @@ tracing_subscriber::registry()
 **ビルド方法:**
 
 ```bash
-# 通常ビルド（OTel 有効）
+# 通常ビルド（OTel 対応、デフォルト）
 cargo build --release
 
 # OTel なしビルド
 cargo build --release --no-default-features
 ```
 
-**コンテナ実行時の環境変数:**
+**実行時の環境変数:**
 
-| 環境変数                      | 必須 | 説明                                                        |
-| ----------------------------- | ---- | ----------------------------------------------------------- |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Yes  | OTel Collector エンドポイント (例: `http://localhost:4318`) |
-| `OTEL_SERVICE_NAME`           | No   | サービス名 (デフォルト: パッケージ名)                       |
-| `RUST_LOG`                    | No   | ログレベル (デフォルト: `info`)                             |
+| 環境変数                      | 必須 | 説明                                                                    |
+| ----------------------------- | ---- | ----------------------------------------------------------------------- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Yes  | OTel Collector エンドポイント (例: `http://localhost:5080/api/default`) |
+| `OTEL_EXPORTER_OTLP_HEADERS`  | No   | OTLP エクスポータに付加する HTTP ヘッダ (例: `Authorization=Basic ...`) |
+| `OTEL_SERVICE_NAME`           | No   | サービス名 (デフォルト: パッケージ名)                                   |
+| `RUST_LOG`                    | No   | ログレベル (デフォルト: `info`)                                         |
 
 **注意:**
 
 - アプリケーションコードの `tracing::info!` 等は変更不要
-- `otel` feature 無効時は OTel 依存が一切含まれず、従来のバイナリと同一
+- `--no-default-features` でビルドすると OTel 依存が一切含まれない
+- テストタスクでは `OTEL_EXPORTER_OTLP_ENDPOINT=""` が自動設定される(OTel パニック防止)
 
 ### 9.2 デバッグ手法
 
@@ -769,7 +755,6 @@ otel = [...]  # OpenTelemetry 対応（デフォルト有効）
   - [tracing Documentation](https://docs.rs/tracing/) - 構造化ログ
   - [reqwest Documentation](https://docs.rs/reqwest/) - HTTP クライアント
   - [assert_cmd Documentation](https://docs.rs/assert_cmd/) - CLI テスト
-  - [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) - クロスコンパイル
   - [OpenTelemetry Rust](https://docs.rs/opentelemetry/) - 分散トレーシング
   - [tracing-opentelemetry](https://docs.rs/tracing-opentelemetry/) - tracing → OTel ブリッジ
 
