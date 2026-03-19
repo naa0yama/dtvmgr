@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 description = "API client library for dtvmgr (Syoboi Calendar, TMDB)"
 
+[features]
+default = []
+otel = ["dep:opentelemetry"]
+
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }
@@ -18,6 +22,9 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 trait-variant = { workspace = true }
 url = { workspace = true }
+
+# OpenTelemetry (optional, behind `otel` feature)
+opentelemetry = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

@@ -9,8 +9,9 @@ use tokio::sync::Mutex;
 use tracing::instrument;
 use url::Url;
 
+use crate::rate_limiter::SimpleRateLimiter;
+
 use super::api::LocalEpgStationApi;
-use super::rate_limiter::EpgStationRateLimiter;
 use super::types::{
     Channel, EncodeInfoResponse, EncodeRequest, EncodeResponse, EpgConfig, RecordedItem,
     RecordedParams, RecordedResponse,
@@ -34,7 +35,7 @@ pub struct EpgStationClient {
     /// Base URL for API requests.
     base_url: Url,
     /// Rate limiter.
-    rate_limiter: Arc<Mutex<EpgStationRateLimiter>>,
+    rate_limiter: Arc<Mutex<SimpleRateLimiter>>,
 }
 
 /// Builder for `EpgStationClient`.
@@ -93,10 +94,11 @@ impl EpgStationClientBuilder {
             result.context("invalid default base URL")?
         };
 
-        let rate_limiter = self.min_interval.map_or_else(
-            EpgStationRateLimiter::default_interval,
-            EpgStationRateLimiter::new,
-        );
+        let rate_limiter = self
+            .min_interval
+            .map_or_else(super::rate_limiter::default_limiter, |interval| {
+                SimpleRateLimiter::new(interval, "epgstation")
+            });
 
         let http_client = Client::builder()
             .user_agent(&user_agent)
@@ -119,34 +121,20 @@ impl EpgStationClient {
         EpgStationClientBuilder::new()
     }
 
-    /// Sends a GET request with rate limiting and returns parsed JSON.
-    /// Retries up to `MAX_RETRIES` times on HTTP 429.
-    #[instrument(skip_all, fields(
-        otel.kind = "Client",
-        http.method = "GET",
-        http.path = path,
-        http.url = tracing::field::Empty,
-        http.status_code = tracing::field::Empty,
-        http.response.body = tracing::field::Empty,
-    ), err(level = "error"))]
-    async fn get_json<T: serde::de::DeserializeOwned>(
+    /// Sends a request with rate limiting, retry on 429, and JSON parsing.
+    async fn request_with_retry<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
-        query: &[(&str, String)],
+        #[cfg_attr(not(feature = "otel"), allow(unused_variables))] method: &'static str,
+        build_request: impl Fn() -> reqwest::RequestBuilder,
     ) -> Result<T> {
         self.rate_limiter.lock().await.wait().await;
 
-        let url = self
-            .base_url
-            .join(path)
-            .with_context(|| format!("failed to join URL path: {path}"))?;
-
+        #[cfg(feature = "otel")]
+        let request_start = std::time::Instant::now();
         let mut retries = 0u32;
         loop {
-            let request = self
-                .http_client
-                .get(url.clone())
-                .query(query)
+            let request = build_request()
                 .build()
                 .with_context(|| format!("failed to build request: {path}"))?;
 
@@ -155,19 +143,7 @@ impl EpgStationClient {
             let response = match self.http_client.execute(request).await {
                 Ok(resp) => resp,
                 Err(e) => {
-                    let kind = if e.is_timeout() {
-                        "timeout"
-                    } else if e.is_connect() {
-                        "connection error"
-                    } else if e.is_body() {
-                        "body error"
-                    } else if e.is_decode() {
-                        "decode error"
-                    } else if e.is_redirect() {
-                        "too many redirects"
-                    } else {
-                        "request error"
-                    };
+                    let kind = crate::classify_reqwest_error(&e);
                     if let Some(status) = e.status() {
                         tracing::Span::current()
                             .record("http.status_code", i64::from(status.as_u16()));
@@ -181,6 +157,9 @@ impl EpgStationClient {
             span.record("http.status_code", i64::from(status.as_u16()));
 
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                #[cfg(feature = "otel")]
+                crate::metrics::record_rate_limit_hit("epgstation");
+
                 retries = retries.saturating_add(1);
                 if retries > MAX_RETRIES {
                     bail!("EPGStation API rate limit exceeded after {MAX_RETRIES} retries: {path}");
@@ -209,15 +188,42 @@ impl EpgStationClient {
                 .await
                 .with_context(|| format!("failed to read response body: {path}"))?;
             span.record("http.response.body", body.as_str());
-            let raw_result: std::result::Result<T, _> = serde_json::from_str(&body);
-            let parsed = raw_result
+            let parsed: T = serde_json::from_str(&body)
                 .with_context(|| format!("failed to decode JSON response: {path} body={body}"))?;
+
+            #[cfg(feature = "otel")]
+            crate::metrics::record_request_duration("epgstation", method, request_start);
+
             return Ok(parsed);
         }
     }
 
+    /// Sends a GET request with rate limiting and returns parsed JSON.
+    #[instrument(skip_all, fields(
+        otel.kind = "Client",
+        http.method = "GET",
+        http.path = path,
+        http.url = tracing::field::Empty,
+        http.status_code = tracing::field::Empty,
+        http.response.body = tracing::field::Empty,
+    ), err(level = "error"))]
+    async fn get_json<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<T> {
+        let url = self
+            .base_url
+            .join(path)
+            .with_context(|| format!("failed to join URL path: {path}"))?;
+
+        self.request_with_retry(path, "GET", || {
+            self.http_client.get(url.clone()).query(query)
+        })
+        .await
+    }
+
     /// Sends a POST request with JSON body and rate limiting.
-    /// Retries up to `MAX_RETRIES` times on HTTP 429.
     #[instrument(skip_all, fields(
         otel.kind = "Client",
         http.method = "POST",
@@ -232,8 +238,6 @@ impl EpgStationClient {
         path: &str,
         body: &(impl serde::Serialize + Sync),
     ) -> Result<T> {
-        self.rate_limiter.lock().await.wait().await;
-
         let span = tracing::Span::current();
         if let Ok(request_json) = serde_json::to_string(body) {
             span.record("http.request.body", &request_json);
@@ -244,80 +248,10 @@ impl EpgStationClient {
             .join(path)
             .with_context(|| format!("failed to join URL path: {path}"))?;
 
-        let mut retries = 0u32;
-        loop {
-            let request = self
-                .http_client
-                .post(url.clone())
-                .json(body)
-                .build()
-                .with_context(|| format!("failed to build request: {path}"))?;
-
-            span.record("http.url", tracing::field::display(request.url()));
-
-            let response = match self.http_client.execute(request).await {
-                Ok(resp) => resp,
-                Err(e) => {
-                    let kind = if e.is_timeout() {
-                        "timeout"
-                    } else if e.is_connect() {
-                        "connection error"
-                    } else if e.is_body() {
-                        "body error"
-                    } else if e.is_decode() {
-                        "decode error"
-                    } else if e.is_redirect() {
-                        "too many redirects"
-                    } else {
-                        "request error"
-                    };
-                    if let Some(status) = e.status() {
-                        tracing::Span::current()
-                            .record("http.status_code", i64::from(status.as_u16()));
-                    }
-                    bail!("{kind}: {path}: {e:#}");
-                }
-            };
-
-            let span = tracing::Span::current();
-            let status = response.status();
-            span.record("http.status_code", i64::from(status.as_u16()));
-
-            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                retries = retries.saturating_add(1);
-                if retries > MAX_RETRIES {
-                    bail!("EPGStation API rate limit exceeded after {MAX_RETRIES} retries: {path}");
-                }
-                tracing::warn!(
-                    retry = retries,
-                    max_retries = MAX_RETRIES,
-                    "EPGStation API rate limited (429). Retrying..."
-                );
-                tokio::time::sleep(RETRY_BACKOFF.saturating_mul(retries)).await;
-                self.rate_limiter.lock().await.wait().await;
-                continue;
-            }
-
-            if !status.is_success() {
-                let resp_body = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| String::from("<failed to read body>"));
-                span.record("http.response.body", &resp_body);
-                bail!("EPGStation API error (HTTP {status}): {resp_body}");
-            }
-
-            let resp_body = response
-                .text()
-                .await
-                .with_context(|| format!("failed to read response body: {path}"))?;
-            span.record("http.response.body", resp_body.as_str());
-            let raw_result: std::result::Result<T, _> = serde_json::from_str(&resp_body);
-            let parsed = raw_result.with_context(|| {
-                format!("failed to decode JSON response: {path} body={resp_body}")
-            })?;
-            return Ok(parsed);
-        }
+        self.request_with_retry(path, "POST", || {
+            self.http_client.post(url.clone()).json(body)
+        })
+        .await
     }
 }
 

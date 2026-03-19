@@ -54,8 +54,9 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 
 # OpenTelemetry
 opentelemetry = { version = "0.31" }
-opentelemetry-otlp = { version = "0.31", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"] }
-opentelemetry_sdk = { version = "0.31", default-features = false, features = ["trace"] }
+opentelemetry-appender-tracing = { version = "0.31", default-features = false }
+opentelemetry-otlp = { version = "0.31", default-features = false, features = ["trace", "logs", "metrics", "http-proto", "reqwest-blocking-client"] }
+opentelemetry_sdk = { version = "0.31", default-features = false, features = ["trace", "logs", "metrics"] }
 tracing-opentelemetry = { version = "0.32", default-features = false }
 
 # Dev dependencies

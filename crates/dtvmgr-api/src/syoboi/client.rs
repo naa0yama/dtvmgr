@@ -236,6 +236,8 @@ impl SyoboiClient {
         F: Fn(&str) -> Result<T>,
     {
         let mut last_err = None;
+        #[cfg(feature = "otel")]
+        let request_start = std::time::Instant::now();
 
         for attempt in 0..=MAX_RETRIES {
             self.rate_limiter.lock().await.wait().await;
@@ -271,6 +273,9 @@ impl SyoboiClient {
 
             // Cloudflare rate-limit: respect Retry-After header.
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                #[cfg(feature = "otel")]
+                crate::metrics::record_rate_limit_hit("syoboi");
+
                 let retry_after = headers
                     .get(reqwest::header::RETRY_AFTER)
                     .and_then(|v| v.to_str().ok())
@@ -312,7 +317,11 @@ impl SyoboiClient {
             tracing::debug!(%command, body_len = xml.len(), "Response body received");
 
             match parse(&xml) {
-                Ok(result) => return Ok((status.as_u16(), result)),
+                Ok(result) => {
+                    #[cfg(feature = "otel")]
+                    crate::metrics::record_request_duration("syoboi", "GET", request_start);
+                    return Ok((status.as_u16(), result));
+                }
                 Err(e) => {
                     tracing::warn!(
                         %command,
