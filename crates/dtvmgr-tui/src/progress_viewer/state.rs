@@ -4,6 +4,7 @@
 const MAX_LOG_LINES: usize = 500;
 
 /// Progress viewer state.
+#[derive(Debug)]
 #[allow(clippy::module_name_repetitions)]
 pub struct ProgressViewerState {
     /// Current stage number (1-indexed, 0 = not started).
@@ -20,8 +21,14 @@ pub struct ProgressViewerState {
     pub finished: bool,
 }
 
+impl Default for ProgressViewerState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProgressViewerState {
-    /// Create a new initial state.
+    /// Creates a new initial state with default values.
     #[must_use]
     pub const fn new() -> Self {
         Self {

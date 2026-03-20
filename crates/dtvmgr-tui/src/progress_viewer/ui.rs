@@ -122,3 +122,109 @@ fn draw_footer(frame: &mut Frame, area: ratatui::layout::Rect, state: &ProgressV
     let footer = Paragraph::new(help).block(Block::default().borders(Borders::ALL));
     frame.render_widget(footer, area);
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+
+    use super::*;
+
+    /// Converts a ratatui Buffer into a single string with newlines per row.
+    fn buffer_to_string(buf: &Buffer) -> String {
+        let mut s = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                s.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
+            }
+            s.push('\n');
+        }
+        s
+    }
+
+    #[test]
+    fn draw_initial_state_shows_starting() {
+        // Arrange
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let state = ProgressViewerState::new();
+
+        // Act
+        terminal.draw(|frame| draw(frame, &state)).unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("Starting pipeline..."));
+        assert!(content.contains("Stage"));
+        assert!(content.contains("Progress"));
+        assert!(content.contains("Log"));
+        assert!(content.contains("0%"));
+        assert!(content.contains("Press q or Ctrl+C to cancel"));
+    }
+
+    #[test]
+    fn draw_active_stage_shows_progress() {
+        // Arrange
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = ProgressViewerState::new();
+        state.current_stage = 2;
+        state.total_stages = 4;
+        state.stage_status = String::from("Processing data");
+        state.stage_percent = 0.55;
+        state.push_log(String::from("log line 1"));
+        state.push_log(String::from("log line 2"));
+
+        // Act
+        terminal.draw(|frame| draw(frame, &state)).unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("(2/4)"));
+        assert!(content.contains("Processing data"));
+        assert!(content.contains("55%"));
+        assert!(content.contains("log line 1"));
+        assert!(content.contains("log line 2"));
+        assert!(content.contains("Press q or Ctrl+C to cancel"));
+    }
+
+    #[test]
+    fn draw_finished_state_shows_completed() {
+        // Arrange
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = ProgressViewerState::new();
+        state.finished = true;
+
+        // Act
+        terminal.draw(|frame| draw(frame, &state)).unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("Pipeline completed"));
+        assert!(content.contains("100%"));
+        assert!(content.contains("Press q to quit"));
+    }
+
+    #[test]
+    fn draw_empty_logs_shows_waiting() {
+        // Arrange
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let state = ProgressViewerState::new();
+
+        // Act
+        terminal.draw(|frame| draw(frame, &state)).unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("Waiting for output..."));
+    }
+}

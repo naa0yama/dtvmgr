@@ -163,7 +163,7 @@ pub enum RegexSource {
 const REGEX_PLACEHOLDER: &str = r"(?P<SeasonNum>\d+)期";
 
 /// State for the normalize viewer TUI.
-#[allow(clippy::module_name_repetitions)]
+#[allow(clippy::module_name_repetitions, missing_debug_implementations)]
 pub struct NormalizeViewerState {
     /// All rows.
     pub rows: Vec<NormalizeRow>,

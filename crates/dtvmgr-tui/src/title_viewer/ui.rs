@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Row, Table};
 
 use super::state::{ActivePane, InputMode, TitleViewerState, TmdbFilter};
-use crate::tui::fmt::with_commas;
+use crate::fmt::with_commas;
 
 /// Formats a number with thousands separators (e.g. 169940 -> "169,940").
 fn fmt_num(n: usize) -> String {
@@ -313,4 +313,243 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &TitleViewerState) {
 
     let footer = Paragraph::new(help_text).block(Block::default().borders(Borders::ALL));
     frame.render_widget(footer, area);
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::similar_names)]
+
+    use std::collections::{HashMap, HashSet};
+
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+
+    use super::super::state::{ProgramRow, TitleRow, TitleViewerState, ViewerStats};
+    use super::*;
+
+    /// Converts a ratatui Buffer into a single string with newlines per row.
+    fn buffer_to_string(buf: &Buffer) -> String {
+        let mut s = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                s.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
+            }
+            s.push('\n');
+        }
+        s
+    }
+
+    fn make_stats() -> ViewerStats {
+        ViewerStats {
+            total_titles: 2,
+            total_programs: 3,
+            unique_channels: 1,
+            oldest_st_time: Some(String::from("2022-04-09")),
+            newest_st_time: Some(String::from("2022-10-08")),
+            tmdb_matched: 1,
+        }
+    }
+
+    fn make_state_with_titles() -> TitleViewerState {
+        let titles = vec![
+            TitleRow {
+                tid: 1,
+                title: String::from("SPY×FAMILY"),
+                cat: Some(1),
+                first_year: Some(2022),
+                tmdb_series_id: Some(12345),
+                tmdb_season_number: Some(1),
+                program_count: 2,
+                keywords: vec![String::from("spy")],
+                tmdb_query: String::from("SPYxFAMILY"),
+            },
+            TitleRow {
+                tid: 2,
+                title: String::from("Bocchi the Rock!"),
+                cat: Some(1),
+                first_year: Some(2022),
+                tmdb_series_id: None,
+                tmdb_season_number: None,
+                program_count: 1,
+                keywords: Vec::new(),
+                tmdb_query: String::from("Bocchi the Rock!"),
+            },
+        ];
+
+        let mut programs = HashMap::new();
+        programs.insert(
+            1,
+            vec![ProgramRow {
+                pid: 100,
+                count: Some(1),
+                st_time: String::from("2022-04-09 23:00"),
+                ch_name: String::from("TX"),
+                flag: Some(2),
+                duration_min: Some(30),
+                sub_title: Some(String::from("Ep1")),
+            }],
+        );
+
+        TitleViewerState::new(titles, programs, make_stats(), HashSet::new())
+    }
+
+    // ── Pure function tests ──────────────────────────────────────
+
+    #[test]
+    fn flag_label_none_returns_empty() {
+        assert_eq!(flag_label(None), "");
+    }
+
+    #[test]
+    fn flag_label_zero_returns_empty() {
+        assert_eq!(flag_label(Some(0)), "");
+    }
+
+    #[test]
+    fn flag_label_single_bits() {
+        assert_eq!(flag_label(Some(1)), "[注]");
+        assert_eq!(flag_label(Some(2)), "[新]");
+        assert_eq!(flag_label(Some(4)), "[終]");
+        assert_eq!(flag_label(Some(8)), "[再]");
+    }
+
+    #[test]
+    fn flag_label_combined_bits() {
+        // 1 + 2 = 3 -> "[注][新]"
+        assert_eq!(flag_label(Some(3)), "[注][新]");
+        // 1 + 4 + 8 = 13 -> "[注][終][再]"
+        assert_eq!(flag_label(Some(13)), "[注][終][再]");
+    }
+
+    #[test]
+    fn fmt_num_formats_with_commas() {
+        assert_eq!(fmt_num(0), "0");
+        assert_eq!(fmt_num(999), "999");
+        assert_eq!(fmt_num(1000), "1,000");
+        assert_eq!(fmt_num(169_940), "169,940");
+    }
+
+    // ── Buffer rendering tests ───────────────────────────────────
+
+    #[test]
+    fn draw_empty_state_does_not_panic() {
+        // Arrange
+        let backend = TestBackend::new(140, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let stats = ViewerStats {
+            total_titles: 0,
+            total_programs: 0,
+            unique_channels: 0,
+            oldest_st_time: None,
+            newest_st_time: None,
+            tmdb_matched: 0,
+        };
+        let mut state = TitleViewerState::new(vec![], HashMap::new(), stats, HashSet::new());
+
+        // Act
+        terminal
+            .draw(|frame| {
+                draw(frame, &mut state);
+            })
+            .unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("Titles"));
+        assert!(content.contains("DB Viewer"));
+        assert!(content.contains("Filter: /"));
+    }
+
+    #[test]
+    fn draw_with_titles_shows_table_headers() {
+        // Arrange: wide enough to fit all columns including split pane
+        let backend = TestBackend::new(200, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = make_state_with_titles();
+
+        // Act
+        terminal
+            .draw(|frame| {
+                draw(frame, &mut state);
+            })
+            .unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("TID"));
+        assert!(content.contains("Title"));
+        assert!(content.contains("TMDB"));
+        assert!(content.contains("2 titles"));
+        assert!(content.contains("3 progs"));
+    }
+
+    #[test]
+    fn draw_with_programs_pane_shows_split() {
+        // Arrange
+        let backend = TestBackend::new(180, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = make_state_with_titles();
+        state.show_programs = true;
+
+        // Act
+        terminal
+            .draw(|frame| {
+                draw(frame, &mut state);
+            })
+            .unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        // Program table headers should appear
+        assert!(content.contains("PID"));
+        assert!(content.contains("StTime"));
+        assert!(content.contains("SubTitle"));
+    }
+
+    #[test]
+    fn draw_without_programs_pane_no_split() {
+        // Arrange
+        let backend = TestBackend::new(140, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = make_state_with_titles();
+        state.show_programs = false;
+
+        // Act
+        terminal
+            .draw(|frame| {
+                draw(frame, &mut state);
+            })
+            .unwrap();
+
+        // Assert: table still renders; PID should not appear since no split pane
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("Titles"));
+        assert!(!content.contains("PID"));
+    }
+
+    #[test]
+    fn draw_filter_mode_shows_filter_footer() {
+        // Arrange
+        let backend = TestBackend::new(140, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = make_state_with_titles();
+        state.input_mode = InputMode::Filter;
+
+        // Act
+        terminal
+            .draw(|frame| {
+                draw(frame, &mut state);
+            })
+            .unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("Type to filter"));
+    }
 }

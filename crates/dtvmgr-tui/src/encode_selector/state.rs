@@ -56,6 +56,7 @@ impl FileCheckWorkerProgress {
 }
 
 /// A batch of file existence checks to enqueue to the worker.
+#[allow(missing_debug_implementations)]
 pub struct FileCheckRequest {
     /// Files to check: `(video_file_id, recorded_id)`.
     pub files: Vec<(i64, i64)>,
@@ -224,7 +225,7 @@ pub struct PageInfo {
 }
 
 /// State for the encode selector TUI.
-#[allow(clippy::module_name_repetitions)]
+#[allow(clippy::module_name_repetitions, missing_debug_implementations)]
 pub struct EncodeSelectorState {
     /// All recording rows.
     pub rows: Vec<EncodeRow>,

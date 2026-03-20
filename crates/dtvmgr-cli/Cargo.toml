@@ -28,14 +28,12 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
-crossterm = { workspace = true }
 dtvmgr-api = { workspace = true }
 dtvmgr-db = { workspace = true }
 dtvmgr-jlse = { workspace = true }
 dtvmgr-tsduck = { workspace = true }
+dtvmgr-tui = { workspace = true }
 futures = { workspace = true }
-open = { workspace = true }
-ratatui = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
@@ -44,7 +42,6 @@ tokio = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-unicode-normalization = { workspace = true }
 
 # OpenTelemetry (optional, behind `otel` feature)
 opentelemetry = { workspace = true, optional = true }

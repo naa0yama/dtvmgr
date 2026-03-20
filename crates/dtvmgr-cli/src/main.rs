@@ -29,8 +29,6 @@ mod cli_metrics {
 
 /// Application configuration (TOML).
 mod config;
-/// Terminal UI components.
-mod tui;
 
 use std::collections::{BTreeSet, HashSet};
 use std::io::BufRead;
@@ -53,13 +51,6 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::config::{AppConfig, load_or_fetch, resolve_config_path, resolve_data_dir};
-use crate::tui::encode_selector::state::{
-    EncodeQueueInfo, EncodeRow, EncodeSelectorState, FileCheckMessage, FileCheckRequest,
-    FileCheckWorkerProgress, PageInfo, QueueMessage, RunningEncodeItem, SelectorResult,
-    SyncMessage,
-};
-use crate::tui::run_channel_selector;
-use crate::tui::state::{ChannelEntry, ChannelGroup};
 use dtvmgr_api::epgstation::{
     EncodeRequest, EpgStationClient, LocalEpgStationApi, RecordedItem, RecordedParams,
     RecordedResponse,
@@ -86,6 +77,13 @@ use dtvmgr_jlse::pipeline::{PipelineContext, run_pipeline};
 use dtvmgr_jlse::progress::{ProgressEvent, ProgressMode};
 use dtvmgr_jlse::settings::{BinaryPaths, DataPaths};
 use dtvmgr_jlse::types::{AvsTarget, JlseConfig};
+use dtvmgr_tui::encode_selector::state::{
+    EncodeQueueInfo, EncodeRow, EncodeSelectorState, FileCheckMessage, FileCheckRequest,
+    FileCheckWorkerProgress, PageInfo, QueueMessage, RunningEncodeItem, SelectorResult,
+    SyncMessage,
+};
+use dtvmgr_tui::run_channel_selector;
+use dtvmgr_tui::state::{ChannelEntry, ChannelGroup};
 
 /// CLI argument parser.
 #[derive(Parser)]
@@ -1007,7 +1005,7 @@ const fn requires_animation_filter(cat: Option<u32>) -> bool {
 
 /// Extracts a base search query from a title using normalization and regex.
 fn extract_base_query(title: &str, compiled_regex: Option<&regex::Regex>) -> String {
-    let normalized = crate::tui::normalize_viewer::state::normalize_chars(title);
+    let normalized = dtvmgr_tui::normalize_viewer::state::normalize_chars(title);
 
     if let Some(re) = compiled_regex
         && let Some(m) = re.find(&normalized)
@@ -1064,7 +1062,7 @@ static GENERAL_SEASON_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
 /// 2. Otherwise, falls back to general season patterns (e.g. `第Nシリーズ`,
 ///    `Season N`).
 fn extract_season_number(title: &str, compiled_regex: Option<&regex::Regex>) -> Option<u32> {
-    let normalized = crate::tui::normalize_viewer::state::normalize_chars(title);
+    let normalized = dtvmgr_tui::normalize_viewer::state::normalize_chars(title);
 
     // Try config regex first.
     if let Some(re) = compiled_regex
@@ -1974,51 +1972,66 @@ fn run_jlse_tsduck(args: &JlseTsduckArgs, config_file: Option<&PathBuf>) -> Resu
     Ok(())
 }
 
-/// Print a single program's information to stdout.
-#[allow(clippy::print_stdout)]
-fn print_program_info(p: &dtvmgr_tsduck::eit::ProgramInfo, target_event_id: Option<&str>) {
+/// Format a single program's information as a string.
+#[allow(clippy::unwrap_used)]
+fn format_program_info(
+    p: &dtvmgr_tsduck::eit::ProgramInfo,
+    target_event_id: Option<&str>,
+) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
     let marker = if target_event_id == Some(&p.event_id) {
         "[recording_target] "
     } else {
         ""
     };
-    println!("--- {marker}event_id: {} ---", p.event_id);
-    println!("  service_id: {}", p.service_id);
-    println!("  start_time: {}", p.start_time);
-    println!(
+    writeln!(out, "--- {marker}event_id: {} ---", p.event_id).unwrap();
+    writeln!(out, "  service_id: {}", p.service_id).unwrap();
+    writeln!(out, "  start_time: {}", p.start_time).unwrap();
+    writeln!(
+        out,
         "  duration: {} ({} min / {} sec)",
         p.duration_raw,
         p.duration_min(),
         p.duration_sec
-    );
-    println!("  running_status: {}", p.running_status);
+    )
+    .unwrap();
+    writeln!(out, "  running_status: {}", p.running_status).unwrap();
     if let Some(name) = &p.program_name {
-        println!("  program_name: {name}");
+        writeln!(out, "  program_name: {name}").unwrap();
     }
     if let Some(desc) = &p.description {
-        println!("  description: {desc}");
+        writeln!(out, "  description: {desc}").unwrap();
     }
     if let Some(tt) = &p.table_type {
-        println!("  table_type: {tt}");
+        writeln!(out, "  table_type: {tt}").unwrap();
     }
     if let Some(ext) = p.extended() {
-        println!("  extended: {ext}");
+        writeln!(out, "  extended: {ext}").unwrap();
     }
     if !p.raw_extended.is_empty() {
         for (key, value) in &p.raw_extended {
-            println!("  raw_extended[{key}]: {value}");
+            writeln!(out, "  raw_extended[{key}]: {value}").unwrap();
         }
     }
     if let Some(g) = p.genre1 {
-        println!("  genre: {g}/{}", p.sub_genre1.unwrap_or(0));
+        writeln!(out, "  genre: {g}/{}", p.sub_genre1.unwrap_or(0)).unwrap();
     }
     if let Some(r) = p.video_resolution() {
-        println!("  video: {r}");
+        writeln!(out, "  video: {r}").unwrap();
     }
     if let Some(rate) = p.audio_sampling_rate() {
-        println!("  audio: {rate}Hz");
+        writeln!(out, "  audio: {rate}Hz").unwrap();
     }
-    println!();
+    writeln!(out).unwrap();
+    out
+}
+
+/// Print a single program's information to stdout.
+#[allow(clippy::print_stdout)]
+fn print_program_info(p: &dtvmgr_tsduck::eit::ProgramInfo, target_event_id: Option<&str>) {
+    print!("{}", format_program_info(p, target_event_id));
 }
 
 /// Runs the `jlse channel` subcommand.
@@ -2100,7 +2113,7 @@ fn run_pipeline_with_tui(ctx: PipelineContext) -> Result<()> {
         };
         run_pipeline(&ctx, Some(&cb))
     });
-    crate::tui::progress_viewer::run_progress_viewer(&rx, handle)
+    dtvmgr_tui::progress_viewer::run_progress_viewer(&rx, handle)
 }
 
 /// Runs the `jlse run` subcommand.
@@ -2431,7 +2444,7 @@ fn run_db_list(config_file: Option<&PathBuf>) -> Result<()> {
         channels.len()
     );
 
-    let output = crate::tui::title_viewer::run_title_viewer(
+    let output = dtvmgr_tui::title_viewer::run_title_viewer(
         &titles,
         &programs,
         channels,
@@ -2486,7 +2499,7 @@ fn run_db_normalize(config_file: Option<&PathBuf>) -> Result<()> {
         titles.len(),
     );
 
-    let (output, updated_history) = crate::tui::normalize_viewer::run_normalize_viewer(
+    let (output, updated_history) = dtvmgr_tui::normalize_viewer::run_normalize_viewer(
         &titles,
         &config.normalize.regex_history,
         &config.normalize.regex_titles,
@@ -2688,28 +2701,28 @@ async fn main() -> Result<()> {
     #[cfg(feature = "otel")]
     {
         if let Some(provider) = logger_provider {
-            provider
-                .force_flush()
-                .context("failed to flush OTel logger provider")?;
-            provider
-                .shutdown()
-                .context("failed to shutdown OTel logger provider")?;
+            if let Err(e) = provider.force_flush() {
+                tracing::warn!("failed to flush OTel logger provider: {e:#}");
+            }
+            if let Err(e) = provider.shutdown() {
+                tracing::warn!("failed to shutdown OTel logger provider: {e:#}");
+            }
         }
         if let Some(provider) = meter_provider {
-            provider
-                .force_flush()
-                .context("failed to flush OTel meter provider")?;
-            provider
-                .shutdown()
-                .context("failed to shutdown OTel meter provider")?;
+            if let Err(e) = provider.force_flush() {
+                tracing::warn!("failed to flush OTel meter provider: {e:#}");
+            }
+            if let Err(e) = provider.shutdown() {
+                tracing::warn!("failed to shutdown OTel meter provider: {e:#}");
+            }
         }
         if let Some(provider) = tracer_provider {
-            provider
-                .force_flush()
-                .context("failed to flush OTel tracer provider")?;
-            provider
-                .shutdown()
-                .context("failed to shutdown OTel tracer provider")?;
+            if let Err(e) = provider.force_flush() {
+                tracing::warn!("failed to flush OTel tracer provider: {e:#}");
+            }
+            if let Err(e) = provider.shutdown() {
+                tracing::warn!("failed to shutdown OTel tracer provider: {e:#}");
+            }
         }
     }
 
@@ -2874,7 +2887,7 @@ async fn sync_recorded_initial(
     conn: &dtvmgr_db::Connection,
     limit: u64,
     keyword: Option<&str>,
-    terminal: &mut crate::tui::encode_selector::TuiTerminal,
+    terminal: &mut dtvmgr_tui::encode_selector::TuiTerminal,
 ) -> Result<Vec<i64>> {
     let now = chrono::Utc::now().to_rfc3339();
     let mut all_ids: Vec<i64> = Vec::new();
@@ -2897,7 +2910,7 @@ async fn sync_recorded_initial(
             api_total,
             &mut |fetched, total| {
                 let _ =
-                    crate::tui::encode_selector::draw_loading_progress(terminal, 0, fetched, total);
+                    dtvmgr_tui::encode_selector::draw_loading_progress(terminal, 0, fetched, total);
             },
         )?;
         api_offset = api_offset.saturating_add(limit);
@@ -3162,7 +3175,7 @@ async fn run_epgstation_encode(
 
     // Set up terminal
     let mut terminal =
-        crate::tui::encode_selector::setup_terminal().context("failed to set up terminal")?;
+        dtvmgr_tui::encode_selector::setup_terminal().context("failed to set up terminal")?;
 
     // Check if DB has cached data
     #[allow(clippy::cast_possible_wrap)]
@@ -3207,7 +3220,7 @@ async fn run_epgstation_encode(
         Some(sync_rx)
     } else {
         // No cache: do a blocking initial sync with progress
-        let _ = crate::tui::encode_selector::draw_loading_progress(&mut terminal, 0, 0, 0);
+        let _ = dtvmgr_tui::encode_selector::draw_loading_progress(&mut terminal, 0, 0, 0);
         let all_ids = match sync_recorded_initial(
             &client,
             &conn,
@@ -3219,7 +3232,7 @@ async fn run_epgstation_encode(
         {
             Ok(ids) => ids,
             Err(e) => {
-                let _ = crate::tui::encode_selector::teardown_terminal();
+                let _ = dtvmgr_tui::encode_selector::teardown_terminal();
                 return Err(e).context("failed to sync recorded programs");
             }
         };
@@ -3294,7 +3307,7 @@ async fn run_epgstation_encode(
             match dtvmgr_db::load_recorded_items_page(&conn, offset as i64, limit as i64) {
                 Ok(r) => r,
                 Err(e) => {
-                    let _ = crate::tui::encode_selector::teardown_terminal();
+                    let _ = dtvmgr_tui::encode_selector::teardown_terminal();
                     return Err(e).context("failed to load cached recorded items");
                 }
             };
@@ -3302,7 +3315,7 @@ async fn run_epgstation_encode(
         let rows = build_rows_from_cache(&cached_page, &channel_names);
 
         if rows.is_empty() && selected.is_empty() {
-            crate::tui::encode_selector::teardown_terminal()
+            dtvmgr_tui::encode_selector::teardown_terminal()
                 .context("failed to tear down terminal")?;
             println!("No recorded programs found.");
             return Ok(());
@@ -3346,7 +3359,7 @@ async fn run_epgstation_encode(
                 None
             };
 
-            let r = match crate::tui::encode_selector::run_encode_selector(
+            let r = match dtvmgr_tui::encode_selector::run_encode_selector(
                 &mut terminal,
                 &mut state,
                 sync_rx_opt.as_ref(),
@@ -3358,7 +3371,7 @@ async fn run_epgstation_encode(
             {
                 Ok(r) => r,
                 Err(e) => {
-                    let _ = crate::tui::encode_selector::teardown_terminal();
+                    let _ = dtvmgr_tui::encode_selector::teardown_terminal();
                     return Err(e).context("encode selector TUI failed");
                 }
             };
@@ -3436,7 +3449,7 @@ async fn run_epgstation_encode(
                 selected.clear();
             }
             SelectorResult::Cancelled => {
-                crate::tui::encode_selector::teardown_terminal()
+                dtvmgr_tui::encode_selector::teardown_terminal()
                     .context("failed to tear down terminal")?;
                 return Ok(());
             }
@@ -4872,5 +4885,394 @@ mod tests {
 
         // Assert: wildcard match → needs check
         assert_eq!(result, vec![(10, 1)]);
+    }
+
+    // ── cli_metrics ───────────────────────────────────────────────
+
+    #[cfg(feature = "otel")]
+    #[test]
+    fn cli_metrics_counters_initialize() {
+        // Arrange & Act: force LazyLock initialization
+        let _ = &*cli_metrics::DB_SYNC_RECORDS;
+        let _ = &*cli_metrics::TMDB_LOOKUP_OUTCOMES;
+        // no panic = success
+    }
+
+    // ── format_program_info ───────────────────────────────────────
+
+    #[allow(clippy::too_many_arguments)]
+    fn make_program_info(
+        event_id: &str,
+        program_name: Option<&str>,
+        description: Option<&str>,
+        table_type: Option<&str>,
+        raw_extended: Vec<(String, String)>,
+        genre1: Option<u8>,
+        sub_genre1: Option<u8>,
+        video_component_type: Option<u8>,
+        audio_sampling_rate_code: Option<u8>,
+    ) -> dtvmgr_tsduck::eit::ProgramInfo {
+        dtvmgr_tsduck::eit::ProgramInfo {
+            service_id: 1024,
+            event_id: event_id.to_owned(),
+            start_time: "2025-01-01 00:00:00".to_owned(),
+            duration_sec: 1800,
+            duration_raw: "00:30:00".to_owned(),
+            running_status: "running".to_owned(),
+            program_name: program_name.map(ToOwned::to_owned),
+            description: description.map(ToOwned::to_owned),
+            table_type: table_type.map(ToOwned::to_owned),
+            raw_extended,
+            genre1,
+            sub_genre1,
+            video_stream_content: None,
+            video_component_type,
+            audio_component_type: None,
+            audio_sampling_rate_code,
+        }
+    }
+
+    #[test]
+    fn test_format_program_info_all_fields() {
+        // Arrange
+        let p = make_program_info(
+            "1001",
+            Some("Test Show"),
+            Some("Episode 1"),
+            Some("pf"),
+            vec![("出演者".to_owned(), "田中太郎".to_owned())],
+            Some(7),
+            Some(3),
+            Some(0xB3),
+            Some(7),
+        );
+
+        // Act
+        let output = format_program_info(&p, Some("1001"));
+
+        // Assert
+        assert!(output.contains("[recording_target]"));
+        assert!(output.contains("event_id: 1001"));
+        assert!(output.contains("service_id: 1024"));
+        assert!(output.contains("start_time: 2025-01-01 00:00:00"));
+        assert!(output.contains("duration: 00:30:00 (30 min / 1800 sec)"));
+        assert!(output.contains("running_status: running"));
+        assert!(output.contains("program_name: Test Show"));
+        assert!(output.contains("description: Episode 1"));
+        assert!(output.contains("table_type: pf"));
+        assert!(output.contains("extended:"));
+        assert!(output.contains("raw_extended[出演者]: 田中太郎"));
+        assert!(output.contains("genre: 7/3"));
+        assert!(output.contains("video: 1080i"));
+        assert!(output.contains("audio: 48000Hz"));
+    }
+
+    #[test]
+    fn test_format_program_info_minimal() {
+        // Arrange
+        let p = make_program_info("2001", None, None, None, vec![], None, None, None, None);
+
+        // Act
+        let output = format_program_info(&p, None);
+
+        // Assert
+        assert!(output.contains("event_id: 2001"));
+        assert!(output.contains("service_id: 1024"));
+        assert!(!output.contains("[recording_target]"));
+        assert!(!output.contains("program_name:"));
+        assert!(!output.contains("description:"));
+        assert!(!output.contains("table_type:"));
+        assert!(!output.contains("extended:"));
+        assert!(!output.contains("raw_extended"));
+        assert!(!output.contains("genre:"));
+        assert!(!output.contains("video:"));
+        assert!(!output.contains("audio:"));
+    }
+
+    #[test]
+    fn test_format_program_info_with_raw_extended() {
+        // Arrange
+        let p = make_program_info(
+            "3001",
+            None,
+            None,
+            None,
+            vec![
+                ("出演者".to_owned(), "山田花子".to_owned()),
+                ("あらすじ".to_owned(), "物語の概要".to_owned()),
+            ],
+            None,
+            None,
+            None,
+            None,
+        );
+
+        // Act
+        let output = format_program_info(&p, None);
+
+        // Assert
+        assert!(output.contains("raw_extended[出演者]: 山田花子"));
+        assert!(output.contains("raw_extended[あらすじ]: 物語の概要"));
+        assert!(output.contains("extended:"));
+    }
+
+    // ── resolve_ch_ids (from config) ────────────────────────────
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_resolve_ch_ids_from_config() {
+        // Arrange: create a config file with selected channels
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("dtvmgr.toml");
+        std::fs::write(&config_path, "[syoboi.channels]\nselected = [1, 2, 3]\n").unwrap();
+
+        // Act
+        let result = resolve_ch_ids(None, Some(&config_path));
+
+        // Assert
+        assert_eq!(result.unwrap(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_resolve_ch_ids_empty_channels_errors() {
+        // Arrange: config file with empty selected channels
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("dtvmgr.toml");
+        std::fs::write(&config_path, "[syoboi.channels]\nselected = []\n").unwrap();
+
+        // Act
+        let result = resolve_ch_ids(None, Some(&config_path));
+
+        // Assert
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("No channels selected"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_resolve_ch_ids_explicit_ids_ignores_config() {
+        // Arrange: explicit IDs should be returned regardless of config
+        let ids = vec![10, 20, 30];
+
+        // Act
+        let result = resolve_ch_ids(Some(ids.clone()), Some(&PathBuf::from("/nonexistent")));
+
+        // Assert: config path is irrelevant when IDs are explicit
+        assert_eq!(result.unwrap(), ids);
+    }
+
+    // ── resolve_jlse_config ─────────────────────────────────────
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_resolve_jlse_config_valid() {
+        // Arrange: config file with valid jlse section
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("dtvmgr.toml");
+        std::fs::write(
+            &config_path,
+            "[jlse.dirs]\n\
+             jl = \"/opt/JL\"\n\
+             logo = \"/opt/logo\"\n\
+             result = \"/tmp/result\"\n",
+        )
+        .unwrap();
+
+        // Act
+        let result = resolve_jlse_config(Some(&config_path));
+
+        // Assert
+        let jlse = result.unwrap();
+        assert_eq!(jlse.dirs.jl, PathBuf::from("/opt/JL"));
+        assert_eq!(jlse.dirs.logo, PathBuf::from("/opt/logo"));
+        assert_eq!(jlse.dirs.result, PathBuf::from("/tmp/result"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_resolve_jlse_config_missing_section() {
+        // Arrange: config file without jlse section
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("dtvmgr.toml");
+        std::fs::write(&config_path, "[syoboi.channels]\nselected = []\n").unwrap();
+
+        // Act
+        let result = resolve_jlse_config(Some(&config_path));
+
+        // Assert
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("jlse config not found"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_resolve_jlse_config_unconfigured_dirs() {
+        // Arrange: jlse section with empty dir paths
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("dtvmgr.toml");
+        std::fs::write(
+            &config_path,
+            "[jlse.dirs]\n\
+             jl = \"\"\n\
+             logo = \"/opt/logo\"\n\
+             result = \"/tmp/result\"\n",
+        )
+        .unwrap();
+
+        // Act
+        let result = resolve_jlse_config(Some(&config_path));
+
+        // Assert
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("jlse.dirs is not configured"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // ── upsert_filtered_programs (additional coverage) ───────────
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_upsert_filtered_programs_empty_programs() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let conn = dtvmgr_db::open_db(Some(&dir.path().to_path_buf())).unwrap();
+        let valid_tids: HashSet<u32> = [10].into();
+        let valid_ch_ids: HashSet<u32> = [20].into();
+        let all_fetched_tids: HashSet<u32> = HashSet::new();
+
+        // Act
+        let (inserted, changed) =
+            upsert_filtered_programs(&conn, &[], &valid_tids, &valid_ch_ids, &all_fetched_tids)
+                .unwrap();
+
+        // Assert
+        assert_eq!(inserted, 0);
+        assert_eq!(changed, 0);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_upsert_filtered_programs_all_valid() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let conn = dtvmgr_db::open_db(Some(&dir.path().to_path_buf())).unwrap();
+
+        // Insert required FK references
+        dtvmgr_db::upsert_titles(
+            &conn,
+            &[
+                CachedTitle {
+                    tid: 10,
+                    title: "T10".to_owned(),
+                    last_update: "2024-01-01".to_owned(),
+                    ..make_cached_title(10, None, None)
+                },
+                CachedTitle {
+                    tid: 11,
+                    title: "T11".to_owned(),
+                    last_update: "2024-01-01".to_owned(),
+                    ..make_cached_title(11, None, None)
+                },
+            ],
+        )
+        .unwrap();
+        dtvmgr_db::upsert_channels(
+            &conn,
+            &[dtvmgr_db::channels::CachedChannel {
+                ch_id: 20,
+                ch_gid: None,
+                ch_name: "CH20".to_owned(),
+            }],
+        )
+        .unwrap();
+
+        let programs = vec![
+            make_syoboi_program(1, 10, 20),
+            make_syoboi_program(2, 11, 20),
+        ];
+        let valid_tids: HashSet<u32> = [10, 11].into();
+        let valid_ch_ids: HashSet<u32> = [20].into();
+        let all_fetched_tids: HashSet<u32> = [10, 11].into();
+
+        // Act
+        let (inserted, changed) = upsert_filtered_programs(
+            &conn,
+            &programs,
+            &valid_tids,
+            &valid_ch_ids,
+            &all_fetched_tids,
+        )
+        .unwrap();
+
+        // Assert: both programs should be inserted
+        assert_eq!(inserted, 2);
+        assert_eq!(changed, 2);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_upsert_filtered_programs_idempotent() {
+        // Arrange: upsert the same program twice
+        let dir = tempfile::tempdir().unwrap();
+        let conn = dtvmgr_db::open_db(Some(&dir.path().to_path_buf())).unwrap();
+
+        dtvmgr_db::upsert_titles(
+            &conn,
+            &[CachedTitle {
+                tid: 10,
+                title: "T10".to_owned(),
+                last_update: "2024-01-01".to_owned(),
+                ..make_cached_title(10, None, None)
+            }],
+        )
+        .unwrap();
+        dtvmgr_db::upsert_channels(
+            &conn,
+            &[dtvmgr_db::channels::CachedChannel {
+                ch_id: 20,
+                ch_gid: None,
+                ch_name: "CH20".to_owned(),
+            }],
+        )
+        .unwrap();
+
+        let programs = vec![make_syoboi_program(1, 10, 20)];
+        let valid_tids: HashSet<u32> = [10].into();
+        let valid_ch_ids: HashSet<u32> = [20].into();
+        let all_fetched_tids: HashSet<u32> = [10].into();
+
+        // First upsert
+        let (inserted1, changed1) = upsert_filtered_programs(
+            &conn,
+            &programs,
+            &valid_tids,
+            &valid_ch_ids,
+            &all_fetched_tids,
+        )
+        .unwrap();
+        assert_eq!(inserted1, 1);
+        assert_eq!(changed1, 1);
+
+        // Act: second upsert with same data
+        let (inserted2, changed2) = upsert_filtered_programs(
+            &conn,
+            &programs,
+            &valid_tids,
+            &valid_ch_ids,
+            &all_fetched_tids,
+        )
+        .unwrap();
+
+        // Assert: count stays same, but no rows changed
+        assert_eq!(inserted2, 1);
+        assert_eq!(changed2, 0);
     }
 }

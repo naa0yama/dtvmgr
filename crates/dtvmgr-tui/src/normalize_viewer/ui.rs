@@ -245,3 +245,184 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &NormalizeViewerState) {
     let footer = Paragraph::new(help_text).block(Block::default().borders(Borders::ALL));
     frame.render_widget(footer, area);
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+
+    use super::super::state::{NormalizeRow, NormalizeViewerState, categorize, normalize_chars};
+    use super::*;
+
+    /// Converts a ratatui Buffer into a single string with newlines per row.
+    fn buffer_to_string(buf: &Buffer) -> String {
+        let mut s = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                s.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
+            }
+            s.push('\n');
+        }
+        s
+    }
+
+    fn make_row(tid: u32, title: &str, cat: Option<u32>, first_year: Option<u32>) -> NormalizeRow {
+        let normalized_title = normalize_chars(title);
+        NormalizeRow {
+            tid,
+            title: title.to_owned(),
+            normalized_title,
+            cat,
+            first_year,
+            media_type: categorize(cat),
+            base_query: None,
+            season_num: None,
+            trimmed: None,
+        }
+    }
+
+    #[test]
+    fn draw_empty_state_does_not_panic() {
+        // Arrange
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = NormalizeViewerState::new(vec![], Vec::new(), &[]);
+
+        // Act
+        terminal
+            .draw(|frame| {
+                draw(frame, &mut state);
+            })
+            .unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("Titles"));
+        assert!(content.contains("0 rows"));
+    }
+
+    #[test]
+    fn draw_with_rows_shows_table_headers() {
+        // Arrange
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let rows = vec![
+            make_row(1, "SPY×FAMILY", Some(1), Some(2023)),
+            make_row(2, "Bocchi the Rock!", Some(1), Some(2022)),
+        ];
+        let mut state = NormalizeViewerState::new(rows, Vec::new(), &[]);
+
+        // Act
+        terminal
+            .draw(|frame| {
+                draw(frame, &mut state);
+            })
+            .unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("Sel"));
+        assert!(content.contains("TID"));
+        assert!(content.contains("Title"));
+        assert!(content.contains("BaseQuery"));
+        assert!(content.contains("2 rows"));
+        assert!(content.contains("Normalize"));
+    }
+
+    #[test]
+    fn draw_normal_mode_manual_regex_shows_footer() {
+        // Arrange
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = NormalizeViewerState::new(vec![], Vec::new(), &[]);
+        state.input_mode = InputMode::Normal;
+        state.regex_source = RegexSource::Manual;
+
+        // Act
+        terminal
+            .draw(|frame| {
+                draw(frame, &mut state);
+            })
+            .unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("r: edit regex"));
+        assert!(content.contains("R: config regex"));
+    }
+
+    #[test]
+    fn draw_normal_mode_config_regex_shows_regex_titles() {
+        // Arrange
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let regex_titles = vec![String::from("pat1"), String::from("pat2")];
+        let mut state = NormalizeViewerState::new(vec![], Vec::new(), &regex_titles);
+        state.input_mode = InputMode::Normal;
+        state.regex_source = RegexSource::Config;
+
+        // Act
+        terminal
+            .draw(|frame| {
+                draw(frame, &mut state);
+            })
+            .unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("config: 2"));
+        assert!(content.contains("regex_titles"));
+        assert!(content.contains("R: manual regex"));
+    }
+
+    #[test]
+    fn draw_filter_mode_shows_filter_footer() {
+        // Arrange
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = NormalizeViewerState::new(vec![], Vec::new(), &[]);
+        state.input_mode = InputMode::Filter;
+
+        // Act
+        terminal
+            .draw(|frame| {
+                draw(frame, &mut state);
+            })
+            .unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("Type to filter"));
+        assert!(content.contains("Filter: /"));
+    }
+
+    #[test]
+    fn draw_regex_mode_shows_regex_footer() {
+        // Arrange
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = NormalizeViewerState::new(vec![], Vec::new(), &[]);
+        state.input_mode = InputMode::Regex;
+
+        // Act
+        terminal
+            .draw(|frame| {
+                draw(frame, &mut state);
+            })
+            .unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("Type regex"));
+        assert!(content.contains("Regex: r"));
+    }
+}

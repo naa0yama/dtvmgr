@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 
 use super::state::{EncodeSelectorState, InputMode, SettingsField, WizardStep};
-use crate::tui::fmt::with_commas;
+use crate::fmt::with_commas;
 
 /// Formats bytes as MB with comma-separated thousands (e.g. "2,500 MB").
 fn fmt_size(bytes: u64) -> String {
@@ -516,10 +516,10 @@ pub fn draw_loading_progress(frame: &mut Frame, page: u64, checked: usize, total
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::as_conversions)]
 
     use super::*;
-    use crate::tui::encode_selector::state::{EncodeQueueInfo, PageInfo, RunningEncodeItem};
+    use crate::encode_selector::state::{EncodeQueueInfo, PageInfo, RunningEncodeItem};
 
     #[test]
     fn fmt_size_zero_bytes() {
@@ -700,6 +700,171 @@ mod tests {
     }
 
     // ── build_queue_display (additional) ─────────────────────────
+
+    // ── Buffer rendering tests ─────────────────────────────────
+
+    fn buffer_to_string(buf: &ratatui::buffer::Buffer) -> String {
+        let mut s = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                s.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
+            }
+            s.push('\n');
+        }
+        s
+    }
+
+    fn make_draw_state(n: usize) -> EncodeSelectorState {
+        use super::super::state::EncodeRow;
+        let rows: Vec<EncodeRow> = (0..n)
+            .map(|i| {
+                #[allow(clippy::as_conversions)]
+                let id = i as u64;
+                EncodeRow {
+                    recorded_id: id,
+                    channel_name: String::from("NHK"),
+                    name: format!("Program {i}"),
+                    start_at: 1_705_316_400_000,
+                    end_at: 1_705_318_200_000,
+                    video_resolution: String::from("1080i"),
+                    video_type: String::from("mpeg2"),
+                    source_video_file_id: Some(id),
+                    file_size: 2_621_440_000,
+                    drop_cnt: 0,
+                    error_cnt: 0,
+                    is_recording: false,
+                    is_encoding: false,
+                    file_exists: true,
+                }
+            })
+            .collect();
+        let page = PageInfo {
+            offset: 0,
+            size: 10,
+            total: n as u64,
+        };
+        EncodeSelectorState::new(
+            rows,
+            vec![String::from("H.264"), String::from("H.265")],
+            vec![String::from("recorded")],
+            None,
+            None,
+            page,
+        )
+    }
+
+    #[test]
+    fn draw_select_recordings_step() {
+        // Arrange
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = make_draw_state(3);
+        state.encode_queue = Some(EncodeQueueInfo {
+            running: vec![],
+            waiting_count: 0,
+        });
+
+        // Act
+        terminal.draw(|frame| draw(frame, &mut state)).unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("Recorded Programs"));
+        assert!(content.contains("Encode"));
+        assert!(content.contains("Selection"));
+        assert!(content.contains("Sel"));
+        assert!(content.contains("Channel"));
+        assert!(content.contains("Name"));
+    }
+
+    #[test]
+    fn draw_configure_settings_step() {
+        // Arrange
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = make_draw_state(2);
+        state.step = WizardStep::ConfigureSettings;
+
+        // Act
+        terminal.draw(|frame| draw(frame, &mut state)).unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("Step 2/3"));
+        assert!(content.contains("Encode Settings"));
+        assert!(content.contains("Mode"));
+        assert!(content.contains("H.264"));
+        assert!(content.contains("isSaveSameDirectory"));
+    }
+
+    #[test]
+    fn draw_confirm_step() {
+        // Arrange
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = make_draw_state(2);
+        state.selected.insert(0);
+        state.step = WizardStep::Confirm;
+
+        // Act
+        terminal.draw(|frame| draw(frame, &mut state)).unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("Step 3/3"));
+        assert!(content.contains("Confirm Encode"));
+        assert!(content.contains("1 selected"));
+        assert!(content.contains("Press Enter to submit"));
+    }
+
+    #[test]
+    fn draw_loading_progress_zero_total() {
+        // Arrange
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(80, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Act
+        terminal
+            .draw(|frame| draw_loading_progress(frame, 1, 0, 0))
+            .unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("Loading page 1"));
+        assert!(content.contains("Recorded Programs"));
+    }
+
+    #[test]
+    fn draw_loading_progress_with_counts() {
+        // Arrange
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(80, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Act
+        terminal
+            .draw(|frame| draw_loading_progress(frame, 2, 5, 10))
+            .unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("Loading page 2"));
+        assert!(content.contains("Checking files: 5/10"));
+    }
 
     #[test]
     fn build_queue_display_truncates_long_name() {
