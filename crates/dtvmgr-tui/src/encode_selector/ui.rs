@@ -346,6 +346,16 @@ fn draw_selection_info(
 #[allow(clippy::similar_names)]
 fn draw_storage_stats(frame: &mut Frame, area: ratatui::layout::Rect, state: &EncodeSelectorState) {
     let dim = Style::default().fg(Color::DarkGray);
+
+    // Calculate max name length for alignment.
+    let max_name_len = state
+        .storage_dirs
+        .iter()
+        .filter(|e| e.visible)
+        .map(|e| e.name.len())
+        .max()
+        .unwrap_or(0);
+
     let lines: Vec<Line<'static>> = state
         .storage_dirs
         .iter()
@@ -353,13 +363,14 @@ fn draw_storage_stats(frame: &mut Frame, area: ratatui::layout::Rect, state: &En
         .filter(|(_, entry)| entry.visible)
         .map(|(i, entry)| {
             let key = char::from(u8::try_from(i).unwrap_or(8).saturating_add(b'1'));
-            let prefix = format!(" {key}:{} ", entry.name);
+            let prefix = format!(" {key}:{:<width$} ", entry.name, width = max_name_len);
             entry.stats.as_ref().map_or_else(
                 || Line::from(vec![Span::raw(prefix.clone()), Span::styled("N/A", dim)]),
                 |s| {
                     let used = fmt_gb(s.used_bytes);
-                    let total = fmt_gb(s.total_bytes);
+                    let total = fmt_tb(s.total_bytes);
                     let pct = s.usage_ratio * 100.0;
+                    let files = with_commas(s.file_count);
                     let color = if pct > 90.0 {
                         Color::Red
                     } else if pct > 75.0 {
@@ -369,8 +380,8 @@ fn draw_storage_stats(frame: &mut Frame, area: ratatui::layout::Rect, state: &En
                     };
                     Line::from(vec![
                         Span::raw(prefix.clone()),
-                        Span::styled(used, Style::default().fg(color)),
-                        Span::raw(format!(" / {total} ({pct:.1}%) {}", s.file_count)),
+                        Span::styled(format!("{used:>10}"), Style::default().fg(color)),
+                        Span::raw(format!(" / {total:>6} ({pct:>5.1}%) {files:>7}")),
                         Span::styled(" files", dim),
                     ])
                 },
@@ -389,6 +400,14 @@ fn fmt_gb(bytes: u64) -> String {
     let whole = gb_10 / 10;
     let frac = gb_10 % 10;
     format!("{}.{frac} GB", with_commas(whole))
+}
+
+/// Formats bytes as a human-readable TB string (e.g. "3.6 TB").
+fn fmt_tb(bytes: u64) -> String {
+    let tb_10 = bytes / 109_951_162_778; // bytes / (1 TiB / 10)
+    let whole = tb_10 / 10;
+    let frac = tb_10 % 10;
+    format!("{}.{frac} TB", with_commas(whole))
 }
 
 /// Step 2: Encode settings configuration.
