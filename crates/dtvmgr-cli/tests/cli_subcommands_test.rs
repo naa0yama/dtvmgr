@@ -1,6 +1,8 @@
 #![allow(clippy::unwrap_used)]
 #![allow(missing_docs)]
 
+use std::path::PathBuf;
+
 use assert_cmd::cargo_bin_cmd;
 use predicates::prelude::{PredicateBooleanExt, predicate};
 
@@ -204,4 +206,49 @@ fn test_completion_fish() {
         .assert()
         .success()
         .stdout(predicate::str::is_empty().not());
+}
+
+// ── init subcommand ───────────────────────────────────────────
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_init_creates_new_config() {
+    // Arrange
+    let dir = tempfile::tempdir().unwrap();
+    let config_path: PathBuf = dir.path().join("test_init_config.toml");
+    assert!(!config_path.exists());
+
+    // Act
+    let mut cmd = cargo_bin_cmd!("dtvmgr");
+    cmd.args(["--config", config_path.to_str().unwrap(), "init"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Config created:"));
+
+    // Assert
+    assert!(config_path.exists());
+    let contents = std::fs::read_to_string(&config_path).unwrap();
+    assert!(!contents.is_empty());
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_init_already_up_to_date() {
+    // Arrange: create config that matches the default template
+    let dir = tempfile::tempdir().unwrap();
+    let config_path: PathBuf = dir.path().join("test_init_uptodate.toml");
+
+    // First, create the config via `init`
+    let mut cmd = cargo_bin_cmd!("dtvmgr");
+    cmd.args(["--config", config_path.to_str().unwrap(), "init"])
+        .assert()
+        .success();
+    assert!(config_path.exists());
+
+    // Act: run init again with the same config
+    let mut cmd = cargo_bin_cmd!("dtvmgr");
+    cmd.args(["--config", config_path.to_str().unwrap(), "init"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Config already up to date"));
 }

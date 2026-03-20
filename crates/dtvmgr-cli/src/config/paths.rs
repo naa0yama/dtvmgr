@@ -196,4 +196,114 @@ mod tests {
         // Assert: non-existent path is returned as-is
         assert_eq!(path, config_file);
     }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_detect_cwd_config_with_normalize_key() {
+        // Arrange: create a dtvmgr.toml with `normalize` marker key
+        let dir = tempfile::tempdir().unwrap();
+        let config_file = dir.path().join("dtvmgr.toml");
+        std::fs::write(&config_file, "[normalize]\nenabled = true\n").unwrap();
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        // Act
+        let result = detect_cwd_config();
+
+        // Cleanup
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        // Assert: should detect the config because it has the `normalize` key
+        let path = result.unwrap().unwrap();
+        assert!(path.ends_with("dtvmgr.toml"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_detect_cwd_config_no_marker_keys() {
+        // Arrange: create a dtvmgr.toml WITHOUT any marker keys
+        let dir = tempfile::tempdir().unwrap();
+        let config_file = dir.path().join("dtvmgr.toml");
+        std::fs::write(&config_file, "[other]\nkey = \"value\"\n").unwrap();
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        // Act
+        let result = detect_cwd_config();
+
+        // Cleanup
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        // Assert: should return None because no marker keys found
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_detect_cwd_config_with_syoboi_key() {
+        // Arrange: create a dtvmgr.toml with `syoboi` marker key
+        let dir = tempfile::tempdir().unwrap();
+        let config_file = dir.path().join("dtvmgr.toml");
+        std::fs::write(&config_file, "[syoboi]\ntid = 1234\n").unwrap();
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        // Act
+        let result = detect_cwd_config();
+
+        // Cleanup
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        // Assert
+        let path = result.unwrap().unwrap();
+        assert!(path.ends_with("dtvmgr.toml"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_resolve_config_path_cwd_with_tmdb_key() {
+        // Arrange: create dtvmgr.toml with `tmdb` marker key in CWD
+        let dir = tempfile::tempdir().unwrap();
+        let config_file = dir.path().join("dtvmgr.toml");
+        std::fs::write(&config_file, "[tmdb]\napi_key = \"test\"\n").unwrap();
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        // Act
+        let result = resolve_config_path(None);
+
+        // Cleanup
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        // Assert: should find CWD config
+        let path = result.unwrap();
+        assert!(path.ends_with("dtvmgr.toml"));
+        assert!(path.is_absolute());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_resolve_data_dir_cwd_detection() {
+        // Arrange: create dtvmgr.toml with marker key in CWD
+        let dir = tempfile::tempdir().unwrap();
+        let config_file = dir.path().join("dtvmgr.toml");
+        std::fs::write(&config_file, "[syoboi]\ntid = 1\n").unwrap();
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        // Act
+        let result = resolve_data_dir(None);
+
+        // Cleanup
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        // Assert: should return the CWD as data dir
+        let data_dir = result.unwrap().unwrap();
+        assert!(data_dir.is_absolute());
+    }
 }
