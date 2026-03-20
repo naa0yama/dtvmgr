@@ -249,8 +249,10 @@ pub struct EncodeProgramItem {
     pub mode: String,
     /// The recorded item being encoded.
     pub recorded: RecordedItem,
-    /// Encode progress percentage (0-100).
+    /// Encode progress ratio (0.0–1.0).
     pub percent: Option<f64>,
+    /// Encoder log output (e.g. current step or ffmpeg progress line).
+    pub log: Option<String>,
 }
 
 #[cfg(test)]

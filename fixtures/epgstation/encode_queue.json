@@ -14,7 +14,8 @@
 				"isProtected": false,
 				"videoFiles": []
 			},
-			"percent": 45.2
+			"percent": 0.452,
+			"log": "encoding 1500/3000"
 		}
 	],
 	"waitItems": [

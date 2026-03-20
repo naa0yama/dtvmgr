@@ -23,8 +23,11 @@ pub const SYOBOI_BASE_URL: &str = "https://cal.syoboi.jp";
 /// Default base URL.
 const DEFAULT_BASE_URL: &str = concat!("https://cal.syoboi.jp", "/db.php");
 
-/// Maximum number of retries for API requests.
+/// Maximum number of retries for rate-limited (429) responses.
 const MAX_RETRIES: u32 = 3;
+
+/// Maximum number of retries for transient network errors (e.g. keep-alive race).
+const MAX_NETWORK_RETRIES: u32 = 1;
 
 /// Delay between retries.
 const RETRY_DELAY: Duration = Duration::from_secs(2);
@@ -225,7 +228,7 @@ impl SyoboiClient {
         http.url = tracing::field::Empty,
         http.status_code = tracing::field::Empty,
         http.response.body = tracing::field::Empty,
-    ), err(level = "error"))]
+    ), err(level = "warn"))]
     async fn request_with_retry<T, F>(
         &self,
         command: &str,
@@ -235,27 +238,28 @@ impl SyoboiClient {
     where
         F: Fn(&str) -> Result<T>,
     {
-        let mut last_err = None;
         #[cfg(feature = "otel")]
         let request_start = std::time::Instant::now();
+        let mut network_retries = 0u32;
+        let mut rate_limit_retries = 0u32;
 
-        for attempt in 0..=MAX_RETRIES {
+        loop {
             self.rate_limiter.lock().await.wait().await;
 
-            let send_result = build_request().send().await;
-            let response = match send_result {
+            let response = match build_request().send().await {
                 Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!(
-                        %command,
-                        attempt,
+                Err(e) if !e.is_timeout() && network_retries < MAX_NETWORK_RETRIES => {
+                    network_retries = network_retries.saturating_add(1);
+                    tracing::debug!(
+                        retry = network_retries,
                         error = %e,
-                        "Request failed, will retry"
+                        "transient network error, retrying"
                     );
-                    last_err =
-                        Some(anyhow::Error::new(e).context(format!("{command} request failed")));
-                    tokio::time::sleep(RETRY_DELAY).await;
                     continue;
+                }
+                Err(e) => {
+                    let kind = crate::classify_reqwest_error(&e);
+                    bail!("{kind}: {command}: {e:#}");
                 }
             };
 
@@ -276,6 +280,11 @@ impl SyoboiClient {
                 #[cfg(feature = "otel")]
                 crate::metrics::record_rate_limit_hit("syoboi");
 
+                rate_limit_retries = rate_limit_retries.saturating_add(1);
+                if rate_limit_retries > MAX_RETRIES {
+                    bail!("Syoboi API rate limited after {MAX_RETRIES} retries: {command}");
+                }
+
                 let retry_after = headers
                     .get(reqwest::header::RETRY_AFTER)
                     .and_then(|v| v.to_str().ok())
@@ -286,56 +295,31 @@ impl SyoboiClient {
 
                 tracing::warn!(
                     %command,
-                    attempt,
-                    code = status.as_u16(),
+                    retry = rate_limit_retries,
+                    max_retries = MAX_RETRIES,
                     retry_after_secs = retry_after.as_secs(),
                     "Rate limited, waiting before retry"
                 );
-                last_err = Some(anyhow::anyhow!("{command} rate limited (HTTP {status})"));
                 tokio::time::sleep(retry_after).await;
                 continue;
             }
 
-            let xml = match response.text().await {
-                Ok(xml) => xml,
-                Err(e) => {
-                    tracing::warn!(
-                        %command,
-                        attempt,
-                        error = %e,
-                        "Failed to read response body, will retry"
-                    );
-                    last_err = Some(
-                        anyhow::Error::new(e).context(format!("failed to read {command} response")),
-                    );
-                    tokio::time::sleep(RETRY_DELAY).await;
-                    continue;
-                }
-            };
+            let xml = response
+                .text()
+                .await
+                .with_context(|| format!("failed to read {command} response body"))?;
 
             span.record("http.response.body", xml.as_str());
             tracing::debug!(%command, body_len = xml.len(), "Response body received");
 
-            match parse(&xml) {
-                Ok(result) => {
-                    #[cfg(feature = "otel")]
-                    crate::metrics::record_request_duration("syoboi", "GET", request_start);
-                    return Ok((status.as_u16(), result));
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        %command,
-                        attempt,
-                        error = %e,
-                        "Parse/API error, will retry"
-                    );
-                    last_err = Some(e);
-                    tokio::time::sleep(RETRY_DELAY).await;
-                }
-            }
-        }
+            let result =
+                parse(&xml).with_context(|| format!("failed to parse {command} response"))?;
 
-        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("{command} failed after retries")))
+            #[cfg(feature = "otel")]
+            crate::metrics::record_request_duration("syoboi", "GET", request_start);
+
+            return Ok((status.as_u16(), result));
+        }
     }
 }
 
