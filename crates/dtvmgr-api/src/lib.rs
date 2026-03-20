@@ -43,6 +43,7 @@ mod tests {
 
     use super::*;
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_classify_connect_error() {
         // Arrange: trigger a connection error by connecting to a closed port
@@ -56,6 +57,7 @@ mod tests {
         assert_eq!(label, "connection error");
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_classify_timeout_error() {
         // Arrange: trigger a timeout with a very short timeout
@@ -76,6 +78,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_classify_redirect_error() {
         // Arrange: trigger redirect error by disabling redirects
@@ -100,6 +103,7 @@ mod tests {
         assert_eq!(label, "too many redirects");
     }
 
+    #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_classify_decode_error() {
         // Arrange: trigger decode error by expecting JSON from invalid body
