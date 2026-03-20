@@ -16,6 +16,12 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .context("failed to read user_version")?;
 
+    // Already at or beyond current version — nothing to do.
+    // This avoids a write on read-only databases that are already up to date.
+    if version >= CURRENT_VERSION {
+        return Ok(());
+    }
+
     if version < 1 {
         migrate_v1(conn).context("migration to v1 failed")?;
     }
@@ -419,5 +425,48 @@ mod tests {
             .prepare("SELECT tmdb_season_id FROM titles LIMIT 0")
             .unwrap();
         assert_eq!(stmt.column_count(), 1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_migrations_noop_when_current_version() {
+        // Arrange: create a fully migrated in-memory DB, then open a file-based
+        // DB as read-only to verify no writes are attempted.
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            run_migrations(&conn).unwrap();
+        }
+
+        // Act: open read-only and run migrations
+        let conn =
+            Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .unwrap();
+        let result = run_migrations(&conn);
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_migrations_noop_when_future_version() {
+        // Arrange
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+        conn.pragma_update(None, "user_version", CURRENT_VERSION + 1)
+            .unwrap();
+
+        // Act
+        let result = run_migrations(&conn);
+
+        // Assert
+        assert!(result.is_ok());
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_VERSION + 1);
     }
 }
