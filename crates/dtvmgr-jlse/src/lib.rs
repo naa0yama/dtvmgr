@@ -19,6 +19,8 @@ pub mod pipeline;
 pub mod progress;
 /// Output paths, binary paths, and data paths for pipeline execution.
 pub mod settings;
+/// Storage statistics collection for monitoring disk usage.
+pub mod storage;
 /// Core type definitions.
 pub mod types;
 /// Pre-encode duration validation.

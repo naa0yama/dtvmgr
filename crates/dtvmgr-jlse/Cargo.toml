@@ -9,6 +9,7 @@ description = "CM detection pipeline for Japanese TV broadcast TS files"
 anyhow.workspace = true
 csv.workspace = true
 dtvmgr-tsduck.workspace = true
+libc = { workspace = true }
 regex.workspace = true
 serde = { workspace = true }
 tracing.workspace = true

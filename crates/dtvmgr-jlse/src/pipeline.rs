@@ -19,6 +19,7 @@ use crate::output;
 use crate::param;
 use crate::progress::{self, ProgressEvent, ProgressMode};
 use crate::settings::{BinaryPaths, DataPaths, OutputPaths, init_output_paths};
+use crate::storage;
 use crate::types::{AvsTarget, Channel, DetectionParam, JlseConfig, JlseDirs, JlseEncode};
 use crate::validate;
 
@@ -96,6 +97,11 @@ pub fn run_pipeline(
         .to_string_lossy()
         .into_owned();
     info!(input = %input.display(), "starting pipeline");
+
+    storage::log_storage_stats(
+        input.parent().unwrap_or_else(|| Path::new("/")),
+        ctx.out_dir.as_deref(),
+    );
 
     let config_abs = JlseConfig {
         dirs,
@@ -302,6 +308,29 @@ pub fn run_pipeline(
 
     // Step 12: (optional) encoding
     if ctx.encode {
+        // Pre-encode free space check on the output directory.
+        if let Some(ref out_dir) = ctx.out_dir {
+            let input_size = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
+            if input_size > 0
+                && let Some(free) = storage::free_bytes(out_dir)
+            {
+                if free < input_size {
+                    bail!(
+                        "insufficient disk space on {}: {} free < {} input size",
+                        out_dir.display(),
+                        free,
+                        input_size,
+                    );
+                }
+                debug!(
+                    out_dir = %out_dir.display(),
+                    free_bytes = free,
+                    input_bytes = input_size,
+                    "output directory has sufficient free space",
+                );
+            }
+        }
+
         // Step 12a: EIT extraction for MKV metadata
         let mkv_metadata = extract_eit_for_mkv(&bins.tstables, &input, &paths.save_dir)
             .context("EIT extraction is required for MKV encoding")?;

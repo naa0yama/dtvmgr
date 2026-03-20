@@ -5,7 +5,7 @@
 mod cli_metrics {
     use std::sync::LazyLock;
 
-    use opentelemetry::metrics::{Counter, Meter};
+    use opentelemetry::metrics::{Counter, Gauge, Meter};
 
     /// Shared meter for dtvmgr-cli.
     static METER: LazyLock<Meter> = LazyLock::new(|| opentelemetry::global::meter("dtvmgr-cli"));
@@ -23,6 +23,49 @@ mod cli_metrics {
         METER
             .u64_counter("dtvmgr.tmdb.lookup.outcomes")
             .with_description("TMDB lookup outcomes by type")
+            .build()
+    });
+
+    /// Free bytes on a storage directory.
+    pub static STORAGE_FREE_BYTES: LazyLock<Gauge<u64>> = LazyLock::new(|| {
+        METER
+            .u64_gauge("dtvmgr.storage.free_bytes")
+            .with_description("Free bytes available on storage directory")
+            .with_unit("By")
+            .build()
+    });
+
+    /// Total bytes on a storage directory.
+    pub static STORAGE_TOTAL_BYTES: LazyLock<Gauge<u64>> = LazyLock::new(|| {
+        METER
+            .u64_gauge("dtvmgr.storage.total_bytes")
+            .with_description("Total bytes on storage directory")
+            .with_unit("By")
+            .build()
+    });
+
+    /// Used bytes on a storage directory.
+    pub static STORAGE_USED_BYTES: LazyLock<Gauge<u64>> = LazyLock::new(|| {
+        METER
+            .u64_gauge("dtvmgr.storage.used_bytes")
+            .with_description("Used bytes on storage directory")
+            .with_unit("By")
+            .build()
+    });
+
+    /// Usage ratio of a storage directory.
+    pub static STORAGE_USAGE_RATIO: LazyLock<Gauge<f64>> = LazyLock::new(|| {
+        METER
+            .f64_gauge("dtvmgr.storage.usage_ratio")
+            .with_description("Usage ratio of storage directory")
+            .build()
+    });
+
+    /// File count in a storage directory.
+    pub static STORAGE_FILE_COUNT: LazyLock<Gauge<u64>> = LazyLock::new(|| {
+        METER
+            .u64_gauge("dtvmgr.storage.file_count")
+            .with_description("Number of files in storage directory")
             .build()
     });
 }
@@ -76,11 +119,12 @@ use dtvmgr_jlse::param::{detect_param, load_params};
 use dtvmgr_jlse::pipeline::{PipelineContext, run_pipeline};
 use dtvmgr_jlse::progress::{ProgressEvent, ProgressMode};
 use dtvmgr_jlse::settings::{BinaryPaths, DataPaths};
+use dtvmgr_jlse::storage::collect_storage_stats;
 use dtvmgr_jlse::types::{AvsTarget, JlseConfig};
 use dtvmgr_tui::encode_selector::state::{
     EncodeQueueInfo, EncodeRow, EncodeSelectorState, FileCheckMessage, FileCheckRequest,
     FileCheckWorkerProgress, PageInfo, QueueMessage, RunningEncodeItem, SelectorResult,
-    SyncMessage,
+    StorageMessage, StorageStatsSnapshot, SyncMessage,
 };
 use dtvmgr_tui::run_channel_selector;
 use dtvmgr_tui::state::{ChannelEntry, ChannelGroup};
@@ -2172,6 +2216,8 @@ fn run_jlse_run(args: &JlseRunArgs, config_file: Option<&PathBuf>) -> Result<()>
             skip_duration_check: args.skip_duration_check,
         };
 
+        record_storage_metrics(&ctx);
+
         if args.tui {
             run_pipeline_with_tui(ctx)
         } else {
@@ -2215,11 +2261,61 @@ fn run_jlse_run(args: &JlseRunArgs, config_file: Option<&PathBuf>) -> Result<()>
             skip_duration_check: args.skip_duration_check,
         };
 
+        record_storage_metrics(&ctx);
+
         if args.tui {
             run_pipeline_with_tui(ctx)
         } else {
             run_pipeline(&ctx, None)
         }
+    }
+}
+
+/// Record `OTel` gauge metrics for storage directories referenced by the pipeline.
+fn record_storage_metrics(ctx: &PipelineContext) {
+    let ts_dir = ctx.input.parent().unwrap_or_else(|| Path::new("/"));
+    record_storage_dir_metrics(ts_dir, "ts_input");
+    if let Some(dir) = ctx.out_dir.as_deref() {
+        record_storage_dir_metrics(dir, "encoded_output");
+    }
+}
+
+/// Record `OTel` gauge metrics for a single directory.
+#[cfg(feature = "otel")]
+fn record_storage_dir_metrics(dir: &Path, role: &str) {
+    if let Some(stats) = collect_storage_stats(dir) {
+        use opentelemetry::KeyValue;
+
+        let attrs = &[
+            KeyValue::new("path", stats.path.clone()),
+            KeyValue::new("role", role.to_owned()),
+        ];
+        cli_metrics::STORAGE_FREE_BYTES.record(stats.free_bytes, attrs);
+        cli_metrics::STORAGE_TOTAL_BYTES.record(stats.total_bytes, attrs);
+        cli_metrics::STORAGE_USED_BYTES.record(stats.used_bytes, attrs);
+        cli_metrics::STORAGE_USAGE_RATIO.record(stats.usage_ratio, attrs);
+        cli_metrics::STORAGE_FILE_COUNT.record(stats.file_count, attrs);
+    }
+}
+
+/// No-op when OTel is disabled.
+#[cfg(not(feature = "otel"))]
+fn record_storage_dir_metrics(_dir: &Path, _role: &str) {}
+
+/// Convert `StorageStats` to `StorageStatsSnapshot` for TUI display.
+const fn to_snapshot(s: &dtvmgr_jlse::storage::StorageStats) -> StorageStatsSnapshot {
+    StorageStatsSnapshot {
+        total_bytes: s.total_bytes,
+        used_bytes: s.used_bytes,
+        usage_ratio: s.usage_ratio,
+        file_count: s.file_count,
+    }
+}
+
+/// Populate storage stats in `EncodeSelectorState` entries.
+fn populate_storage_stats(state: &mut EncodeSelectorState) {
+    for entry in &mut state.storage_dirs {
+        entry.stats = collect_storage_stats(Path::new(&entry.path)).map(|s| to_snapshot(&s));
     }
 }
 
@@ -2945,6 +3041,21 @@ fn build_rows_from_cache(
             let file_size = ts_file.map_or(0, |vf| vf.size as u64);
             let file_exists = ts_file.and_then(|vf| vf.file_exists).unwrap_or(false);
 
+            // Deduplicated, abbreviated file types (e.g. "ts", "ts,enc").
+            let mut seen = std::collections::BTreeSet::new();
+            let file_types: Vec<&str> = files
+                .iter()
+                .filter(|vf| seen.insert(vf.file_type.as_str()))
+                .map(|vf| {
+                    if vf.file_type == "encoded" {
+                        "enc"
+                    } else {
+                        vf.file_type.as_str()
+                    }
+                })
+                .collect();
+            let file_types = file_types.join(",");
+
             EncodeRow {
                 recorded_id: item.id as u64,
                 channel_name: ch_name,
@@ -2952,7 +3063,7 @@ fn build_rows_from_cache(
                 start_at: item.start_at as u64,
                 end_at: item.end_at as u64,
                 video_resolution: item.video_resolution.clone().unwrap_or_default(),
-                video_type: item.video_type.clone().unwrap_or_default(),
+                file_types,
                 source_video_file_id,
                 file_size,
                 drop_cnt: item.drop_cnt as u64,
@@ -3125,7 +3236,7 @@ async fn run_epgstation_encode(
     config_file: Option<&PathBuf>,
 ) -> Result<()> {
     let config_path = resolve_config_path(config_file).context("failed to resolve config path")?;
-    let config = AppConfig::load(&config_path).context("failed to load config")?;
+    let mut config = AppConfig::load(&config_path).context("failed to load config")?;
     let base_url = config
         .epgstation
         .base_url
@@ -3163,11 +3274,17 @@ async fn run_epgstation_encode(
 
     let presets: Vec<String> = epg_config.encode.iter().map(|p| p.name.clone()).collect();
     let parent_dirs: Vec<String> = epg_config.recorded.iter().map(|d| d.name.clone()).collect();
+    let recorded_dirs: Vec<(String, String)> = epg_config
+        .recorded
+        .iter()
+        .map(|d| (d.name.clone(), d.path.clone()))
+        .collect();
 
     let limit = args.limit;
     let mut offset: u64 = 0;
     let mut selected = std::collections::BTreeSet::<u64>::new();
     let mut last_encode_queue: Option<EncodeQueueInfo> = None;
+    let mut storage_stats_initialized = false;
 
     // Open DB for caching
     let data_dir = resolve_data_dir(config_file).context("failed to resolve data directory")?;
@@ -3258,12 +3375,19 @@ async fn run_epgstation_encode(
                                 .running_items
                                 .iter()
                                 .map(|item| RunningEncodeItem {
+                                    recorded_id: item.recorded.id,
                                     name: item.recorded.name.clone(),
                                     mode: item.mode.clone(),
                                     percent: item.percent,
+                                    log: item.log.clone(),
                                 })
                                 .collect(),
                             waiting_count: resp.wait_items.len(),
+                            waiting_ids: resp
+                                .wait_items
+                                .iter()
+                                .map(|item| item.recorded.id)
+                                .collect(),
                         };
                         // Only send if changed from last update.
                         if last_info.as_ref() != Some(&info) {
@@ -3273,7 +3397,7 @@ async fn run_epgstation_encode(
                             }
                         }
                     }
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                 }
             }
             .instrument({
@@ -3297,6 +3421,34 @@ async fn run_epgstation_encode(
         progress_tx,
         Arc::clone(&pending),
     );
+
+    // Spawn storage stats poller (30-second interval, blocking I/O on spawn_blocking).
+    let (storage_tx, storage_rx) = std::sync::mpsc::channel::<StorageMessage>();
+    {
+        let dirs = recorded_dirs.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                let dirs_inner = dirs.clone();
+                let Ok(updates) = tokio::task::spawn_blocking(move || {
+                    dirs_inner
+                        .iter()
+                        .map(|(_, path)| {
+                            let s = collect_storage_stats(Path::new(path));
+                            (path.clone(), s.map(|s| to_snapshot(&s)))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await
+                else {
+                    break;
+                };
+                if storage_tx.send(StorageMessage::Update(updates)).is_err() {
+                    break;
+                }
+            }
+        });
+    }
 
     loop {
         terminal.clear().context("failed to clear terminal")?;
@@ -3333,7 +3485,19 @@ async fn run_epgstation_encode(
             config.epgstation.default_preset.as_deref(),
             config.epgstation.default_directory.as_deref(),
             page,
+            recorded_dirs.clone(),
         );
+        // Apply hidden storage dirs from config, then populate stats.
+        for entry in &mut state.storage_dirs {
+            if config.epgstation.hidden_storage_dirs.contains(&entry.name) {
+                entry.visible = false;
+            }
+        }
+        // Populate storage stats only on first page load; poller handles subsequent updates.
+        if !storage_stats_initialized {
+            populate_storage_stats(&mut state);
+            storage_stats_initialized = true;
+        }
         // Carry over selections and encode queue across pages (move, not clone)
         state.selected = mem::take(&mut selected);
         state.encode_queue = last_encode_queue.take();
@@ -3366,6 +3530,7 @@ async fn run_epgstation_encode(
                 file_check_rx.as_ref(),
                 Some(&queue_rx),
                 &progress_rx,
+                Some(&storage_rx),
             )
             .await
             {
@@ -3382,6 +3547,20 @@ async fn run_epgstation_encode(
             }
             break r;
         };
+
+        // Persist storage dir visibility to config if changed.
+        let new_hidden: Vec<String> = state
+            .storage_dirs
+            .iter()
+            .filter(|d| !d.visible)
+            .map(|d| d.name.clone())
+            .collect();
+        if new_hidden != config.epgstation.hidden_storage_dirs {
+            config.epgstation.hidden_storage_dirs = new_hidden;
+            if let Err(e) = config.save(&config_path) {
+                tracing::warn!(error = %e, "failed to save hidden_storage_dirs");
+            }
+        }
 
         // Preserve selections and encode queue before potentially continuing (move back)
         selected = mem::take(&mut state.selected);
@@ -4735,11 +4914,10 @@ mod tests {
     }
 
     #[test]
-    fn test_build_rows_from_cache_optional_resolution_type_none() {
-        // Arrange: video_resolution and video_type are None → default to ""
+    fn test_build_rows_from_cache_optional_resolution_none() {
+        // Arrange: video_resolution is None → default to ""
         let (mut item, files) = make_cached_pair(1, 100, vec![make_ts_video_file(10, 1)]);
         item.video_resolution = None;
-        item.video_type = None;
         let cached = vec![(item, files)];
         let channel_names = std::collections::HashMap::new();
 
@@ -4748,7 +4926,7 @@ mod tests {
 
         // Assert
         assert_eq!(rows[0].video_resolution, "");
-        assert_eq!(rows[0].video_type, "");
+        assert_eq!(rows[0].file_types, "ts");
     }
 
     #[test]

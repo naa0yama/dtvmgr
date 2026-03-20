@@ -44,30 +44,51 @@ fn fmt_duration(start_ms: u64, end_ms: u64) -> String {
     format!("{mins}m")
 }
 
-/// Builds the encode queue display string for the header.
-fn build_queue_display(state: &EncodeSelectorState) -> String {
+/// Builds two display lines for the encode header (always 2 lines).
+///
+/// Line 1: `▶ <title> <mode>  Que: N`
+/// Line 2: `   (30%) <log>` or empty
+fn build_queue_lines(state: &EncodeSelectorState) -> [Line<'static>; 2] {
     let Some(ref queue) = state.encode_queue else {
-        return String::from(" Loading...");
+        return [Line::from(" Loading..."), Line::from("")];
     };
 
-    let mut parts: Vec<String> = Vec::new();
     if queue.running.is_empty() {
-        parts.push(String::from("Idle"));
-    } else {
-        for item in &queue.running {
-            // Truncate name to 20 chars to fit in the header.
-            let truncated: String = item.name.chars().take(20).collect();
-            if let Some(pct) = item.percent {
-                parts.push(format!("\u{25b6} {truncated} {} ({pct:.0}%)", item.mode));
-            } else {
-                parts.push(format!("\u{25b6} {truncated} {}", item.mode));
-            }
+        let mut s = String::from(" Idle");
+        let _ = write!(s, "  Que: {}", queue.waiting_count);
+        return [Line::from(s), Line::from("")];
+    }
+
+    // Line 1: title + mode + queue count
+    let mut titles: Vec<String> = Vec::new();
+    for item in &queue.running {
+        let truncated: String = item.name.chars().take(20).collect();
+        titles.push(format!("\u{25b6} {truncated} {}", item.mode));
+    }
+    let mut line1 = format!(" {}", titles.join(" | "));
+    let _ = write!(line1, "  Que: {}", queue.waiting_count);
+
+    // Line 2: progress details (percent + log) for running items
+    let mut progress_parts: Vec<String> = Vec::new();
+    for item in &queue.running {
+        let pct = item
+            .percent
+            .map(|p| format!("({:.0}%)", p * 100.0))
+            .unwrap_or_default();
+        let log = item.log.as_deref().unwrap_or_default();
+        let part = format!("{pct} {log}").trim().to_owned();
+        if !part.is_empty() {
+            progress_parts.push(part);
         }
     }
 
-    let mut s = format!(" {}", parts.join(" | "));
-    let _ = write!(s, "  Que: {}", queue.waiting_count);
-    s
+    let line2 = if progress_parts.is_empty() {
+        Line::from("")
+    } else {
+        Line::from(format!("   {}", progress_parts.join(" | ")))
+    };
+
+    [Line::from(line1), line2]
 }
 
 /// Draws the encode selector UI.
@@ -83,67 +104,54 @@ pub fn draw(frame: &mut Frame, state: &mut EncodeSelectorState) {
 /// Step 1: Recording list with multi-select.
 #[allow(clippy::indexing_slicing, clippy::too_many_lines)]
 fn draw_recording_list(frame: &mut Frame, state: &mut EncodeSelectorState) {
+    let has_storage = !state.storage_dirs.is_empty();
+    let visible_count = state.storage_dirs.iter().filter(|d| d.visible).count();
+
+    // Storage widget: border(2) + visible dirs only. Hidden dirs are not rendered.
+    let storage_height: u16 = if visible_count > 0 {
+        u16::try_from(visible_count.saturating_add(2).min(12)).unwrap_or(12)
+    } else {
+        0
+    };
+
+    // Right column: Selection(3) + Storage. Encode fills the full left height.
+    let selection_height: u16 = 3;
+    let header_height = selection_height.saturating_add(storage_height).max(4);
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // header / filter
-            Constraint::Min(5),    // table
-            Constraint::Length(3), // footer
+            Constraint::Length(header_height), // header row
+            Constraint::Min(5),                // table
+            Constraint::Length(3),             // footer
         ])
         .split(frame.area());
 
-    // Header: encode queue + selection count
+    // Header: left = Encode (full height), right = Selection + Storage
     let header_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[0]);
 
-    let queue_text = build_queue_display(state);
-    let queue =
-        Paragraph::new(queue_text).block(Block::default().borders(Borders::ALL).title(" Encode "));
+    let queue_lines = build_queue_lines(state);
+    let queue = Paragraph::new(queue_lines.to_vec())
+        .block(Block::default().borders(Borders::ALL).title(" Encode "));
     frame.render_widget(queue, header_chunks[0]);
 
-    let mut count_parts = format!(
-        " {} selected / {} shown / {} total",
-        state.selected.len(),
-        state.filtered_indices().len(),
-        state.page.total,
-    );
-    if state.hide_unavailable {
-        let hidden = state.hidden_count();
-        let _ = write!(count_parts, " ({hidden} hidden)");
+    if storage_height > 0 {
+        // Right side: Selection on top, Storage below.
+        let right_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(selection_height),
+                Constraint::Length(storage_height),
+            ])
+            .split(header_chunks[1]);
+        draw_selection_info(frame, right_chunks[0], state);
+        draw_storage_stats(frame, right_chunks[1], state);
+    } else {
+        draw_selection_info(frame, header_chunks[1], state);
     }
-    if let Some((fetched, total)) = state.sync_progress {
-        let _ = write!(count_parts, " | Syncing: {fetched}/{total}");
-    }
-    if let Some(wp) = &state.file_check_progress {
-        match wp.checking {
-            Some((checked, total)) => {
-                if wp.pending > 0 {
-                    let _ = write!(
-                        count_parts,
-                        " | Checking: {checked}/{total} (+{} queued)",
-                        wp.pending
-                    );
-                } else {
-                    let _ = write!(count_parts, " | Checking: {checked}/{total}");
-                }
-            }
-            None if wp.pending > 0 => {
-                let _ = write!(count_parts, " | Queued: {}", wp.pending);
-            }
-            None => {}
-        }
-    }
-    let _ = write!(
-        count_parts,
-        " | Page {}/{} ",
-        state.current_page(),
-        state.total_pages(),
-    );
-    let count = Paragraph::new(count_parts)
-        .block(Block::default().borders(Borders::ALL).title(" Selection "));
-    frame.render_widget(count, header_chunks[1]);
 
     // Table
     let header_style = Style::default()
@@ -157,7 +165,7 @@ fn draw_recording_list(frame: &mut Frame, state: &mut EncodeSelectorState) {
         Cell::from("Date"),
         Cell::from(Line::from("Dur").alignment(Alignment::Right)),
         Cell::from("Res"),
-        Cell::from("Type"),
+        Cell::from("Files"),
         Cell::from(Line::from("Size").alignment(Alignment::Right)),
         Cell::from(Line::from("Drop").alignment(Alignment::Right)),
         Cell::from(Line::from("Err").alignment(Alignment::Right)),
@@ -175,8 +183,11 @@ fn draw_recording_list(frame: &mut Frame, state: &mut EncodeSelectorState) {
             } else {
                 "[ ]"
             };
+            let queue_status = state.encode_queue_status(row.recorded_id);
             let status = if row.is_recording {
                 "rec"
+            } else if !queue_status.is_empty() {
+                queue_status
             } else if row.is_encoding {
                 "enc"
             } else {
@@ -201,7 +212,7 @@ fn draw_recording_list(frame: &mut Frame, state: &mut EncodeSelectorState) {
                     Line::from(fmt_duration(row.start_at, row.end_at)).alignment(Alignment::Right),
                 ),
                 Cell::from(row.video_resolution.clone()),
-                Cell::from(row.video_type.clone()),
+                Cell::from(row.file_types.clone()),
                 Cell::from(Line::from(fmt_size(row.file_size)).alignment(Alignment::Right)),
                 Cell::from(Line::from(row.drop_cnt.to_string()).alignment(Alignment::Right)),
                 Cell::from(Line::from(row.error_cnt.to_string()).alignment(Alignment::Right)),
@@ -239,11 +250,16 @@ fn draw_recording_list(frame: &mut Frame, state: &mut EncodeSelectorState) {
                 .fg(Color::White),
         );
 
+    // Update visible row count: table area height minus borders(2) and header row(1).
+    state.visible_table_rows = usize::from(chunks[1].height.saturating_sub(3));
+
     frame.render_stateful_widget(table, chunks[1], &mut state.table_state);
 
     // Footer
     let mut footer_spans = vec![
-        Span::styled(" Space", Style::default().fg(Color::Cyan)),
+        Span::styled(" \u{2191}\u{2193}/jk", Style::default().fg(Color::Cyan)),
+        Span::raw(":move "),
+        Span::styled("Space", Style::default().fg(Color::Cyan)),
         Span::raw(":toggle "),
         Span::styled("a", Style::default().fg(Color::Cyan)),
         Span::raw(":all "),
@@ -251,11 +267,22 @@ fn draw_recording_list(frame: &mut Frame, state: &mut EncodeSelectorState) {
         Span::raw(":none "),
         Span::styled("f", Style::default().fg(Color::Cyan)),
         Span::raw(":avail "),
+        Span::styled("e", Style::default().fg(Color::Cyan)),
+        Span::raw(":\u{00ac}queue "),
         Span::styled("R", Style::default().fg(Color::Cyan)),
         Span::raw(":refresh "),
     ];
+    footer_spans.push(Span::styled("PgUp/Dn", Style::default().fg(Color::Cyan)));
+    footer_spans.push(Span::raw(":scroll "));
+    if has_storage {
+        footer_spans.push(Span::styled("1-9", Style::default().fg(Color::Cyan)));
+        footer_spans.push(Span::raw(":storage "));
+    }
     if state.has_prev_page() || state.has_next_page() {
-        footer_spans.push(Span::styled("h/l", Style::default().fg(Color::Cyan)));
+        footer_spans.push(Span::styled(
+            "\u{2190}\u{2192}/h/l",
+            Style::default().fg(Color::Cyan),
+        ));
         footer_spans.push(Span::raw(":page "));
     }
     footer_spans.extend([
@@ -268,6 +295,100 @@ fn draw_recording_list(frame: &mut Frame, state: &mut EncodeSelectorState) {
     let footer =
         Paragraph::new(footer_text).block(Block::default().borders(Borders::ALL).title(" Keys "));
     frame.render_widget(footer, chunks[2]);
+}
+
+/// Draws the selection count / sync / page info block.
+fn draw_selection_info(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &EncodeSelectorState,
+) {
+    let mut text = format!(
+        " {} sel / {} shown / {} total",
+        state.selected.len(),
+        state.filtered_indices().len(),
+        state.page.total,
+    );
+    if state.hide_unavailable {
+        let hidden = state.hidden_count();
+        let _ = write!(text, " ({hidden} hid)");
+    }
+    if let Some((fetched, total)) = state.sync_progress {
+        let _ = write!(text, " | Sync: {fetched}/{total}");
+    }
+    if let Some(wp) = &state.file_check_progress {
+        match wp.checking {
+            Some((checked, total)) => {
+                if wp.pending > 0 {
+                    let _ = write!(text, " | Chk: {checked}/{total} (+{})", wp.pending);
+                } else {
+                    let _ = write!(text, " | Chk: {checked}/{total}");
+                }
+            }
+            None if wp.pending > 0 => {
+                let _ = write!(text, " | Queued: {}", wp.pending);
+            }
+            None => {}
+        }
+    }
+    let _ = write!(
+        text,
+        " | P.{}/{}",
+        state.current_page(),
+        state.total_pages()
+    );
+    let widget =
+        Paragraph::new(text).block(Block::default().borders(Borders::ALL).title(" Selection "));
+    frame.render_widget(widget, area);
+}
+
+/// Draws the storage stats widget.
+#[allow(clippy::similar_names)]
+fn draw_storage_stats(frame: &mut Frame, area: ratatui::layout::Rect, state: &EncodeSelectorState) {
+    let dim = Style::default().fg(Color::DarkGray);
+    let lines: Vec<Line<'static>> = state
+        .storage_dirs
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| entry.visible)
+        .map(|(i, entry)| {
+            let key = char::from(u8::try_from(i).unwrap_or(8).saturating_add(b'1'));
+            let prefix = format!(" {key}:{} ", entry.name);
+            entry.stats.as_ref().map_or_else(
+                || Line::from(vec![Span::raw(prefix.clone()), Span::styled("N/A", dim)]),
+                |s| {
+                    let used = fmt_gb(s.used_bytes);
+                    let total = fmt_gb(s.total_bytes);
+                    let pct = s.usage_ratio * 100.0;
+                    let color = if pct > 90.0 {
+                        Color::Red
+                    } else if pct > 75.0 {
+                        Color::Yellow
+                    } else {
+                        Color::Green
+                    };
+                    Line::from(vec![
+                        Span::raw(prefix.clone()),
+                        Span::styled(used, Style::default().fg(color)),
+                        Span::raw(format!(" / {total} ({pct:.1}%) {}", s.file_count)),
+                        Span::styled(" files", dim),
+                    ])
+                },
+            )
+        })
+        .collect();
+
+    let widget =
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" Storage "));
+    frame.render_widget(widget, area);
+}
+
+/// Formats bytes as a human-readable GB string (e.g. "1,234.5 GB").
+fn fmt_gb(bytes: u64) -> String {
+    let gb_10 = bytes / 107_374_182; // bytes / (1 GiB / 10)
+    let whole = gb_10 / 10;
+    let frac = gb_10 % 10;
+    format!("{}.{frac} GB", with_commas(whole))
 }
 
 /// Step 2: Encode settings configuration.
@@ -385,14 +506,14 @@ fn draw_settings(frame: &mut Frame, state: &EncodeSelectorState) {
 
     // Footer
     let footer_text = Line::from(vec![
-        Span::styled("j/k", Style::default().fg(Color::Cyan)),
+        Span::styled(" \u{2191}\u{2193}/jk", Style::default().fg(Color::Cyan)),
         Span::raw(":move "),
-        Span::styled("Space/←→", Style::default().fg(Color::Cyan)),
+        Span::styled("Space/\u{2190}\u{2192}", Style::default().fg(Color::Cyan)),
         Span::raw(":change "),
         Span::styled("Enter", Style::default().fg(Color::Cyan)),
         Span::raw(":next "),
-        Span::styled("Esc", Style::default().fg(Color::Cyan)),
-        Span::raw(":back"),
+        Span::styled("Esc/q", Style::default().fg(Color::Cyan)),
+        Span::raw(":back/quit"),
     ]);
     let footer =
         Paragraph::new(footer_text).block(Block::default().borders(Borders::ALL).title(" Keys "));
@@ -518,6 +639,8 @@ pub fn draw_loading_progress(frame: &mut Frame, page: u64, checked: usize, total
 mod tests {
     #![allow(clippy::unwrap_used, clippy::as_conversions)]
 
+    use std::collections::BTreeSet;
+
     use super::*;
     use crate::encode_selector::state::{EncodeQueueInfo, PageInfo, RunningEncodeItem};
 
@@ -551,8 +674,17 @@ mod tests {
         assert_eq!(fmt_size(13_107_200_000), "12,500 MB");
     }
 
+    /// Helper: join all lines into a single string for assertion convenience.
+    fn lines_to_string(lines: &[Line<'_>]) -> String {
+        lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
-    fn build_queue_display_loading() {
+    fn build_queue_lines_loading() {
         let state = EncodeSelectorState::new(
             vec![],
             vec![],
@@ -564,12 +696,15 @@ mod tests {
                 size: 10,
                 total: 0,
             },
+            vec![],
         );
-        assert_eq!(build_queue_display(&state), " Loading...");
+        let lines = build_queue_lines(&state);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].to_string().contains("Loading..."));
     }
 
     #[test]
-    fn build_queue_display_idle() {
+    fn build_queue_lines_idle() {
         let mut state = EncodeSelectorState::new(
             vec![],
             vec![],
@@ -581,18 +716,22 @@ mod tests {
                 size: 10,
                 total: 0,
             },
+            vec![],
         );
         state.encode_queue = Some(EncodeQueueInfo {
             running: vec![],
             waiting_count: 3,
+            waiting_ids: BTreeSet::new(),
         });
-        let display = build_queue_display(&state);
+        let lines = build_queue_lines(&state);
+        assert_eq!(lines.len(), 2);
+        let display = lines_to_string(&lines);
         assert!(display.contains("Idle"));
         assert!(display.contains("Que: 3"));
     }
 
     #[test]
-    fn build_queue_display_running() {
+    fn build_queue_lines_running() {
         let mut state = EncodeSelectorState::new(
             vec![],
             vec![],
@@ -604,24 +743,34 @@ mod tests {
                 size: 10,
                 total: 0,
             },
+            vec![],
         );
         state.encode_queue = Some(EncodeQueueInfo {
             running: vec![RunningEncodeItem {
+                recorded_id: 1,
                 name: String::from("Test Program"),
                 mode: String::from("H.264"),
-                percent: Some(45.2),
+                percent: Some(0.452),
+                log: Some(String::from("encoding 1500/3000")),
             }],
             waiting_count: 1,
+            waiting_ids: BTreeSet::new(),
         });
-        let display = build_queue_display(&state);
-        assert!(display.contains("Test Program"));
-        assert!(display.contains("H.264"));
-        assert!(display.contains("45%"));
-        assert!(display.contains("Que: 1"));
+        let queue_lines = build_queue_lines(&state);
+        // Line 1: title + mode + queue count
+        assert_eq!(queue_lines.len(), 2);
+        let first = queue_lines[0].to_string();
+        assert!(first.contains("Test Program"));
+        assert!(first.contains("H.264"));
+        assert!(first.contains("Que: 1"));
+        // Line 2: progress details
+        let second = queue_lines[1].to_string();
+        assert!(second.contains("45%"));
+        assert!(second.contains("encoding 1500/3000"));
     }
 
     #[test]
-    fn build_queue_display_multiple_running() {
+    fn build_queue_lines_multiple_running() {
         let mut state = EncodeSelectorState::new(
             vec![],
             vec![],
@@ -633,29 +782,37 @@ mod tests {
                 size: 10,
                 total: 0,
             },
+            vec![],
         );
         state.encode_queue = Some(EncodeQueueInfo {
             running: vec![
                 RunningEncodeItem {
+                    recorded_id: 1,
                     name: String::from("Program A"),
                     mode: String::from("H.264"),
-                    percent: Some(50.0),
+                    percent: Some(0.5),
+                    log: None,
                 },
                 RunningEncodeItem {
+                    recorded_id: 2,
                     name: String::from("Program B"),
                     mode: String::from("H.265"),
                     percent: None,
+                    log: None,
                 },
             ],
             waiting_count: 2,
+            waiting_ids: BTreeSet::new(),
         });
-        let display = build_queue_display(&state);
-        // Two items joined by " | "
+        let lines = build_queue_lines(&state);
+        let display = lines_to_string(&lines);
+        // Line 1: titles
         assert!(display.contains("Program A"));
         assert!(display.contains("Program B"));
         assert!(display.contains(" | "));
-        assert!(display.contains("50%"));
         assert!(display.contains("Que: 2"));
+        // Line 2: only Program A has percent
+        assert!(display.contains("50%"));
     }
 
     // ── fmt_datetime ─────────────────────────────────────────────
@@ -727,7 +884,7 @@ mod tests {
                     start_at: 1_705_316_400_000,
                     end_at: 1_705_318_200_000,
                     video_resolution: String::from("1080i"),
-                    video_type: String::from("mpeg2"),
+                    file_types: String::from("ts"),
                     source_video_file_id: Some(id),
                     file_size: 2_621_440_000,
                     drop_cnt: 0,
@@ -750,6 +907,7 @@ mod tests {
             None,
             None,
             page,
+            vec![],
         )
     }
 
@@ -764,6 +922,7 @@ mod tests {
         state.encode_queue = Some(EncodeQueueInfo {
             running: vec![],
             waiting_count: 0,
+            waiting_ids: BTreeSet::new(),
         });
 
         // Act
@@ -867,7 +1026,7 @@ mod tests {
     }
 
     #[test]
-    fn build_queue_display_truncates_long_name() {
+    fn build_queue_lines_truncates_long_name() {
         let mut state = EncodeSelectorState::new(
             vec![],
             vec![],
@@ -879,16 +1038,22 @@ mod tests {
                 size: 10,
                 total: 0,
             },
+            vec![],
         );
         state.encode_queue = Some(EncodeQueueInfo {
             running: vec![RunningEncodeItem {
+                recorded_id: 1,
                 name: String::from("This Is A Very Long Program Name That Exceeds Twenty"),
                 mode: String::from("H.265"),
                 percent: None,
+                log: None,
             }],
             waiting_count: 0,
+            waiting_ids: BTreeSet::new(),
         });
-        let display = build_queue_display(&state);
+        let lines = build_queue_lines(&state);
+        assert_eq!(lines.len(), 2);
+        let display = lines[0].to_string();
         // Name should be truncated to 20 chars
         assert!(display.contains("This Is A Very Long "));
         // No percent shown

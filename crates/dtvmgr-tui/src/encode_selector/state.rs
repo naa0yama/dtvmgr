@@ -81,21 +81,27 @@ pub enum FileCheckMessage {
 /// A single running encode item for display.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunningEncodeItem {
+    /// Recorded item ID (for matching against the recording list).
+    pub recorded_id: u64,
     /// Program name.
     pub name: String,
     /// Encode preset mode.
     pub mode: String,
-    /// Progress percentage (0-100).
+    /// Progress ratio (0.0–1.0).
     pub percent: Option<f64>,
+    /// Encoder log output (e.g. current step or progress line).
+    pub log: Option<String>,
 }
 
-/// Encode queue status for header display.
+/// Encode queue status for header display and row status matching.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EncodeQueueInfo {
     /// Currently running items.
     pub running: Vec<RunningEncodeItem>,
     /// Number of waiting items.
     pub waiting_count: usize,
+    /// Recorded IDs of items waiting in the queue.
+    pub waiting_ids: BTreeSet<u64>,
 }
 
 /// Message from the encode queue polling task.
@@ -135,8 +141,8 @@ pub struct EncodeRow {
     pub end_at: u64,
     /// Video resolution (e.g. "1080i").
     pub video_resolution: String,
-    /// Video type (e.g. "mpeg2").
-    pub video_type: String,
+    /// Video file types (deduplicated, e.g. "ts", "ts,enc").
+    pub file_types: String,
     /// Source TS video file ID.
     pub source_video_file_id: Option<u64>,
     /// File size in bytes.
@@ -151,6 +157,39 @@ pub struct EncodeRow {
     pub is_encoding: bool,
     /// Whether the source file exists on disk.
     pub file_exists: bool,
+}
+
+/// A storage directory entry for the stats widget.
+#[derive(Debug, Clone)]
+pub struct StorageDirEntry {
+    /// Directory display name (e.g. "recorded", "encoded").
+    pub name: String,
+    /// Filesystem path (may be invalid if `EPGStation` returned name-only).
+    pub path: String,
+    /// Whether this entry is visible in the widget.
+    pub visible: bool,
+    /// Collected stats snapshot (`None` if path is inaccessible).
+    pub stats: Option<StorageStatsSnapshot>,
+}
+
+/// Snapshot of storage statistics for display.
+#[derive(Debug, Clone)]
+pub struct StorageStatsSnapshot {
+    /// Total filesystem capacity in bytes.
+    pub total_bytes: u64,
+    /// Sum of file sizes in this directory.
+    pub used_bytes: u64,
+    /// Directory usage ratio against filesystem capacity.
+    pub usage_ratio: f64,
+    /// Number of regular files in the directory.
+    pub file_count: u64,
+}
+
+/// Message from the background storage stats polling task.
+#[derive(Debug, Clone)]
+pub enum StorageMessage {
+    /// Updated storage stats for all directories.
+    Update(Vec<(String, Option<StorageStatsSnapshot>)>),
 }
 
 /// Encode settings configured in step 2.
@@ -253,6 +292,8 @@ pub struct EncodeSelectorState {
     pub page: PageInfo,
     /// Whether to hide rows that cannot be encoded (no file or no source video).
     pub hide_unavailable: bool,
+    /// Whether to hide rows already in the encode queue.
+    pub hide_queued: bool,
     /// Cached count of unavailable rows (recomputed in `rebuild_filter`).
     hidden_count: usize,
     /// Background sync progress: `(fetched, total)`.
@@ -261,6 +302,10 @@ pub struct EncodeSelectorState {
     pub file_check_progress: Option<FileCheckWorkerProgress>,
     /// Encode queue status for header display.
     pub encode_queue: Option<EncodeQueueInfo>,
+    /// Storage directory entries for the stats widget.
+    pub storage_dirs: Vec<StorageDirEntry>,
+    /// Visible table rows (updated by the renderer each frame).
+    pub visible_table_rows: usize,
 }
 
 impl EncodeSelectorState {
@@ -273,6 +318,7 @@ impl EncodeSelectorState {
         default_preset: Option<&str>,
         default_directory: Option<&str>,
         page: PageInfo,
+        recorded_dirs: Vec<(String, String)>,
     ) -> Self {
         let filtered_indices: Vec<usize> = (0..rows.len()).collect();
         let hidden_count = rows
@@ -319,10 +365,21 @@ impl EncodeSelectorState {
             confirm_count: 0,
             page,
             hide_unavailable: false,
+            hide_queued: false,
             hidden_count,
             sync_progress: None,
             file_check_progress: None,
             encode_queue: None,
+            visible_table_rows: 20,
+            storage_dirs: recorded_dirs
+                .into_iter()
+                .map(|(name, path)| StorageDirEntry {
+                    name,
+                    path,
+                    visible: true,
+                    stats: None,
+                })
+                .collect(),
         }
     }
 
@@ -332,7 +389,7 @@ impl EncodeSelectorState {
         &self.filtered_indices
     }
 
-    /// Rebuilds filtered indices from the `hide_unavailable` flag.
+    /// Rebuilds filtered indices from filter flags.
     pub fn rebuild_filter(&mut self) {
         let mut unavailable_count: usize = 0;
         self.filtered_indices = self
@@ -345,6 +402,9 @@ impl EncodeSelectorState {
                     unavailable_count = unavailable_count.saturating_add(1);
                 }
                 if self.hide_unavailable && is_unavailable {
+                    return false;
+                }
+                if self.hide_queued && self.is_in_encode_queue(row.recorded_id) {
                     return false;
                 }
                 true
@@ -364,6 +424,36 @@ impl EncodeSelectorState {
     pub fn toggle_hide_unavailable(&mut self) {
         self.hide_unavailable = !self.hide_unavailable;
         self.rebuild_filter();
+    }
+
+    /// Toggles the hide-queued filter and rebuilds.
+    pub fn toggle_hide_queued(&mut self) {
+        self.hide_queued = !self.hide_queued;
+        self.rebuild_filter();
+    }
+
+    /// Returns whether a recorded ID is in the encode queue (running or waiting).
+    #[must_use]
+    pub fn is_in_encode_queue(&self, recorded_id: u64) -> bool {
+        self.encode_queue.as_ref().is_some_and(|q| {
+            q.waiting_ids.contains(&recorded_id)
+                || q.running.iter().any(|r| r.recorded_id == recorded_id)
+        })
+    }
+
+    /// Returns the encode queue status label for a recorded ID.
+    #[must_use]
+    pub fn encode_queue_status(&self, recorded_id: u64) -> &'static str {
+        let Some(ref q) = self.encode_queue else {
+            return "";
+        };
+        if q.running.iter().any(|r| r.recorded_id == recorded_id) {
+            "run"
+        } else if q.waiting_ids.contains(&recorded_id) {
+            "wait"
+        } else {
+            ""
+        }
     }
 
     /// Returns the number of unavailable rows (cached from last `rebuild_filter`).
@@ -404,6 +494,32 @@ impl EncodeSelectorState {
             .table_state
             .selected()
             .map_or(0, |i| i.saturating_add(1).min(len.saturating_sub(1)));
+        self.table_state.select(Some(i));
+    }
+
+    /// Moves cursor up by `n` rows (clamped at top).
+    pub fn page_up(&mut self, n: usize) {
+        let len = self.filtered_indices.len();
+        if len == 0 {
+            return;
+        }
+        let i = self
+            .table_state
+            .selected()
+            .map_or(0, |i| i.saturating_sub(n));
+        self.table_state.select(Some(i));
+    }
+
+    /// Moves cursor down by `n` rows (clamped at bottom).
+    pub fn page_down(&mut self, n: usize) {
+        let len = self.filtered_indices.len();
+        if len == 0 {
+            return;
+        }
+        let i = self
+            .table_state
+            .selected()
+            .map_or(0, |i| i.saturating_add(n).min(len.saturating_sub(1)));
         self.table_state.select(Some(i));
     }
 
@@ -507,6 +623,13 @@ impl EncodeSelectorState {
         if self.settings.remove_original { 2 } else { 1 }
     }
 
+    /// Toggles visibility of a storage directory by index.
+    pub fn toggle_storage_dir(&mut self, index: usize) {
+        if let Some(entry) = self.storage_dirs.get_mut(index) {
+            entry.visible = !entry.visible;
+        }
+    }
+
     /// Whether there is a next page.
     #[must_use]
     pub const fn has_next_page(&self) -> bool {
@@ -562,7 +685,7 @@ mod tests {
                     start_at: 0,
                     end_at: 0,
                     video_resolution: String::new(),
-                    video_type: String::new(),
+                    file_types: String::new(),
                     source_video_file_id: Some(id),
                     file_size: 0,
                     drop_cnt: 0,
@@ -578,7 +701,7 @@ mod tests {
             size: 10,
             total: 100,
         };
-        EncodeSelectorState::new(rows, vec![], vec![], None, None, page)
+        EncodeSelectorState::new(rows, vec![], vec![], None, None, page, vec![])
     }
 
     #[test]
@@ -628,6 +751,7 @@ mod tests {
                 size: 10,
                 total: 30,
             },
+            vec![],
         );
         assert!(state.has_next_page());
     }
@@ -645,6 +769,7 @@ mod tests {
                 size: 10,
                 total: 30,
             },
+            vec![],
         );
         assert!(!state.has_next_page());
     }
@@ -662,6 +787,7 @@ mod tests {
                 size: 10,
                 total: 30,
             },
+            vec![],
         );
         assert!(!state.has_prev_page());
     }
@@ -679,6 +805,7 @@ mod tests {
                 size: 10,
                 total: 30,
             },
+            vec![],
         );
         assert!(state.has_prev_page());
     }
@@ -696,6 +823,7 @@ mod tests {
                 size: 10,
                 total: 25,
             },
+            vec![],
         );
         assert_eq!(state.current_page(), 1);
         assert_eq!(state.total_pages(), 3);
@@ -711,6 +839,7 @@ mod tests {
                 size: 10,
                 total: 25,
             },
+            vec![],
         );
         assert_eq!(state.current_page(), 2);
 
@@ -725,6 +854,7 @@ mod tests {
                 size: 10,
                 total: 25,
             },
+            vec![],
         );
         assert_eq!(state.current_page(), 3);
     }
@@ -742,6 +872,7 @@ mod tests {
                 size: 0,
                 total: 0,
             },
+            vec![],
         );
         assert_eq!(state.current_page(), 1);
         assert_eq!(state.total_pages(), 1);
@@ -757,7 +888,7 @@ mod tests {
                 start_at: 0,
                 end_at: 0,
                 video_resolution: String::new(),
-                video_type: String::new(),
+                file_types: String::new(),
                 source_video_file_id: Some(0),
                 file_size: 0,
                 drop_cnt: 0,
@@ -773,7 +904,7 @@ mod tests {
                 start_at: 0,
                 end_at: 0,
                 video_resolution: String::new(),
-                video_type: String::new(),
+                file_types: String::new(),
                 source_video_file_id: Some(1),
                 file_size: 0,
                 drop_cnt: 0,
@@ -789,7 +920,7 @@ mod tests {
                 start_at: 0,
                 end_at: 0,
                 video_resolution: String::new(),
-                video_type: String::new(),
+                file_types: String::new(),
                 source_video_file_id: None,
                 file_size: 0,
                 drop_cnt: 0,
@@ -804,7 +935,7 @@ mod tests {
             size: 10,
             total: 3,
         };
-        EncodeSelectorState::new(rows, vec![], vec![], None, None, page)
+        EncodeSelectorState::new(rows, vec![], vec![], None, None, page, vec![])
     }
 
     #[test]
@@ -993,6 +1124,7 @@ mod tests {
             None,
             None,
             page,
+            vec![],
         )
     }
 
@@ -1035,7 +1167,7 @@ mod tests {
             size: 10,
             total: 0,
         };
-        let mut state = EncodeSelectorState::new(vec![], vec![], vec![], None, None, page);
+        let mut state = EncodeSelectorState::new(vec![], vec![], vec![], None, None, page, vec![]);
 
         // Act: should not panic
         state.next_preset();
@@ -1049,7 +1181,7 @@ mod tests {
             size: 10,
             total: 0,
         };
-        let mut state = EncodeSelectorState::new(vec![], vec![], vec![], None, None, page);
+        let mut state = EncodeSelectorState::new(vec![], vec![], vec![], None, None, page, vec![]);
 
         state.prev_preset();
         assert_eq!(state.settings.mode, "H.264"); // default
@@ -1074,6 +1206,7 @@ mod tests {
             None,
             None,
             page,
+            vec![],
         )
     }
 
@@ -1116,7 +1249,7 @@ mod tests {
             size: 10,
             total: 0,
         };
-        let mut state = EncodeSelectorState::new(vec![], vec![], vec![], None, None, page);
+        let mut state = EncodeSelectorState::new(vec![], vec![], vec![], None, None, page, vec![]);
 
         state.next_parent_dir();
         assert_eq!(state.settings.parent_dir, "recorded"); // default
@@ -1129,7 +1262,7 @@ mod tests {
             size: 10,
             total: 0,
         };
-        let mut state = EncodeSelectorState::new(vec![], vec![], vec![], None, None, page);
+        let mut state = EncodeSelectorState::new(vec![], vec![], vec![], None, None, page, vec![]);
 
         state.prev_parent_dir();
         assert_eq!(state.settings.parent_dir, "recorded"); // default
@@ -1155,6 +1288,7 @@ mod tests {
             Some("H.265"),
             None,
             page,
+            vec![],
         );
         assert_eq!(state.settings.mode, "H.265");
         assert_eq!(state.settings.preset_index, 1);
@@ -1167,7 +1301,8 @@ mod tests {
             size: 10,
             total: 0,
         };
-        let state = EncodeSelectorState::new(vec![], vec![], vec![], None, Some("subdir"), page);
+        let state =
+            EncodeSelectorState::new(vec![], vec![], vec![], None, Some("subdir"), page, vec![]);
         assert_eq!(state.settings.directory, "subdir");
     }
 }

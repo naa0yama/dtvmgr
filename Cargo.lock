@@ -712,6 +712,7 @@ dependencies = [
  "anyhow",
  "csv",
  "dtvmgr-tsduck",
+ "libc",
  "regex",
  "serde",
  "tempfile",

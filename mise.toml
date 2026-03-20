@@ -229,6 +229,7 @@ _auth=$(printf '%s' "${ZO_ROOT_USER_EMAIL}:${ZO_ROOT_USER_PASSWORD}" | base64 -w
 cat > .mcp.json <<MCPEOF
 {"mcpServers":{"o2":{"type":"http","url":"http://localhost:${ZO_HTTP_PORT}/api/default/mcp","headers":{"Authorization":"Basic ${_auth}"}}}}
 MCPEOF
+bash .devcontainer/o2-import-dashboards.sh
 echo 'OpenObserve started (UI: http://localhost:5080, MCP: .mcp.json)'
 """
 

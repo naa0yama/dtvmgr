@@ -19,7 +19,7 @@ use self::state::{
     EncodeSelectorState, FileCheckWorkerProgress, InputMode, SelectorResult, SettingsField,
     SyncMessage, WizardStep,
 };
-use self::state::{FileCheckMessage, QueueMessage};
+use self::state::{FileCheckMessage, QueueMessage, StorageMessage};
 
 /// TUI terminal handle (alternate screen + raw mode).
 pub type TuiTerminal = Terminal<CrosstermBackend<io::Stdout>>;
@@ -68,6 +68,7 @@ pub async fn run_encode_selector(
     file_check_rx: Option<&mpsc::Receiver<FileCheckMessage>>,
     queue_rx: Option<&mpsc::Receiver<QueueMessage>>,
     progress_rx: &tokio::sync::watch::Receiver<FileCheckWorkerProgress>,
+    storage_rx: Option<&mpsc::Receiver<StorageMessage>>,
 ) -> Result<SelectorResult> {
     run_event_loop(
         terminal,
@@ -76,6 +77,7 @@ pub async fn run_encode_selector(
         file_check_rx,
         queue_rx,
         progress_rx,
+        storage_rx,
     )
     .await
 }
@@ -109,6 +111,7 @@ async fn run_event_loop(
     file_check_rx: Option<&mpsc::Receiver<FileCheckMessage>>,
     queue_rx: Option<&mpsc::Receiver<QueueMessage>>,
     progress_rx: &tokio::sync::watch::Receiver<FileCheckWorkerProgress>,
+    storage_rx: Option<&mpsc::Receiver<StorageMessage>>,
 ) -> Result<SelectorResult> {
     loop {
         // Drain background sync messages.
@@ -153,6 +156,18 @@ async fn run_event_loop(
             let new_progress = wp.is_active().then_some(wp);
             if state.file_check_progress != new_progress {
                 state.file_check_progress = new_progress;
+            }
+        }
+
+        // Drain storage stats updates.
+        if let Some(rx) = storage_rx {
+            while let Ok(msg) = rx.try_recv() {
+                let StorageMessage::Update(updates) = msg;
+                for (path, snapshot) in updates {
+                    if let Some(entry) = state.storage_dirs.iter_mut().find(|e| e.path == path) {
+                        entry.stats = snapshot;
+                    }
+                }
             }
         }
 
@@ -217,10 +232,28 @@ fn handle_recording_normal(
         KeyCode::Char(' ') => state.toggle_current(),
         KeyCode::Char('a') => state.select_all(),
         KeyCode::Char('A') => state.deselect_all(),
-        KeyCode::Char('l') if state.has_next_page() => return Some(SelectorResult::PageNext),
-        KeyCode::Char('h') if state.has_prev_page() => return Some(SelectorResult::PagePrev),
+        KeyCode::PageDown => {
+            let n = state.visible_table_rows;
+            state.page_down(n);
+        }
+        KeyCode::PageUp => {
+            let n = state.visible_table_rows;
+            state.page_up(n);
+        }
+        KeyCode::Char('l') | KeyCode::Right if state.has_next_page() => {
+            return Some(SelectorResult::PageNext);
+        }
+        KeyCode::Char('h') | KeyCode::Left if state.has_prev_page() => {
+            return Some(SelectorResult::PagePrev);
+        }
         KeyCode::Char('f') => state.toggle_hide_unavailable(),
+        KeyCode::Char('e') => state.toggle_hide_queued(),
         KeyCode::Char('R') => return Some(SelectorResult::Refresh),
+        KeyCode::Char(c @ '1'..='9') => {
+            #[allow(clippy::as_conversions)]
+            let idx = (c as usize).saturating_sub('1' as usize);
+            state.toggle_storage_dir(idx);
+        }
         KeyCode::Enter => {
             if !state.selected.is_empty() {
                 state.step = WizardStep::ConfigureSettings;
@@ -368,6 +401,7 @@ mod tests {
             None,
             None,
             page,
+            vec![],
         )
     }
 
