@@ -1,5 +1,30 @@
 # Changelog
 
+## [v0.2.2](https://github.com/naa0yama/dtvmgr/compare/v0.2.1...v0.2.2) - 2026-03-20
+
+### Documentation 🗒️
+
+- refactor: migrate from Jaeger to OpenObserve for local tracing by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/98
+- refactor(api): add OTel metrics/logs and consolidate rate limiters by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/91
+- feat(jlse): add storage instrumentation, TUI widget, and pre-encode disk check by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/101
+
+### Dependency Updates 📦
+
+- chore(deps): update rust crate assert_cmd to v2.1.3 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/94
+- chore(deps): update rust crate assert_cmd to v2.2.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/96
+
+### Development Environment 🔧
+
+- chore(deps): update taiki-e/install-action action to v2.68.26 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/95
+- chore(deps): update dependency aqua:ast-grep/ast-grep to v0.41.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/93
+- chore(deps): update actions/download-artifact action to v8.0.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/97
+- chore(deps): update taiki-e/install-action action to v2.68.27 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/99
+
+### Other Changes
+
+- fix(tagpr): use cargo generate-lockfile for post-version command by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/89
+- refactor(tui): extract TUI into dtvmgr-tui crate by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/100
+
 ## [v0.2.1](https://github.com/naa0yama/dtvmgr/compare/v0.2.0...v0.2.1) - 2026-03-16
 
 ### Documentation 🗒️
