@@ -63,8 +63,8 @@ mod tests {
             .timeout(std::time::Duration::from_nanos(1))
             .build()
             .unwrap();
-        // Use a non-routable address to ensure timeout
-        let err = client.get("http://192.0.2.1:1").send().await.unwrap_err();
+        // Use a non-routable TEST-NET address to ensure timeout
+        let err = client.get("https://192.0.2.1:1").send().await.unwrap_err();
 
         // Act
         let label = classify_reqwest_error(&err);
