@@ -24,6 +24,9 @@ const DEFAULT_BASE_URL: &str = "https://api.themoviedb.org/3/";
 /// Maximum number of retries for HTTP 429 responses.
 const MAX_RETRIES: u32 = 3;
 
+/// Maximum number of retries for transient network errors (e.g. keep-alive race).
+const MAX_NETWORK_RETRIES: u32 = 1;
+
 /// Backoff duration between retries.
 const RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
@@ -167,7 +170,8 @@ impl TmdbClient {
 
         #[cfg(feature = "otel")]
         let request_start = std::time::Instant::now();
-        let mut retries = 0u32;
+        let mut network_retries = 0u32;
+        let mut rate_limit_retries = 0u32;
         loop {
             let request = build_request()
                 .build()
@@ -178,6 +182,15 @@ impl TmdbClient {
 
             let response = match self.http_client.execute(request).await {
                 Ok(resp) => resp,
+                Err(e) if !e.is_timeout() && network_retries < MAX_NETWORK_RETRIES => {
+                    network_retries = network_retries.saturating_add(1);
+                    tracing::debug!(
+                        retry = network_retries,
+                        error = %e,
+                        "transient network error, retrying"
+                    );
+                    continue;
+                }
                 Err(e) => {
                     let kind = crate::classify_reqwest_error(&e);
                     if let Some(status) = e.status() {
@@ -196,16 +209,16 @@ impl TmdbClient {
                 #[cfg(feature = "otel")]
                 crate::metrics::record_rate_limit_hit("tmdb");
 
-                retries = retries.saturating_add(1);
-                if retries > MAX_RETRIES {
+                rate_limit_retries = rate_limit_retries.saturating_add(1);
+                if rate_limit_retries > MAX_RETRIES {
                     bail!("TMDB API rate limit exceeded after {MAX_RETRIES} retries: {path}");
                 }
                 tracing::warn!(
-                    retry = retries,
+                    retry = rate_limit_retries,
                     max_retries = MAX_RETRIES,
                     "TMDB API rate limited (429). Retrying..."
                 );
-                tokio::time::sleep(RETRY_BACKOFF.saturating_mul(retries)).await;
+                tokio::time::sleep(RETRY_BACKOFF.saturating_mul(rate_limit_retries)).await;
                 self.rate_limiter.lock().await.wait().await;
                 continue;
             }
@@ -250,7 +263,7 @@ impl TmdbClient {
         http.url = tracing::field::Empty,
         http.status_code = tracing::field::Empty,
         http.response.body = tracing::field::Empty,
-    ), err(level = "error"))]
+    ), err(level = "warn"))]
     async fn get_json<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,

@@ -40,6 +40,9 @@ pub struct EpgStationConfig {
     /// Default encode preset name (e.g. "H.264").
     #[serde(default)]
     pub default_preset: Option<String>,
+    /// Storage directory names hidden in the TUI widget.
+    #[serde(default)]
+    pub hidden_storage_dirs: Vec<String>,
 }
 
 /// Syoboi Calendar settings.
@@ -316,6 +319,12 @@ impl AppConfig {
             "default_preset",
             self.epgstation.default_preset.as_deref(),
             "",
+        ));
+        out.push_str(&Self::format_list(
+            "hidden_storage_dirs",
+            &self.epgstation.hidden_storage_dirs,
+            |s| format!("\"{s}\""),
+            Some("# Storage directory names hidden in the TUI widget.\n"),
         ));
 
         // [normalize]

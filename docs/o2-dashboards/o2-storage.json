@@ -1,0 +1,153 @@
+{
+	"title": "dtvmgr Storage",
+	"description": "Storage usage per recording/encode directory (dtvmgr.storage.* OTel metrics).",
+	"tabs": [
+		{
+			"tabId": "1",
+			"name": "Storage",
+			"panels": [
+				{
+					"id": "1",
+					"type": "area-stacked",
+					"title": "Directory Used (GB)",
+					"description": "Per-directory used bytes (file size sum), stacked by path.",
+					"layout": { "x": 0, "y": 0, "w": 96, "h": 8, "i": 1 },
+					"config": { "show_legends": true, "unit": "bytes" },
+					"queryType": "sql",
+					"queries": [
+						{
+							"customQuery": true,
+							"query": "SELECT histogram(_timestamp, '5 minutes') AS ts, AVG(gauge) AS used_bytes, path FROM \"dtvmgr_storage_used_bytes_gauge\" WHERE path IS NOT NULL GROUP BY ts, path ORDER BY ts",
+							"fields": {
+								"stream": "dtvmgr_storage_used_bytes_gauge",
+								"stream_type": "metrics",
+								"x": [{ "label": "ts", "alias": "ts", "column": "ts" }],
+								"y": [
+									{
+										"label": "used_bytes",
+										"alias": "used_bytes",
+										"column": "used_bytes"
+									}
+								],
+								"z": [{ "label": "path", "alias": "path", "column": "path" }],
+								"filter": {
+									"type": "list",
+									"values": [],
+									"logicalOperator": "AND",
+									"filterType": "list"
+								}
+							},
+							"config": { "promql_legend": "" }
+						}
+					]
+				},
+				{
+					"id": "2",
+					"type": "line",
+					"title": "Directory Usage %",
+					"description": "Per-directory usage ratio against total filesystem capacity.",
+					"layout": { "x": 96, "y": 0, "w": 96, "h": 8, "i": 2 },
+					"config": { "show_legends": true, "unit": "percent-1" },
+					"queryType": "sql",
+					"queries": [
+						{
+							"customQuery": true,
+							"query": "SELECT histogram(_timestamp, '5 minutes') AS ts, AVG(gauge) AS usage_ratio, path FROM \"dtvmgr_storage_usage_ratio_gauge\" WHERE path IS NOT NULL GROUP BY ts, path ORDER BY ts",
+							"fields": {
+								"stream": "dtvmgr_storage_usage_ratio_gauge",
+								"stream_type": "metrics",
+								"x": [{ "label": "ts", "alias": "ts", "column": "ts" }],
+								"y": [
+									{
+										"label": "usage_ratio",
+										"alias": "usage_ratio",
+										"column": "usage_ratio"
+									}
+								],
+								"z": [{ "label": "path", "alias": "path", "column": "path" }],
+								"filter": {
+									"type": "list",
+									"values": [],
+									"logicalOperator": "AND",
+									"filterType": "list"
+								}
+							},
+							"config": { "promql_legend": "" }
+						}
+					]
+				},
+				{
+					"id": "3",
+					"type": "line",
+					"title": "Filesystem Free (GB)",
+					"description": "Filesystem-level free space. Same value for dirs on the same mount.",
+					"layout": { "x": 0, "y": 8, "w": 96, "h": 8, "i": 3 },
+					"config": { "show_legends": true, "unit": "bytes" },
+					"queryType": "sql",
+					"queries": [
+						{
+							"customQuery": true,
+							"query": "SELECT histogram(_timestamp, '5 minutes') AS ts, AVG(gauge) AS free_bytes, path FROM \"dtvmgr_storage_free_bytes_gauge\" WHERE path IS NOT NULL GROUP BY ts, path ORDER BY ts",
+							"fields": {
+								"stream": "dtvmgr_storage_free_bytes_gauge",
+								"stream_type": "metrics",
+								"x": [{ "label": "ts", "alias": "ts", "column": "ts" }],
+								"y": [
+									{
+										"label": "free_bytes",
+										"alias": "free_bytes",
+										"column": "free_bytes"
+									}
+								],
+								"z": [{ "label": "path", "alias": "path", "column": "path" }],
+								"filter": {
+									"type": "list",
+									"values": [],
+									"logicalOperator": "AND",
+									"filterType": "list"
+								}
+							},
+							"config": { "promql_legend": "" }
+						}
+					]
+				},
+				{
+					"id": "4",
+					"type": "line",
+					"title": "File Count",
+					"description": "Number of regular files per directory.",
+					"layout": { "x": 96, "y": 8, "w": 96, "h": 8, "i": 4 },
+					"config": { "show_legends": true },
+					"queryType": "sql",
+					"queries": [
+						{
+							"customQuery": true,
+							"query": "SELECT histogram(_timestamp, '5 minutes') AS ts, AVG(gauge) AS file_count, path FROM \"dtvmgr_storage_file_count_gauge\" WHERE path IS NOT NULL GROUP BY ts, path ORDER BY ts",
+							"fields": {
+								"stream": "dtvmgr_storage_file_count_gauge",
+								"stream_type": "metrics",
+								"x": [{ "label": "ts", "alias": "ts", "column": "ts" }],
+								"y": [
+									{
+										"label": "file_count",
+										"alias": "file_count",
+										"column": "file_count"
+									}
+								],
+								"z": [{ "label": "path", "alias": "path", "column": "path" }],
+								"filter": {
+									"type": "list",
+									"values": [],
+									"logicalOperator": "AND",
+									"filterType": "list"
+								}
+							},
+							"config": { "promql_legend": "" }
+						}
+					]
+				}
+			]
+		}
+	],
+	"variables": { "list": [] }
+}
