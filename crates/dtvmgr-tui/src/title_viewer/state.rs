@@ -94,7 +94,7 @@ pub struct ViewerStats {
 }
 
 /// State for the title viewer TUI.
-#[allow(clippy::module_name_repetitions)]
+#[allow(clippy::module_name_repetitions, missing_debug_implementations)]
 pub struct TitleViewerState {
     /// All title rows.
     pub titles: Vec<TitleRow>,

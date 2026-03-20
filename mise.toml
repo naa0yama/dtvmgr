@@ -62,14 +62,17 @@ cargo test --all-targets
 """
 
 [tasks.coverage]
-description = "Generate LCOV coverage report"
-env = { OTEL_EXPORTER_OTLP_ENDPOINT = "" }
-run = "cargo llvm-cov --lcov --output-path target/lcov.info"
+description = "Generate LCOV coverage report and verify thresholds"
+env = { OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:19999" }
+run = """
+cargo llvm-cov --all-features --fail-under-lines 90
+cargo llvm-cov --all-features --lcov --output-path target/lcov.info
+"""
 
 [tasks."coverage:html"]
 description = "Generate HTML coverage report and open"
-env = { OTEL_EXPORTER_OTLP_ENDPOINT = "" }
-run = "cargo llvm-cov --html --open"
+env = { OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:19999" }
+run = "cargo llvm-cov --all-features --html --open"
 
 [tasks.fmt]
 description = "Run all formatters"

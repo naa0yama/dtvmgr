@@ -455,4 +455,186 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], (1, String::from("Title")));
     }
+
+    #[test]
+    fn test_parse_sub_titles_large_episode_numbers() {
+        // Arrange: large episode numbers
+        let raw = "*100*Hundredth Episode\n*999*Last Episode";
+
+        // Act
+        let result = parse_sub_titles(raw);
+
+        // Assert
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], (100, String::from("Hundredth Episode")));
+        assert_eq!(result[1], (999, String::from("Last Episode")));
+    }
+
+    #[test]
+    fn test_parse_sub_titles_with_special_characters() {
+        // Arrange: titles with special characters
+        let raw = "*01*Title with *asterisks*\n*02*Title<with>brackets";
+
+        // Act
+        let result = parse_sub_titles(raw);
+
+        // Assert
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], (1, String::from("Title with *asterisks*")));
+        assert_eq!(result[1], (2, String::from("Title<with>brackets")));
+    }
+
+    #[test]
+    fn test_parse_sub_titles_leading_whitespace() {
+        // Arrange: lines with leading whitespace
+        let raw = "  *01*Indented Title";
+
+        // Act
+        let result = parse_sub_titles(raw);
+
+        // Assert
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], (1, String::from("Indented Title")));
+    }
+
+    #[tokio::test]
+    async fn test_lookup_all_programs_three_pages() {
+        // Arrange: three pages of results
+        let mut batch1: Vec<SyoboiProgram> = (1..=5000)
+            .map(|i| make_program(i, "2024-01-10 12:00:00"))
+            .collect();
+        batch1[0].st_time = String::from("2024-01-15 00:00:00");
+
+        let mut batch2: Vec<SyoboiProgram> = (5001..=10_000)
+            .map(|i| make_program(i, "2024-01-16 12:00:00"))
+            .collect();
+        batch2[0].st_time = String::from("2024-01-20 00:00:00");
+
+        let batch3 = vec![
+            make_program(10_001, "2024-01-21 00:00:00"),
+            make_program(10_002, "2024-01-22 00:00:00"),
+        ];
+
+        let mock = MockSyoboiApi::new(vec![batch1, batch2, batch3]);
+        let params = ProgLookupParams {
+            range: Some(make_range((2024, 1, 1), (2024, 2, 1))),
+            ..ProgLookupParams::default()
+        };
+
+        // Act
+        let result = lookup_all_programs(&mock, &params).await.unwrap();
+
+        // Assert
+        assert_eq!(result.len(), 10_002);
+        assert_eq!(mock.call_count.load(Ordering::SeqCst), 3);
+    }
+
+    /// Mock API that returns an error on `lookup_programs`.
+    struct ErrorMockSyoboiApi;
+
+    impl LocalSyoboiApi for ErrorMockSyoboiApi {
+        async fn lookup_titles(
+            &self,
+            _tids: &[u32],
+            _fields: Option<&[&str]>,
+        ) -> Result<Vec<SyoboiTitle>> {
+            Ok(vec![])
+        }
+
+        async fn lookup_programs(&self, _params: &ProgLookupParams) -> Result<Vec<SyoboiProgram>> {
+            anyhow::bail!("simulated API error")
+        }
+
+        async fn lookup_channels(&self, _ch_ids: Option<&[u32]>) -> Result<Vec<SyoboiChannel>> {
+            Ok(vec![])
+        }
+
+        async fn lookup_channel_groups(
+            &self,
+            _ch_gids: Option<&[u32]>,
+        ) -> Result<Vec<SyoboiChannelGroup>> {
+            Ok(vec![])
+        }
+    }
+
+    #[tokio::test]
+    async fn test_lookup_all_programs_api_error() {
+        // Arrange
+        let mock = ErrorMockSyoboiApi;
+        let params = ProgLookupParams {
+            range: Some(make_range((2024, 1, 1), (2024, 2, 1))),
+            ..ProgLookupParams::default()
+        };
+
+        // Act
+        let result = lookup_all_programs(&mock, &params).await;
+
+        // Assert
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("ProgLookup failed"),
+            "expected 'ProgLookup failed' in: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lookup_all_programs_cursor_equals_start() {
+        // Arrange: max st_time equals current_start exactly (cursor doesn't advance)
+        let batch: Vec<SyoboiProgram> = (1..=5000)
+            .map(|i| make_program(i, "2024-01-01 00:00:00"))
+            .collect();
+        let mock = MockSyoboiApi::new(vec![batch]);
+        let params = ProgLookupParams {
+            range: Some(make_range((2024, 1, 1), (2024, 2, 1))),
+            ..ProgLookupParams::default()
+        };
+
+        // Act
+        let result = lookup_all_programs(&mock, &params).await.unwrap();
+
+        // Assert: should stop after one page since cursor doesn't advance
+        assert_eq!(result.len(), 5000);
+        assert_eq!(mock.call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_parse_sub_titles_overflow_episode_number() {
+        // Arrange: episode number too large for u32
+        let raw = "*99999999999*Overflow Title\n*01*Normal Title";
+
+        // Act
+        let result = parse_sub_titles(raw);
+
+        // Assert: overflow line is skipped, normal line is parsed
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], (1, String::from("Normal Title")));
+    }
+
+    #[tokio::test]
+    async fn test_lookup_all_programs_invalid_st_time_format() {
+        // Arrange: batch with 5000 items where max st_time is invalid
+        let mut batch: Vec<SyoboiProgram> = (1..=5000)
+            .map(|i| make_program(i, "2024-01-10 12:00:00"))
+            .collect();
+        // Set one item with invalid date format so it becomes the max
+        batch[0].st_time = String::from("invalid-date-format");
+
+        let mock = MockSyoboiApi::new(vec![batch]);
+        let params = ProgLookupParams {
+            range: Some(make_range((2024, 1, 1), (2024, 2, 1))),
+            ..ProgLookupParams::default()
+        };
+
+        // Act
+        let result = lookup_all_programs(&mock, &params).await;
+
+        // Assert: should error due to invalid st_time format
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("invalid StTime"),
+            "expected 'invalid StTime' in: {err}"
+        );
+    }
 }

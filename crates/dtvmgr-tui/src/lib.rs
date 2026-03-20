@@ -1,6 +1,6 @@
-//! TUI module for interactive terminal interfaces.
+//! Terminal UI components for dtvmgr.
 //!
-//! Uses `ratatui` + `crossterm` for rendering.
+//! Provides interactive TUI widgets built on `ratatui` + `crossterm`.
 
 mod channel_selector;
 /// Encode selector TUI.

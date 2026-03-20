@@ -672,19 +672,17 @@ dependencies = [
  "chrono",
  "clap",
  "clap_complete",
- "crossterm",
  "dtvmgr-api",
  "dtvmgr-db",
  "dtvmgr-jlse",
  "dtvmgr-tsduck",
+ "dtvmgr-tui",
  "futures",
- "open",
  "opentelemetry",
  "opentelemetry-appender-tracing",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "predicates",
- "ratatui",
  "regex",
  "reqwest 0.13.2",
  "serde",
@@ -695,7 +693,6 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
- "unicode-normalization",
 ]
 
 [[package]]
@@ -733,6 +730,25 @@ dependencies = [
  "serde",
  "tempfile",
  "tracing",
+]
+
+[[package]]
+name = "dtvmgr-tui"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "crossterm",
+ "dtvmgr-api",
+ "dtvmgr-db",
+ "dtvmgr-jlse",
+ "open",
+ "ratatui",
+ "regex",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "unicode-normalization",
 ]
 
 [[package]]

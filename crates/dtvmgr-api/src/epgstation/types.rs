@@ -22,7 +22,7 @@ pub struct RecordedParams {
 }
 
 /// Response from `GET /api/recorded`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RecordedResponse {
     /// Total number of recorded items.
     pub total: u64,
@@ -31,7 +31,7 @@ pub struct RecordedResponse {
 }
 
 /// A single recorded program.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordedItem {
     /// Recorded item ID.
@@ -66,7 +66,7 @@ pub struct RecordedItem {
 }
 
 /// A video file entry within a recorded item.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoFile {
     /// Video file ID.
@@ -83,7 +83,7 @@ pub struct VideoFile {
 }
 
 /// Drop log file information.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DropLogFile {
     /// Drop count.
@@ -251,4 +251,100 @@ pub struct EncodeProgramItem {
     pub recorded: RecordedItem,
     /// Encode progress percentage (0-100).
     pub percent: Option<f64>,
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::indexing_slicing)]
+
+    use super::*;
+
+    #[test]
+    fn deserialize_encode_presets_object_form() {
+        // Arrange
+        let json =
+            r#"{"encode": [{"name": "H.264"}], "recorded": [{"name": "rec", "path": "/data"}]}"#;
+
+        // Act
+        let config: EpgConfig = serde_json::from_str(json).unwrap();
+
+        // Assert
+        assert_eq!(config.encode.len(), 1);
+        assert_eq!(config.encode[0].name, "H.264");
+    }
+
+    #[test]
+    fn deserialize_encode_presets_string_form() {
+        // Arrange
+        let json = r#"{"encode": ["H.265", "AAC"], "recorded": ["default"]}"#;
+
+        // Act
+        let config: EpgConfig = serde_json::from_str(json).unwrap();
+
+        // Assert
+        assert_eq!(config.encode.len(), 2);
+        assert_eq!(config.encode[0].name, "H.265");
+        assert_eq!(config.encode[1].name, "AAC");
+    }
+
+    #[test]
+    fn deserialize_recorded_dirs_object_form() {
+        // Arrange
+        let json =
+            r#"{"encode": [], "recorded": [{"name": "recorded", "path": "/data/recorded"}]}"#;
+
+        // Act
+        let config: EpgConfig = serde_json::from_str(json).unwrap();
+
+        // Assert
+        assert_eq!(config.recorded.len(), 1);
+        assert_eq!(config.recorded[0].name, "recorded");
+        assert_eq!(config.recorded[0].path, "/data/recorded");
+    }
+
+    #[test]
+    fn deserialize_recorded_dirs_string_form() {
+        // Arrange
+        let json = r#"{"encode": [], "recorded": ["recorded"]}"#;
+
+        // Act
+        let config: EpgConfig = serde_json::from_str(json).unwrap();
+
+        // Assert
+        assert_eq!(config.recorded.len(), 1);
+        assert_eq!(config.recorded[0].name, "recorded");
+        assert_eq!(config.recorded[0].path, "recorded");
+    }
+
+    #[test]
+    fn deserialize_encode_presets_mixed_forms() {
+        // Arrange
+        let json = r#"{"encode": [{"name": "H.264"}, "AAC"], "recorded": []}"#;
+
+        // Act
+        let config: EpgConfig = serde_json::from_str(json).unwrap();
+
+        // Assert
+        assert_eq!(config.encode.len(), 2);
+        assert_eq!(config.encode[0].name, "H.264");
+        assert_eq!(config.encode[1].name, "AAC");
+    }
+
+    #[test]
+    fn deserialize_recorded_dirs_mixed_forms() {
+        // Arrange
+        let json =
+            r#"{"encode": [], "recorded": [{"name": "main", "path": "/data"}, "secondary"]}"#;
+
+        // Act
+        let config: EpgConfig = serde_json::from_str(json).unwrap();
+
+        // Assert
+        assert_eq!(config.recorded.len(), 2);
+        assert_eq!(config.recorded[0].name, "main");
+        assert_eq!(config.recorded[0].path, "/data");
+        assert_eq!(config.recorded[1].name, "secondary");
+        assert_eq!(config.recorded[1].path, "secondary");
+    }
 }

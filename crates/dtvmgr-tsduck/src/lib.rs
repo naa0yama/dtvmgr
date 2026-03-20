@@ -41,3 +41,46 @@ pub fn detect_target_from_middle(
 
     Ok((target, xml))
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::path::Path;
+
+    use super::*;
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn detect_target_from_middle_nonexistent_input_fails() {
+        // Arrange
+        let tstables = Path::new("/usr/bin/tstables");
+        let input = Path::new("/nonexistent/file.ts");
+
+        // Act
+        let result = detect_target_from_middle(tstables, input);
+
+        // Assert: should fail at chunk extraction
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err:?}").contains("extract middle chunk"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn detect_target_from_middle_empty_file_fails() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("empty.ts");
+        std::fs::write(&input, b"").unwrap();
+        let tstables = Path::new("/usr/bin/tstables");
+
+        // Act
+        let result = detect_target_from_middle(tstables, &input);
+
+        // Assert: should fail because file is too small for chunk extraction
+        assert!(result.is_err());
+    }
+}

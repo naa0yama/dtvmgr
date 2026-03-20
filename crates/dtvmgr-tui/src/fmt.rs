@@ -1,6 +1,7 @@
 //! Shared formatting utilities for TUI modules.
 
-/// Formats an integer with 3-digit comma separators (e.g. 12500 → "12,500").
+/// Formats an integer with 3-digit comma separators (e.g. 12500 -> "12,500").
+#[must_use]
 #[allow(clippy::arithmetic_side_effects)]
 pub fn with_commas(n: u64) -> String {
     let s = n.to_string();

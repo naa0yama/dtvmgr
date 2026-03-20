@@ -504,6 +504,165 @@ tmdb_series_id = 67890
         assert_eq!(mapping.mappings.len(), 1);
     }
 
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_save_creates_parent_directories() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("deep").join("mapping.toml");
+        let mapping = MappingFile {
+            mappings: vec![MappingEntry {
+                tid: 100,
+                name: "Nested".to_owned(),
+                tmdb_series_id: 200,
+                tmdb_season_number: None,
+                tmdb_season_id: 0,
+            }],
+        };
+
+        // Act
+        mapping.save(&path).unwrap();
+
+        // Assert
+        let loaded = MappingFile::load(&path).unwrap();
+        assert_eq!(loaded.mappings.len(), 1);
+        assert_eq!(loaded.mappings[0].tid, 100);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_save_at_root_path_no_parent() {
+        // Arrange: path with no parent directory component (just a filename)
+        // save() should handle path.parent() returning None or empty gracefully
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("flat.toml");
+        let mapping = MappingFile {
+            mappings: Vec::new(),
+        };
+
+        // Act
+        mapping.save(&path).unwrap();
+
+        // Assert
+        let loaded = MappingFile::load(&path).unwrap();
+        assert!(loaded.mappings.is_empty());
+    }
+
+    #[test]
+    fn test_merge_new_entries_preserves_existing_season_id() {
+        // Arrange: existing entry has tmdb_season_id set
+        let mut mapping = MappingFile {
+            mappings: vec![MappingEntry {
+                tid: 100,
+                name: "Existing".to_owned(),
+                tmdb_series_id: 999,
+                tmdb_season_number: Some(1),
+                tmdb_season_id: 42,
+            }],
+        };
+
+        // Act: merging duplicate tid should preserve the original entry
+        mapping.merge_new_entries(&[(100, "Duplicate")]);
+
+        // Assert
+        assert_eq!(mapping.mappings.len(), 1);
+        assert_eq!(mapping.mappings[0].tmdb_season_id, 42);
+        assert_eq!(mapping.mappings[0].name, "Existing");
+    }
+
+    #[test]
+    fn test_build_index_with_duplicate_tids_last_wins() {
+        // Arrange: two entries with same tid (edge case)
+        let mapping = MappingFile {
+            mappings: vec![
+                MappingEntry {
+                    tid: 100,
+                    name: "First".to_owned(),
+                    tmdb_series_id: 1,
+                    tmdb_season_number: None,
+                    tmdb_season_id: 0,
+                },
+                MappingEntry {
+                    tid: 100,
+                    name: "Second".to_owned(),
+                    tmdb_series_id: 2,
+                    tmdb_season_number: None,
+                    tmdb_season_id: 0,
+                },
+            ],
+        };
+
+        // Act
+        let index = mapping.build_index();
+
+        // Assert: HashMap overwrites, last entry wins
+        assert_eq!(index.len(), 1);
+        assert_eq!(index[&100].name, "Second");
+    }
+
+    #[test]
+    fn test_remove_excluded_nonexistent_tids() {
+        // Arrange
+        let mut mapping = MappingFile {
+            mappings: vec![MappingEntry {
+                tid: 100,
+                name: "Keep".to_owned(),
+                tmdb_series_id: 1,
+                tmdb_season_number: None,
+                tmdb_season_id: 0,
+            }],
+        };
+
+        // Act: exclude tids that don't exist
+        mapping.remove_excluded(&HashSet::from([999, 888]));
+
+        // Assert: nothing removed
+        assert_eq!(mapping.mappings.len(), 1);
+        assert_eq!(mapping.mappings[0].tid, 100);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_load_empty_file() {
+        // Arrange: valid TOML but no mappings key
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.toml");
+        std::fs::write(&path, "").unwrap();
+
+        // Act
+        let result = MappingFile::load(&path).unwrap();
+
+        // Assert: serde default gives empty vec
+        assert!(result.mappings.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_load_with_tmdb_season_id() {
+        // Arrange: TOML with tmdb_season_id field
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("season_id.toml");
+        std::fs::write(
+            &path,
+            r#"
+[[mappings]]
+tid = 100
+name = "With Season ID"
+tmdb_series_id = 200
+tmdb_season_number = 1
+tmdb_season_id = 42
+"#,
+        )
+        .unwrap();
+
+        // Act
+        let result = MappingFile::load(&path).unwrap();
+
+        // Assert
+        assert_eq!(result.mappings.len(), 1);
+        assert_eq!(result.mappings[0].tmdb_season_id, 42);
+    }
+
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_load_or_fetch_local_exists() {
