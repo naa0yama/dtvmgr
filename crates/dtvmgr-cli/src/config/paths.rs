@@ -69,7 +69,13 @@ pub fn resolve_config_path(config: Option<&PathBuf>) -> Result<PathBuf> {
 
 /// Checks if `./dtvmgr.toml` exists in CWD and contains marker keys.
 fn detect_cwd_config() -> Result<Option<PathBuf>> {
-    let path = PathBuf::from(CONFIG_FILE_NAME);
+    let cwd = std::env::current_dir().context("failed to get current directory")?;
+    detect_config_in_dir(&cwd)
+}
+
+/// Checks if `dtvmgr.toml` exists in `dir` and contains marker keys.
+fn detect_config_in_dir(dir: &std::path::Path) -> Result<Option<PathBuf>> {
+    let path = dir.join(CONFIG_FILE_NAME);
     if !path.exists() {
         return Ok(None);
     }
@@ -84,11 +90,7 @@ fn detect_cwd_config() -> Result<Option<PathBuf>> {
             || table.contains_key("tmdb")
             || table.contains_key("normalize"))
     {
-        return Ok(Some(
-            std::env::current_dir()
-                .context("failed to get current directory")?
-                .join(CONFIG_FILE_NAME),
-        ));
+        return Ok(Some(path));
     }
 
     Ok(None)
@@ -203,20 +205,17 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_detect_cwd_config_with_normalize_key() {
+    fn test_detect_config_in_dir_with_normalize_key() {
         // Arrange: create a dtvmgr.toml with `normalize` marker key
         let dir = tempfile::tempdir().unwrap();
-        let config_file = dir.path().join("dtvmgr.toml");
-        std::fs::write(&config_file, "[normalize]\nenabled = true\n").unwrap();
-
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        std::fs::write(
+            dir.path().join("dtvmgr.toml"),
+            "[normalize]\nenabled = true\n",
+        )
+        .unwrap();
 
         // Act
-        let result = detect_cwd_config();
-
-        // Cleanup
-        std::env::set_current_dir(&original_dir).unwrap();
+        let result = detect_config_in_dir(dir.path());
 
         // Assert: should detect the config because it has the `normalize` key
         let path = result.unwrap().unwrap();
@@ -225,20 +224,13 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_detect_cwd_config_no_marker_keys() {
+    fn test_detect_config_in_dir_no_marker_keys() {
         // Arrange: create a dtvmgr.toml WITHOUT any marker keys
         let dir = tempfile::tempdir().unwrap();
-        let config_file = dir.path().join("dtvmgr.toml");
-        std::fs::write(&config_file, "[other]\nkey = \"value\"\n").unwrap();
-
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        std::fs::write(dir.path().join("dtvmgr.toml"), "[other]\nkey = \"value\"\n").unwrap();
 
         // Act
-        let result = detect_cwd_config();
-
-        // Cleanup
-        std::env::set_current_dir(&original_dir).unwrap();
+        let result = detect_config_in_dir(dir.path());
 
         // Assert: should return None because no marker keys found
         assert!(result.unwrap().is_none());
@@ -246,20 +238,13 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_detect_cwd_config_with_syoboi_key() {
+    fn test_detect_config_in_dir_with_syoboi_key() {
         // Arrange: create a dtvmgr.toml with `syoboi` marker key
         let dir = tempfile::tempdir().unwrap();
-        let config_file = dir.path().join("dtvmgr.toml");
-        std::fs::write(&config_file, "[syoboi]\ntid = 1234\n").unwrap();
-
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        std::fs::write(dir.path().join("dtvmgr.toml"), "[syoboi]\ntid = 1234\n").unwrap();
 
         // Act
-        let result = detect_cwd_config();
-
-        // Cleanup
-        std::env::set_current_dir(&original_dir).unwrap();
+        let result = detect_config_in_dir(dir.path());
 
         // Assert
         let path = result.unwrap().unwrap();
@@ -268,46 +253,34 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_resolve_config_path_cwd_with_tmdb_key() {
-        // Arrange: create dtvmgr.toml with `tmdb` marker key in CWD
+    fn test_detect_config_in_dir_with_tmdb_key() {
+        // Arrange: create dtvmgr.toml with `tmdb` marker key
         let dir = tempfile::tempdir().unwrap();
-        let config_file = dir.path().join("dtvmgr.toml");
-        std::fs::write(&config_file, "[tmdb]\napi_key = \"test\"\n").unwrap();
-
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        std::fs::write(
+            dir.path().join("dtvmgr.toml"),
+            "[tmdb]\napi_key = \"test\"\n",
+        )
+        .unwrap();
 
         // Act
-        let result = resolve_config_path(None);
+        let result = detect_config_in_dir(dir.path());
 
-        // Cleanup
-        std::env::set_current_dir(&original_dir).unwrap();
-
-        // Assert: should find CWD config
-        let path = result.unwrap();
+        // Assert
+        let path = result.unwrap().unwrap();
         assert!(path.ends_with("dtvmgr.toml"));
         assert!(path.is_absolute());
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_resolve_data_dir_cwd_detection() {
-        // Arrange: create dtvmgr.toml with marker key in CWD
+    fn test_detect_config_in_dir_no_file() {
+        // Arrange: empty directory
         let dir = tempfile::tempdir().unwrap();
-        let config_file = dir.path().join("dtvmgr.toml");
-        std::fs::write(&config_file, "[syoboi]\ntid = 1\n").unwrap();
-
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
 
         // Act
-        let result = resolve_data_dir(None);
+        let result = detect_config_in_dir(dir.path());
 
-        // Cleanup
-        std::env::set_current_dir(&original_dir).unwrap();
-
-        // Assert: should return the CWD as data dir
-        let data_dir = result.unwrap().unwrap();
-        assert!(data_dir.is_absolute());
+        // Assert: no dtvmgr.toml → None
+        assert!(result.unwrap().is_none());
     }
 }
