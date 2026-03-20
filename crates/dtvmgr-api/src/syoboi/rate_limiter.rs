@@ -204,4 +204,98 @@ mod tests {
         // Assert
         assert_eq!(limiter.hourly_window.len(), 3);
     }
+
+    #[tokio::test]
+    async fn test_daily_limit_fills_window() {
+        // Arrange: tiny daily limit
+        let mut limiter = SyoboiRateLimiter::new(Duration::from_millis(0), 10_000, 3);
+
+        // Act: fill to the daily limit
+        limiter.wait().await;
+        limiter.wait().await;
+        limiter.wait().await;
+
+        // Assert
+        assert_eq!(limiter.daily_window.len(), 3);
+    }
+
+    #[test]
+    fn test_cleanup_windows_purges_daily_expired() {
+        // Arrange
+        let mut limiter = SyoboiRateLimiter::new(Duration::from_secs(0), 500, 10_000);
+        let now = Instant::now();
+        // Insert a timestamp from 2 days ago (expired for both hourly and daily)
+        let two_days_ago = now.checked_sub(Duration::from_secs(172_800)).unwrap();
+        limiter.hourly_window.push_back(two_days_ago);
+        limiter.daily_window.push_back(two_days_ago);
+        // Insert a recent timestamp
+        limiter.hourly_window.push_back(now);
+        limiter.daily_window.push_back(now);
+
+        // Act
+        limiter.cleanup_windows(now);
+
+        // Assert: expired entry removed from both hourly and daily
+        assert_eq!(limiter.hourly_window.len(), 1);
+        assert_eq!(limiter.daily_window.len(), 1);
+    }
+
+    #[test]
+    fn test_cleanup_windows_empty() {
+        // Arrange: empty windows
+        let mut limiter = SyoboiRateLimiter::new(Duration::from_secs(0), 500, 10_000);
+        let now = Instant::now();
+
+        // Act
+        limiter.cleanup_windows(now);
+
+        // Assert: no panic, windows still empty
+        assert!(limiter.hourly_window.is_empty());
+        assert!(limiter.daily_window.is_empty());
+    }
+
+    #[test]
+    fn test_cleanup_windows_all_recent() {
+        // Arrange: all timestamps are recent (nothing to purge)
+        let mut limiter = SyoboiRateLimiter::new(Duration::from_secs(0), 500, 10_000);
+        let now = Instant::now();
+        limiter.hourly_window.push_back(now);
+        limiter.hourly_window.push_back(now);
+        limiter.daily_window.push_back(now);
+        limiter.daily_window.push_back(now);
+
+        // Act
+        limiter.cleanup_windows(now);
+
+        // Assert: nothing purged
+        assert_eq!(limiter.hourly_window.len(), 2);
+        assert_eq!(limiter.daily_window.len(), 2);
+    }
+
+    #[test]
+    fn test_new_creates_empty_state() {
+        // Arrange & Act
+        let limiter = SyoboiRateLimiter::new(Duration::from_secs(1), 500, 10_000);
+
+        // Assert
+        assert!(limiter.last_request.is_none());
+        assert!(limiter.hourly_window.is_empty());
+        assert!(limiter.daily_window.is_empty());
+        assert_eq!(limiter.min_interval, Duration::from_secs(1));
+        assert_eq!(limiter.hourly_limit, 500);
+        assert_eq!(limiter.daily_limit, 10_000);
+    }
+
+    #[tokio::test]
+    async fn test_wait_updates_last_request() {
+        // Arrange
+        let mut limiter = SyoboiRateLimiter::new(Duration::from_millis(0), 500, 10_000);
+        assert!(limiter.last_request.is_none());
+
+        // Act
+        limiter.wait().await;
+
+        // Assert
+        assert!(limiter.last_request.is_some());
+    }
 }

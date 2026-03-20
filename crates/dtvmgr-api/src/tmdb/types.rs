@@ -271,6 +271,195 @@ pub struct TmdbAlternativeTitle {
     pub title_type: String,
 }
 
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::indexing_slicing)]
+    #![allow(clippy::panic)]
+
+    use super::*;
+
+    #[test]
+    fn media_type_as_str_tv() {
+        // Arrange & Act & Assert
+        assert_eq!(TmdbMediaType::Tv.as_str(), "tv");
+    }
+
+    #[test]
+    fn media_type_as_str_movie() {
+        // Arrange & Act & Assert
+        assert_eq!(TmdbMediaType::Movie.as_str(), "movie");
+    }
+
+    #[test]
+    fn search_multi_params_new_defaults() {
+        // Arrange & Act
+        let params = SearchMultiParams::new("test query");
+
+        // Assert
+        assert_eq!(params.query, "test query");
+        assert_eq!(params.language, "en-US");
+        assert_eq!(params.page, 1);
+        assert!(!params.include_adult);
+    }
+
+    #[test]
+    fn search_multi_params_language_builder() {
+        // Arrange & Act
+        let params = SearchMultiParams::new("query").language("ja-JP");
+
+        // Assert
+        assert_eq!(params.language, "ja-JP");
+    }
+
+    #[test]
+    fn search_multi_params_page_builder() {
+        // Arrange & Act
+        let params = SearchMultiParams::new("query").page(5);
+
+        // Assert
+        assert_eq!(params.page, 5);
+    }
+
+    #[test]
+    fn search_multi_params_chained_builders() {
+        // Arrange & Act
+        let params = SearchMultiParams::new("anime").language("ja-JP").page(3);
+
+        // Assert
+        assert_eq!(params.query, "anime");
+        assert_eq!(params.language, "ja-JP");
+        assert_eq!(params.page, 3);
+    }
+
+    #[test]
+    fn deserialize_multi_search_result_tv() {
+        // Arrange
+        let json = r#"{
+            "media_type": "tv",
+            "id": 123,
+            "name": "Test Show",
+            "original_name": "Test",
+            "original_language": "ja",
+            "origin_country": ["JP"],
+            "first_air_date": "2024-01-01",
+            "overview": "A test show",
+            "popularity": 10.5,
+            "vote_average": 8.0,
+            "vote_count": 100,
+            "genre_ids": [16],
+            "adult": false,
+            "poster_path": null,
+            "backdrop_path": null
+        }"#;
+
+        // Act
+        let result: TmdbMultiSearchResult = serde_json::from_str(json).unwrap();
+
+        // Assert
+        match result {
+            TmdbMultiSearchResult::Tv(tv) => {
+                assert_eq!(tv.id, 123);
+                assert_eq!(tv.name, "Test Show");
+            }
+            _ => panic!("expected Tv variant"),
+        }
+    }
+
+    #[test]
+    fn deserialize_multi_search_result_movie() {
+        // Arrange
+        let json = r#"{
+            "media_type": "movie",
+            "id": 456,
+            "title": "Test Movie",
+            "original_title": "Test",
+            "original_language": "en",
+            "release_date": "2024-06-01",
+            "overview": "A test movie",
+            "popularity": 20.0,
+            "vote_average": 7.5,
+            "vote_count": 200,
+            "genre_ids": [28],
+            "adult": false,
+            "video": false,
+            "poster_path": null,
+            "backdrop_path": null
+        }"#;
+
+        // Act
+        let result: TmdbMultiSearchResult = serde_json::from_str(json).unwrap();
+
+        // Assert
+        match result {
+            TmdbMultiSearchResult::Movie(movie) => {
+                assert_eq!(movie.id, 456);
+                assert_eq!(movie.title, "Test Movie");
+            }
+            _ => panic!("expected Movie variant"),
+        }
+    }
+
+    #[test]
+    fn deserialize_multi_search_result_person() {
+        // Arrange
+        let json = r#"{
+            "media_type": "person",
+            "id": 789
+        }"#;
+
+        // Act
+        let result: TmdbMultiSearchResult = serde_json::from_str(json).unwrap();
+
+        // Assert
+        match result {
+            TmdbMultiSearchResult::Person(person) => {
+                assert_eq!(person.id, 789);
+            }
+            _ => panic!("expected Person variant"),
+        }
+    }
+
+    #[test]
+    fn deserialize_alternative_titles_with_titles_key() {
+        // Arrange: movie uses "titles" key (aliased to "results")
+        let json = r#"{
+            "id": 100,
+            "titles": [
+                {"iso_3166_1": "JP", "title": "Alt Title", "type": "romaji"}
+            ]
+        }"#;
+
+        // Act
+        let resp: TmdbAlternativeTitlesResponse = serde_json::from_str(json).unwrap();
+
+        // Assert
+        assert_eq!(resp.id, 100);
+        assert_eq!(resp.results.len(), 1);
+        assert_eq!(resp.results[0].title, "Alt Title");
+        assert_eq!(resp.results[0].title_type, "romaji");
+    }
+
+    #[test]
+    fn deserialize_alternative_titles_with_results_key() {
+        // Arrange: TV uses "results" key
+        let json = r#"{
+            "id": 200,
+            "results": [
+                {"iso_3166_1": "US", "title": "English Title", "type": ""}
+            ]
+        }"#;
+
+        // Act
+        let resp: TmdbAlternativeTitlesResponse = serde_json::from_str(json).unwrap();
+
+        // Assert
+        assert_eq!(resp.id, 200);
+        assert_eq!(resp.results.len(), 1);
+        assert_eq!(resp.results[0].iso_3166_1, "US");
+    }
+}
+
 // --- TV Season Details ---
 
 /// Response from `tv/{series_id}/season/{season_number}` endpoint.

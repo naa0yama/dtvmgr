@@ -860,6 +860,132 @@ mod tests {
         assert_eq!(response.results.len(), 2);
     }
 
+    #[test]
+    fn test_secret_debug_redacted() {
+        // Arrange
+        let secret = Secret(String::from("my-super-secret-token"));
+
+        // Act
+        let debug_str = format!("{secret:?}");
+
+        // Assert: value is redacted
+        assert_eq!(debug_str, "[REDACTED]");
+        assert!(!debug_str.contains("my-super-secret-token"));
+    }
+
+    #[test]
+    fn test_secret_expose() {
+        // Arrange
+        let secret = Secret(String::from("my-token"));
+
+        // Act
+        let exposed = secret.expose();
+
+        // Assert
+        assert_eq!(exposed, "my-token");
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_http_error_non_json_body() {
+        // Arrange: non-JSON error body falls through to generic error
+        let mock_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/3/tv/99999"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(500).set_body_string("Internal Server Error"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/3/", mock_server.uri());
+        let client = TmdbClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .api_token("test-token")
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        // Act
+        let result = client.tv_details(99999, "ja-JP").await;
+
+        // Assert
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("TMDB API error"),
+            "expected 'TMDB API error' in: {err}"
+        );
+        assert!(
+            err.contains("Internal Server Error"),
+            "expected body in error: {err}"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_json_decode_error() {
+        // Arrange: server returns invalid JSON with 200 status
+        let mock_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/3/tv/99999"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("not valid json"))
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/3/", mock_server.uri());
+        let client = TmdbClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .api_token("test-token")
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        // Act
+        let result = client.tv_details(99999, "ja-JP").await;
+
+        // Assert
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("failed to decode JSON"),
+            "expected 'failed to decode JSON' in: {err}"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_genre_movie_list_via_http() {
+        // Arrange
+        let mock_server = wiremock::MockServer::start().await;
+        let json_body = include_str!("../../../../fixtures/tmdb/genre_tv_list.json");
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/3/genre/movie/list"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(json_body))
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/3/", mock_server.uri());
+        let client = TmdbClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .api_token("test-token")
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        // Act
+        let response = client.genre_movie_list("ja").await.unwrap();
+
+        // Assert
+        assert!(!response.genres.is_empty());
+    }
+
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_rate_limiter_enforces_interval() {

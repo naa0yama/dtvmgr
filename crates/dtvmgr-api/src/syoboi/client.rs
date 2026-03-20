@@ -505,6 +505,8 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     #![allow(clippy::indexing_slicing)]
 
+    use chrono::NaiveDate;
+
     use super::*;
 
     #[test]
@@ -933,6 +935,292 @@ mod tests {
         // Assert
         assert_eq!(titles.len(), 1);
         assert_eq!(titles[0].tid, 6309);
+    }
+
+    #[test]
+    fn test_check_api_result_error_code() {
+        // Arrange
+        let result = ApiResult {
+            code: 500,
+            message: Some(String::from("Internal Server Error")),
+        };
+
+        // Act
+        let err = SyoboiClient::check_api_result(Some(&result), "TestCommand");
+
+        // Assert
+        assert!(err.is_err());
+        let msg = err.unwrap_err().to_string();
+        assert!(msg.contains("TestCommand API error"));
+        assert!(msg.contains("code=500"));
+    }
+
+    #[test]
+    fn test_check_api_result_success() {
+        // Arrange
+        let result = ApiResult {
+            code: 200,
+            message: None,
+        };
+
+        // Act
+        let res = SyoboiClient::check_api_result(Some(&result), "TestCommand");
+
+        // Assert
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_check_api_result_none() {
+        // Arrange & Act
+        let res = SyoboiClient::check_api_result(None, "TestCommand");
+
+        // Assert: None result is ok (API sometimes omits Result element)
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_xml_decode_error_short_body() {
+        // Arrange
+        let xml = "<short>body</short>";
+
+        // Act
+        let msg = SyoboiClient::xml_decode_error("TestCommand", xml);
+
+        // Assert
+        assert!(msg.contains("TestCommand XML decoding failed"));
+        assert!(msg.contains("<short>body</short>"));
+    }
+
+    #[test]
+    fn test_xml_decode_error_truncates_long_body() {
+        // Arrange: body longer than 500 chars
+        let xml = "x".repeat(1000);
+
+        // Act
+        let msg = SyoboiClient::xml_decode_error("TestCommand", &xml);
+
+        // Assert: preview is truncated to 500 chars
+        assert!(msg.contains("len=1000"));
+        assert!(msg.len() < 600); // header + 500 chars
+    }
+
+    #[test]
+    fn test_parse_title_response_invalid_xml() {
+        // Arrange
+        let xml = "not valid xml at all";
+
+        // Act
+        let result = SyoboiClient::parse_title_response(xml);
+
+        // Assert
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("TitleLookup XML decoding failed"),
+            "expected 'TitleLookup XML decoding failed' in: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_prog_response_invalid_xml() {
+        // Arrange
+        let xml = "invalid xml";
+
+        // Act
+        let result = SyoboiClient::parse_prog_response(xml);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_ch_response_invalid_xml() {
+        // Arrange
+        let xml = "invalid xml";
+
+        // Act
+        let result = SyoboiClient::parse_ch_response(xml);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_ch_group_response_invalid_xml() {
+        // Arrange
+        let xml = "invalid xml";
+
+        // Act
+        let result = SyoboiClient::parse_ch_group_response(xml);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_title_response_api_error_code() {
+        // Arrange: valid XML but API returns error code
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<TitleLookupResponse>
+    <Result><Code>400</Code><Message>Bad Request</Message></Result>
+    <TitleItems></TitleItems>
+</TitleLookupResponse>"#;
+
+        // Act
+        let result = SyoboiClient::parse_title_response(xml);
+
+        // Assert
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("TitleLookup API error"));
+        assert!(err.contains("code=400"));
+    }
+
+    #[test]
+    fn test_parse_prog_response_api_error_code() {
+        // Arrange
+        let xml = r"<ProgLookupResponse>
+    <Result><Code>400</Code><Message>Bad Request</Message></Result>
+    <ProgItems></ProgItems>
+</ProgLookupResponse>";
+
+        // Act
+        let result = SyoboiClient::parse_prog_response(xml);
+
+        // Assert
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("ProgLookup API error"));
+    }
+
+    #[test]
+    fn test_build_prog_query_all_params() {
+        // Arrange
+        let params = ProgLookupParams {
+            tids: Some(vec![100, 200]),
+            ch_ids: Some(vec![1, 2]),
+            range: Some(super::super::params::TimeRange::new(
+                NaiveDate::from_ymd_opt(2024, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+                NaiveDate::from_ymd_opt(2024, 2, 1)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
+            )),
+            st_time: Some(String::from("2024-01-01")),
+            last_update: Some(String::from("2024-01-01")),
+            join_sub_titles: true,
+            fields: Some(vec![String::from("PID"), String::from("TID")]),
+        };
+
+        // Act
+        let query = SyoboiClient::build_prog_query(&params);
+
+        // Assert
+        let keys: Vec<&str> = query.iter().map(|(k, _)| *k).collect();
+        assert!(keys.contains(&"Command"));
+        assert!(keys.contains(&"TID"));
+        assert!(keys.contains(&"ChID"));
+        assert!(keys.contains(&"Range"));
+        assert!(keys.contains(&"StTime"));
+        assert!(keys.contains(&"LastUpdate"));
+        assert!(keys.contains(&"JOIN"));
+        assert!(keys.contains(&"Fields"));
+    }
+
+    #[test]
+    fn test_build_prog_query_minimal() {
+        // Arrange
+        let params = ProgLookupParams::default();
+
+        // Act
+        let query = SyoboiClient::build_prog_query(&params);
+
+        // Assert: Command + JOIN (join_sub_titles defaults to true)
+        assert_eq!(query.len(), 2);
+        assert_eq!(query[0].0, "Command");
+        assert_eq!(query[0].1, "ProgLookup");
+        assert_eq!(query[1].0, "JOIN");
+        assert_eq!(query[1].1, "SubTitles");
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_builder_with_custom_limits() {
+        // Arrange & Act
+        let client = SyoboiClient::builder()
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(50))
+            .hourly_limit(100)
+            .daily_limit(1000)
+            .build()
+            .unwrap();
+
+        // Assert: client built successfully with custom limits
+        assert_eq!(client.base_url.as_str(), "https://cal.syoboi.jp/db.php");
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_ch_lookup_with_specific_ids() {
+        // Arrange
+        let mock_server = wiremock::MockServer::start().await;
+        let xml_body = include_str!("../../../../fixtures/syoboi/ch_lookup_all.xml");
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/db.php"))
+            .and(wiremock::matchers::query_param("Command", "ChLookup"))
+            .and(wiremock::matchers::query_param("ChID", "1,2"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(xml_body))
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/db.php", mock_server.uri());
+        let client = SyoboiClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        // Act
+        let channels = client.lookup_channels(Some(&[1, 2])).await.unwrap();
+
+        // Assert
+        assert_eq!(channels.len(), 3);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_ch_group_lookup_with_specific_gids() {
+        // Arrange
+        let mock_server = wiremock::MockServer::start().await;
+        let xml_body = include_str!("../../../../fixtures/syoboi/ch_group_lookup_all.xml");
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/db.php"))
+            .and(wiremock::matchers::query_param("Command", "ChGroupLookup"))
+            .and(wiremock::matchers::query_param("ChGID", "1,2"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(xml_body))
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/db.php", mock_server.uri());
+        let client = SyoboiClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        // Act
+        let groups = client.lookup_channel_groups(Some(&[1, 2])).await.unwrap();
+
+        // Assert
+        assert_eq!(groups.len(), 3);
     }
 
     #[cfg_attr(miri, ignore)]

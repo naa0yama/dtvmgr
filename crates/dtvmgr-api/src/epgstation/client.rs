@@ -797,4 +797,174 @@ mod tests {
         // Assert: at least 100ms interval between two requests
         assert!(elapsed >= Duration::from_millis(100));
     }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_json_decode_error() {
+        // Arrange: server returns invalid JSON
+        let mock_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/api/channels"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("not valid json"))
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/api/", mock_server.uri());
+        let client = EpgStationClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        // Act
+        let result: Result<Vec<Channel>> = client.fetch_channels().await;
+
+        // Assert
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("failed to decode JSON"),
+            "expected 'failed to decode JSON' in: {err}"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_fetch_recorded_by_id_via_http() {
+        // Arrange
+        let mock_server = wiremock::MockServer::start().await;
+        let single_record = r#"{
+            "id": 12345,
+            "channelId": 400101,
+            "name": "SPY×FAMILY #01",
+            "startAt": 1649523600000,
+            "endAt": 1649525400000,
+            "isRecording": false,
+            "isEncoding": false,
+            "isProtected": false,
+            "videoFiles": [{"id": 1, "name": "test.ts", "filename": "test.ts", "type": "ts", "size": 1000}],
+            "dropLogFile": {"dropCnt": 0, "errorCnt": 0, "scramblingCnt": 0}
+        }"#;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/api/recorded/12345"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(single_record))
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/api/", mock_server.uri());
+        let client = EpgStationClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        // Act
+        let record = client.fetch_recorded_by_id(12345).await.unwrap();
+
+        // Assert
+        assert_eq!(record.id, 12345);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_fetch_encode_queue_via_http() {
+        // Arrange
+        let mock_server = wiremock::MockServer::start().await;
+        let json_body = include_str!("../../../../fixtures/epgstation/encode_queue.json");
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/api/encode"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(json_body))
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/api/", mock_server.uri());
+        let client = EpgStationClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        // Act
+        let response = client.fetch_encode_queue().await.unwrap();
+
+        // Assert
+        assert_eq!(response.running_items.len(), 1);
+        assert_eq!(response.wait_items.len(), 1);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_check_video_file_exists_404_returns_false() {
+        // Arrange
+        let mock_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("HEAD"))
+            .and(wiremock::matchers::path("/api/videos/77777"))
+            .respond_with(wiremock::ResponseTemplate::new(404))
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/api/", mock_server.uri());
+        let client = EpgStationClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        // Act
+        let exists = client.check_video_file_exists(77777).await;
+
+        // Assert
+        assert!(!exists);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_fetch_recorded_all_params() {
+        // Arrange
+        let mock_server = wiremock::MockServer::start().await;
+        let json_body = include_str!("../../../../fixtures/epgstation/recorded.json");
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/api/recorded"))
+            .and(wiremock::matchers::query_param("hasOriginalFile", "true"))
+            .and(wiremock::matchers::query_param("limit", "50"))
+            .and(wiremock::matchers::query_param("offset", "10"))
+            .and(wiremock::matchers::query_param("isReverse", "true"))
+            .and(wiremock::matchers::query_param("isHalfWidth", "true"))
+            .and(wiremock::matchers::query_param("keyword", "test"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(json_body))
+            .mount(&mock_server)
+            .await;
+
+        let base_url = format!("{}/api/", mock_server.uri());
+        let client = EpgStationClient::builder()
+            .base_url(base_url.parse().unwrap())
+            .user_agent("test/0.0.0")
+            .min_interval(Duration::from_millis(0))
+            .build()
+            .unwrap();
+
+        let params = RecordedParams {
+            has_original_file: Some(true),
+            limit: Some(50),
+            offset: Some(10),
+            is_reverse: Some(true),
+            is_half_width: Some(true),
+            keyword: Some(String::from("test")),
+        };
+
+        // Act
+        let response = client.fetch_recorded(&params).await.unwrap();
+
+        // Assert
+        assert_eq!(response.total, 2);
+    }
 }
