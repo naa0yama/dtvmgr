@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.2.4](https://github.com/naa0yama/dtvmgr/compare/v0.2.3...v0.2.4) - 2026-03-21
+
+### Development Environment 🔧
+
+- fix(jlse): harden post-encode duration validation for MKV and other containers by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/106
+
 ## [v0.2.3](https://github.com/naa0yama/dtvmgr/compare/v0.2.2...v0.2.3) - 2026-03-20
 
 ### Other Changes
