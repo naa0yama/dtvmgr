@@ -868,6 +868,7 @@ mod tests {
                 extra: vec![],
             }),
             duration_check: None,
+            quality_search: None,
         };
 
         // Act

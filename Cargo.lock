@@ -712,9 +712,11 @@ dependencies = [
  "anyhow",
  "csv",
  "dtvmgr-tsduck",
+ "dtvmgr-vmaf",
  "libc",
  "regex",
  "serde",
+ "serde_json",
  "tempfile",
  "toml",
  "tracing",
@@ -750,6 +752,17 @@ dependencies = [
  "tokio",
  "tracing",
  "unicode-normalization",
+]
+
+[[package]]
+name = "dtvmgr-vmaf"
+version = "0.2.3"
+dependencies = [
+ "anyhow",
+ "regex",
+ "serde",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]

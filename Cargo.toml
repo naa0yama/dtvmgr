@@ -10,6 +10,7 @@ members = [
 	"crates/dtvmgr-jlse",
 	"crates/dtvmgr-tsduck",
 	"crates/dtvmgr-tui",
+	"crates/dtvmgr-vmaf",
 ]
 
 [workspace.package]
@@ -73,6 +74,7 @@ dtvmgr-db = { path = "crates/dtvmgr-db" }
 dtvmgr-jlse = { path = "crates/dtvmgr-jlse" }
 dtvmgr-tsduck = { path = "crates/dtvmgr-tsduck" }
 dtvmgr-tui = { path = "crates/dtvmgr-tui" }
+dtvmgr-vmaf = { path = "crates/dtvmgr-vmaf" }
 
 # - -------------------------------------------------------------------------------------------------
 # - Lints

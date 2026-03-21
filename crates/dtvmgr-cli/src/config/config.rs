@@ -9,7 +9,7 @@ use dtvmgr_jlse::validate::DEFAULT_RULES;
 use serde::{Deserialize, Serialize};
 
 /// Top-level application configuration.
-#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct AppConfig {
     /// Syoboi Calendar settings.
     #[serde(default)]
@@ -399,6 +399,8 @@ impl AppConfig {
 
         Self::write_duration_check(&mut out, enc.duration_check.as_deref());
 
+        Self::write_quality_search(&mut out, enc.quality_search.as_ref());
+
         out
     }
 
@@ -574,6 +576,104 @@ impl AppConfig {
         }
     }
 
+    /// Write `[jlse.encode.quality_search]` section.
+    ///
+    /// When the user has configured quality search, active values are written.
+    /// Otherwise, defaults are written as comments so users can see the
+    /// available fields.
+    fn write_quality_search(
+        out: &mut String,
+        qs: Option<&dtvmgr_jlse::types::QualitySearchConfig>,
+    ) {
+        out.push_str(
+            "\n# VMAF-based quality parameter search.\n\
+             # When enabled, automatically determines the optimal CRF/ICQ\n\
+             # by sampling the input and measuring VMAF scores.\n",
+        );
+
+        match qs {
+            Some(q) if q.enabled => {
+                out.push_str("\n[jlse.encode.quality_search]\n");
+                let mut entries: Vec<(&str, String)> = vec![
+                    ("enabled", String::from("enabled = true\n")),
+                    (
+                        "max_encoded_percent",
+                        Self::format_optional_f32(
+                            "max_encoded_percent",
+                            q.max_encoded_percent,
+                            80.0,
+                        ),
+                    ),
+                    (
+                        "max_samples",
+                        Self::format_optional_u32("max_samples", q.max_samples, 15),
+                    ),
+                    (
+                        "min_samples",
+                        Self::format_optional_u32("min_samples", q.min_samples, 5),
+                    ),
+                    (
+                        "sample_duration_secs",
+                        Self::format_optional_f64(
+                            "sample_duration_secs",
+                            q.sample_duration_secs,
+                            3.0,
+                        ),
+                    ),
+                    (
+                        "sample_every_secs",
+                        Self::format_optional_f64("sample_every_secs", q.sample_every_secs, 720.0),
+                    ),
+                    (
+                        "skip_secs",
+                        Self::format_optional_f64("skip_secs", q.skip_secs, 120.0),
+                    ),
+                    (
+                        "vmaf_subsample",
+                        Self::format_optional_u32("vmaf_subsample", q.vmaf_subsample, 5),
+                    ),
+                    (
+                        "target_vmaf",
+                        Self::format_optional_f32("target_vmaf", q.target_vmaf, 93.0),
+                    ),
+                    (
+                        "thorough",
+                        q.thorough.map_or_else(
+                            || String::from("# thorough = true\n"),
+                            |v| format!("thorough = {v}\n"),
+                        ),
+                    ),
+                ];
+                Self::write_sorted_entries(out, &mut entries);
+            }
+            _ => {
+                out.push_str("# [jlse.encode.quality_search]\n");
+                let mut entries: Vec<(&str, String)> = vec![
+                    ("enabled", String::from("# enabled = true\n")),
+                    (
+                        "max_encoded_percent",
+                        String::from("# max_encoded_percent = 80\n"),
+                    ),
+                    ("max_samples", String::from("# max_samples = 15\n")),
+                    ("min_samples", String::from("# min_samples = 5\n")),
+                    (
+                        "sample_duration_secs",
+                        String::from("# sample_duration_secs = 3\n"),
+                    ),
+                    (
+                        "sample_every_secs",
+                        String::from("# sample_every_secs = 720\n"),
+                    ),
+                    ("skip_secs", String::from("# skip_secs = 120\n")),
+                    ("target_vmaf", String::from("# target_vmaf = 93.0\n")),
+                    ("thorough", String::from("# thorough = true\n")),
+                    ("vmaf_subsample", String::from("# vmaf_subsample = 5\n")),
+                ];
+                Self::write_sorted_entries(out, &mut entries);
+            }
+        }
+    }
+
     /// Format an always-active path field.
     fn format_path(key: &str, value: &Path) -> String {
         format!("{key} = \"{}\"\n", value.display())
@@ -620,6 +720,22 @@ impl AppConfig {
 
     /// Format an optional u32 field as a TOML line (active or commented).
     fn format_optional_u32(key: &str, value: Option<u32>, hint: u32) -> String {
+        value.map_or_else(
+            || format!("# {key} = {hint}\n"),
+            |v| format!("{key} = {v}\n"),
+        )
+    }
+
+    /// Format an optional f32 field as a TOML line (active or commented).
+    fn format_optional_f32(key: &str, value: Option<f32>, hint: f32) -> String {
+        value.map_or_else(
+            || format!("# {key} = {hint}\n"),
+            |v| format!("{key} = {v}\n"),
+        )
+    }
+
+    /// Format an optional f64 field as a TOML line (active or commented).
+    fn format_optional_f64(key: &str, value: Option<f64>, hint: f64) -> String {
         value.map_or_else(
             || format!("# {key} = {hint}\n"),
             |v| format!("{key} = {v}\n"),
@@ -693,7 +809,7 @@ impl AppConfig {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
     use std::path::PathBuf;
 
@@ -787,6 +903,7 @@ mod tests {
                     video: None,
                     audio: None,
                     duration_check: None,
+                    quality_search: None,
                 }),
             }),
             ..AppConfig::default()
@@ -1089,5 +1206,347 @@ mod tests {
             AppConfig::format_list("items", &[1], ToString::to_string, Some("# comment\n"));
         assert!(result.starts_with("# comment\n"));
         assert!(result.contains("items = [1]"));
+    }
+
+    // ── format_optional_f32 / format_optional_f64 ─────────────────
+
+    #[test]
+    fn test_format_optional_f32_with_value() {
+        let result = AppConfig::format_optional_f32("score", Some(95.5), 93.0);
+        assert_eq!(result, "score = 95.5\n");
+    }
+
+    #[test]
+    fn test_format_optional_f32_hint_only() {
+        let result = AppConfig::format_optional_f32("score", None, 93.0);
+        assert_eq!(result, "# score = 93\n");
+    }
+
+    #[test]
+    fn test_format_optional_f64_with_value() {
+        let result = AppConfig::format_optional_f64("duration", Some(3.5), 3.0);
+        assert_eq!(result, "duration = 3.5\n");
+    }
+
+    #[test]
+    fn test_format_optional_f64_hint_only() {
+        let result = AppConfig::format_optional_f64("duration", None, 3.0);
+        assert_eq!(result, "# duration = 3\n");
+    }
+
+    // ── write_quality_search ──────────────────────────────────────
+
+    #[test]
+    fn test_quality_search_enabled_all_fields() {
+        use dtvmgr_jlse::types::QualitySearchConfig;
+
+        // Arrange
+        let qs = QualitySearchConfig {
+            enabled: true,
+            target_vmaf: Some(95.0),
+            max_encoded_percent: Some(70.0),
+            min_vmaf_tolerance: None,
+            thorough: Some(false),
+            sample_duration_secs: Some(5.0),
+            skip_secs: Some(60.0),
+            sample_every_secs: Some(600.0),
+            min_samples: Some(3),
+            max_samples: Some(10),
+            vmaf_subsample: Some(3),
+        };
+
+        // Act
+        let mut out = String::new();
+        AppConfig::write_quality_search(&mut out, Some(&qs));
+
+        // Assert — section header is active (not commented)
+        assert!(out.contains("[jlse.encode.quality_search]\n"));
+        assert!(!out.contains("# [jlse.encode.quality_search]"));
+        assert!(out.contains("enabled = true\n"));
+        assert!(out.contains("target_vmaf = 95\n"));
+        assert!(out.contains("vmaf_subsample = 3\n"));
+        assert!(out.contains("sample_every_secs = 600\n"));
+        assert!(out.contains("sample_duration_secs = 5\n"));
+        assert!(out.contains("skip_secs = 60\n"));
+        assert!(out.contains("min_samples = 3\n"));
+        assert!(out.contains("max_samples = 10\n"));
+        assert!(out.contains("max_encoded_percent = 70\n"));
+        assert!(out.contains("thorough = false\n"));
+    }
+
+    #[test]
+    fn test_quality_search_none_commented() {
+        // Act
+        let mut out = String::new();
+        AppConfig::write_quality_search(&mut out, None);
+
+        // Assert — entire section is commented out
+        assert!(out.contains("# [jlse.encode.quality_search]"));
+        assert!(out.contains("# enabled = true\n"));
+        assert!(out.contains("# target_vmaf = 93.0\n"));
+        assert!(out.contains("# vmaf_subsample = 5\n"));
+        assert!(out.contains("# sample_every_secs = 720\n"));
+    }
+
+    #[test]
+    fn test_quality_search_disabled_commented() {
+        use dtvmgr_jlse::types::QualitySearchConfig;
+
+        // Arrange — enabled = false falls into the `_` arm
+        let qs = QualitySearchConfig {
+            enabled: false,
+            target_vmaf: Some(95.0),
+            max_encoded_percent: None,
+            min_vmaf_tolerance: None,
+            thorough: None,
+            sample_duration_secs: None,
+            skip_secs: None,
+            sample_every_secs: None,
+            min_samples: None,
+            max_samples: None,
+            vmaf_subsample: None,
+        };
+
+        // Act
+        let mut out = String::new();
+        AppConfig::write_quality_search(&mut out, Some(&qs));
+
+        // Assert — treated as commented (same as None)
+        assert!(out.contains("# [jlse.encode.quality_search]"));
+        assert!(out.contains("# enabled = true\n"));
+    }
+
+    #[test]
+    fn test_quality_search_partial_fields() {
+        use dtvmgr_jlse::types::QualitySearchConfig;
+
+        // Arrange — enabled with only some fields set
+        let qs = QualitySearchConfig {
+            enabled: true,
+            target_vmaf: Some(93.0),
+            max_encoded_percent: None,
+            min_vmaf_tolerance: None,
+            thorough: None,
+            sample_duration_secs: None,
+            skip_secs: None,
+            sample_every_secs: None,
+            min_samples: None,
+            max_samples: None,
+            vmaf_subsample: None,
+        };
+
+        // Act
+        let mut out = String::new();
+        AppConfig::write_quality_search(&mut out, Some(&qs));
+
+        // Assert — active section with mix of set and commented fields
+        assert!(out.contains("[jlse.encode.quality_search]\n"));
+        assert!(out.contains("enabled = true\n"));
+        assert!(out.contains("target_vmaf = 93\n"));
+        // Unset fields use commented hints
+        assert!(out.contains("# max_encoded_percent = 80\n"));
+        assert!(out.contains("# vmaf_subsample = 5\n"));
+        assert!(out.contains("# sample_every_secs = 720\n"));
+        assert!(out.contains("# sample_duration_secs = 3\n"));
+        assert!(out.contains("# skip_secs = 120\n"));
+        assert!(out.contains("# min_samples = 5\n"));
+        assert!(out.contains("# max_samples = 15\n"));
+        assert!(out.contains("# thorough = true\n"));
+    }
+
+    #[test]
+    fn test_quality_search_roundtrip() {
+        use dtvmgr_jlse::types::{EncodeAudio, EncodeInput, EncodeVideo, QualitySearchConfig};
+
+        // Arrange
+        let config = AppConfig {
+            tmdb: TmdbConfig {
+                language: Some(String::from("ja-JP")),
+                ..TmdbConfig::default()
+            },
+            jlse: Some(JlseConfig {
+                dirs: JlseDirs::default(),
+                bins: JlseBins::default(),
+                encode: Some(JlseEncode {
+                    format: Some(String::from("mkv")),
+                    input: Some(EncodeInput {
+                        flags: Some(String::from("+discardcorrupt+genpts")),
+                        analyzeduration: Some(String::from("30M")),
+                        probesize: Some(String::from("100M")),
+                        init_hw_device: None,
+                        filter_hw_device: None,
+                        hwaccel: None,
+                        hwaccel_output_format: None,
+                        decoder: None,
+                    }),
+                    video: Some(EncodeVideo {
+                        codec: Some(String::from("libx264")),
+                        preset: Some(String::from("medium")),
+                        profile: Some(String::from("main")),
+                        pix_fmt: Some(String::from("yuv420p")),
+                        filter: None,
+                        aspect: None,
+                        extra: vec![],
+                    }),
+                    audio: Some(EncodeAudio {
+                        codec: Some(String::from("aac")),
+                        bitrate: Some(String::from("256k")),
+                        channels: Some(2),
+                        sample_rate: Some(48000),
+                        extra: vec![],
+                    }),
+                    duration_check: None,
+                    quality_search: Some(QualitySearchConfig {
+                        enabled: true,
+                        target_vmaf: Some(95.0),
+                        max_encoded_percent: Some(70.0),
+                        min_vmaf_tolerance: None,
+                        thorough: Some(true),
+                        sample_duration_secs: Some(5.0),
+                        skip_secs: Some(60.0),
+                        sample_every_secs: Some(600.0),
+                        min_samples: Some(3),
+                        max_samples: Some(10),
+                        vmaf_subsample: Some(3),
+                    }),
+                }),
+            }),
+            ..AppConfig::default()
+        };
+
+        // Act — serialize and re-parse
+        let toml_str = config.to_commented_toml();
+        let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
+
+        // Assert — quality_search fields survive roundtrip
+        let qs = parsed
+            .jlse
+            .as_ref()
+            .unwrap()
+            .encode
+            .as_ref()
+            .unwrap()
+            .quality_search
+            .as_ref()
+            .unwrap();
+        assert!(qs.enabled);
+        assert_eq!(qs.target_vmaf, Some(95.0));
+        assert_eq!(qs.max_encoded_percent, Some(70.0));
+        assert_eq!(qs.thorough, Some(true));
+        assert_eq!(qs.sample_duration_secs, Some(5.0));
+        assert_eq!(qs.skip_secs, Some(60.0));
+        assert_eq!(qs.sample_every_secs, Some(600.0));
+        assert_eq!(qs.min_samples, Some(3));
+        assert_eq!(qs.max_samples, Some(10));
+        assert_eq!(qs.vmaf_subsample, Some(3));
+    }
+
+    #[test]
+    fn test_to_commented_toml_with_duration_check_rules() {
+        // Arrange: config with custom duration_check rules
+        let config = AppConfig {
+            jlse: Some(JlseConfig {
+                dirs: JlseDirs::default(),
+                bins: JlseBins::default(),
+                encode: Some(JlseEncode {
+                    format: Some(String::from("mkv")),
+                    input: None,
+                    video: None,
+                    audio: None,
+                    duration_check: Some(vec![
+                        DurationCheckRule {
+                            min_min: 0,
+                            max_min: 30,
+                            min_percent: 60,
+                        },
+                        DurationCheckRule {
+                            min_min: 31,
+                            max_min: 120,
+                            min_percent: 70,
+                        },
+                    ]),
+                    quality_search: None,
+                }),
+            }),
+            ..AppConfig::default()
+        };
+
+        // Act
+        let toml_str = config.to_commented_toml();
+
+        // Assert: active (non-commented) duration_check entries
+        assert!(
+            toml_str.contains("[[jlse.encode.duration_check]]"),
+            "expected active duration_check entries in:\n{toml_str}"
+        );
+        assert!(toml_str.contains("min_percent = 60"));
+        assert!(toml_str.contains("min_percent = 70"));
+
+        // Roundtrip: parse back and verify
+        let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
+        let rules = parsed.jlse.unwrap().encode.unwrap().duration_check.unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].min_min, 0);
+        assert_eq!(rules[0].max_min, 30);
+        assert_eq!(rules[0].min_percent, 60);
+        assert_eq!(rules[1].min_min, 31);
+        assert_eq!(rules[1].max_min, 120);
+        assert_eq!(rules[1].min_percent, 70);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_load_nonexistent_creates_default() {
+        // Arrange: path that doesn't exist
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nonexistent.toml");
+
+        // Act
+        let config = AppConfig::load(&path).unwrap();
+
+        // Assert: default config is returned
+        assert!(config.syoboi.channels.selected.is_empty());
+        // File was created with default template
+        assert!(path.exists());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_load_unreadable_path_error() {
+        // Arrange: directory path (not a file) causes read error
+        let dir = tempfile::tempdir().unwrap();
+        // Use the directory itself as the config path
+        let result = AppConfig::load(dir.path());
+
+        // Assert: returns error
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("failed to read"),
+            "expected 'failed to read' in: {err}"
+        );
+    }
+
+    #[test]
+    fn test_to_commented_toml_with_hidden_storage_dirs() {
+        // Arrange
+        let config = AppConfig {
+            epgstation: EpgStationConfig {
+                hidden_storage_dirs: vec![String::from("/mnt/nas1"), String::from("/mnt/nas2")],
+                ..EpgStationConfig::default()
+            },
+            ..AppConfig::default()
+        };
+
+        // Act
+        let toml_str = config.to_commented_toml();
+
+        // Assert: active (non-commented) hidden_storage_dirs entries
+        assert!(
+            toml_str.contains("hidden_storage_dirs"),
+            "should contain hidden_storage_dirs key"
+        );
+        assert!(toml_str.contains("/mnt/nas1"));
+        assert!(toml_str.contains("/mnt/nas2"));
     }
 }
