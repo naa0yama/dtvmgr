@@ -134,10 +134,15 @@ const MAX_DRIFT_SECS: f64 = 5.0;
 /// Validate post-encode video/audio stream durations.
 ///
 /// Queries the video (`v:0`) and audio (`a:0`) stream durations from
-/// the encoded output file. Detects two failure modes:
+/// the encoded output file.  Some containers (notably MKV) do not
+/// store per-stream duration metadata, so when stream-level queries
+/// return `None` we fall back to the format-level (container) duration.
 ///
-/// 1. Video duration is missing/zero while audio exists → all frames dropped
-/// 2. Video and audio durations differ by more than 5 seconds → abnormal
+/// Detects three failure modes:
+///
+/// 1. Both durations missing/zero after fallback → file is broken
+/// 2. Only one stream missing/zero → that stream was dropped
+/// 3. Video and audio durations differ by more than 5 seconds → abnormal
 ///
 /// # Errors
 ///
@@ -149,26 +154,86 @@ pub fn check_post_encode_duration(ffprobe_bin: &Path, output_file: &Path) -> Res
     let audio_dur = ffprobe::stream_duration(ffprobe_bin, output_file, "a:0")
         .context("failed to get audio stream duration")?;
 
+    // MKV (and some other containers) do not expose per-stream duration.
+    // When a stream-level duration is missing we must distinguish two
+    // cases before falling back:
+    //   (a) Stream exists but the container omits duration metadata → safe
+    //       to substitute format-level duration.
+    //   (b) Stream does NOT exist → the encode genuinely lost that stream
+    //       and we must report it as None so validation fails.
+    let (video_dur, audio_dur) = if video_dur.is_some() && audio_dur.is_some() {
+        (video_dur, audio_dur)
+    } else {
+        let video_exists = ffprobe::stream_exists(ffprobe_bin, output_file, "v:0")
+            .context("failed to check video stream existence")?;
+        let audio_exists = ffprobe::stream_exists(ffprobe_bin, output_file, "a:0")
+            .context("failed to check audio stream existence")?;
+
+        info!(
+            video_stream_dur = ?video_dur,
+            audio_stream_dur = ?audio_dur,
+            video_exists,
+            audio_exists,
+            "stream-level duration unavailable, checking stream existence"
+        );
+
+        // Only fall back to format duration for streams that actually exist.
+        let fmt = if (video_dur.is_none() && video_exists) || (audio_dur.is_none() && audio_exists)
+        {
+            let d = ffprobe::duration(ffprobe_bin, output_file)
+                .context("failed to get format duration (fallback for missing stream durations)")?;
+            (d > 0.0).then_some(d)
+        } else {
+            None
+        };
+
+        (
+            video_dur.or_else(|| fmt.filter(|_| video_exists)),
+            audio_dur.or_else(|| fmt.filter(|_| audio_exists)),
+        )
+    };
+
     validate_post_encode_durations(video_dur, audio_dur)
 }
 
 /// Pure validation logic for post-encode durations.
+///
+/// Both streams **must** have a positive duration for the output file
+/// to be considered valid.  This is a safety-critical check — if it
+/// passes incorrectly the original TS file may be deleted.
 ///
 /// Separated from I/O for unit testing.
 fn validate_post_encode_durations(video_dur: Option<f64>, audio_dur: Option<f64>) -> Result<()> {
     info!(video = ?video_dur, audio = ?audio_dur, "post-encode duration check");
 
     match (video_dur, audio_dur) {
+        // Happy path: both streams have positive duration.
+        (Some(v), Some(a)) if v > 0.0 && a > 0.0 => {
+            if (v - a).abs() > MAX_DRIFT_SECS {
+                bail!(
+                    "video ({v:.1}s) and audio ({a:.1}s) durations differ by \
+                     {diff:.1}s (threshold: {MAX_DRIFT_SECS}s)",
+                    diff = (v - a).abs(),
+                );
+            }
+            Ok(())
+        }
+        // Video missing / zero while audio exists → frames dropped.
         (None | Some(0.0), Some(a)) if a > 0.0 => bail!(
             "video stream has no duration but audio is {a:.1}s — \
              likely all video frames were dropped"
         ),
-        (Some(v), Some(a)) if (v - a).abs() > MAX_DRIFT_SECS => bail!(
-            "video ({v:.1}s) and audio ({a:.1}s) durations differ by \
-             {diff:.1}s (threshold: {MAX_DRIFT_SECS}s)",
-            diff = (v - a).abs(),
+        // Audio missing / zero while video exists → samples dropped.
+        (Some(v), None | Some(0.0)) if v > 0.0 => bail!(
+            "audio stream has no duration but video is {v:.1}s — \
+             likely all audio samples were dropped"
         ),
-        _ => Ok(()),
+        // Everything else: both missing, both zero, negative, etc.
+        _ => bail!(
+            "cannot verify output file integrity: \
+             video={video_dur:?}, audio={audio_dur:?} — \
+             both streams must have positive duration"
+        ),
     }
 }
 
@@ -468,17 +533,45 @@ mod tests {
     }
 
     #[test]
-    fn post_encode_both_none_passes() {
-        // Arrange: both streams missing (e.g. audio-only encode)
+    fn post_encode_both_none_fails() {
+        // Arrange: both streams missing → file is broken
         // Act / Assert
-        assert!(validate_post_encode_durations(None, None).is_ok());
+        let result = validate_post_encode_durations(None, None);
+        assert!(result.is_err());
+        let msg = format!("{:#}", result.unwrap_err());
+        assert!(
+            msg.contains("cannot verify"),
+            "expected 'cannot verify' in: {msg}"
+        );
     }
 
     #[test]
-    fn post_encode_video_present_audio_none_passes() {
-        // Arrange: video-only output
+    fn post_encode_both_zero_fails() {
+        // Arrange: both streams report 0.0 duration → broken
         // Act / Assert
-        assert!(validate_post_encode_durations(Some(1800.0), None).is_ok());
+        let result = validate_post_encode_durations(Some(0.0), Some(0.0));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn post_encode_video_present_audio_none_fails() {
+        // Arrange: video ok but audio missing → audio dropped
+        // Act / Assert
+        let result = validate_post_encode_durations(Some(1800.0), None);
+        assert!(result.is_err());
+        let msg = format!("{:#}", result.unwrap_err());
+        assert!(
+            msg.contains("audio stream has no duration"),
+            "expected 'audio stream has no duration' in: {msg}"
+        );
+    }
+
+    #[test]
+    fn post_encode_video_present_audio_zero_fails() {
+        // Arrange: video ok but audio 0.0 → audio dropped
+        // Act / Assert
+        let result = validate_post_encode_durations(Some(1800.0), Some(0.0));
+        assert!(result.is_err());
     }
 
     #[test]
