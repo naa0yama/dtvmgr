@@ -5924,6 +5924,7 @@ mod tests {
     // ── record_storage_metrics (no otel) ────────────────────────
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_record_storage_dir_metrics_noop_without_otel() {
         // Act / Assert: should not panic
         record_storage_dir_metrics(Path::new("/tmp"), "test");
