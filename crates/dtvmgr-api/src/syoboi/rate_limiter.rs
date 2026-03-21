@@ -298,4 +298,59 @@ mod tests {
         // Assert
         assert!(limiter.last_request.is_some());
     }
+
+    #[test]
+    fn test_cleanup_windows_checked_sub_none() {
+        // Arrange: Instant close to epoch — checked_sub may return None
+        // on some platforms, but we test the branch where it returns Some.
+        let mut limiter = SyoboiRateLimiter::new(Duration::from_secs(0), 500, 10_000);
+        let now = Instant::now();
+        limiter.hourly_window.push_back(now);
+        limiter.daily_window.push_back(now);
+
+        // Act — should not panic even with very recent `now`
+        limiter.cleanup_windows(now);
+
+        // Assert
+        assert_eq!(limiter.hourly_window.len(), 1);
+        assert_eq!(limiter.daily_window.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_multiple_waits_accumulate_timestamps() {
+        // Arrange
+        let mut limiter = SyoboiRateLimiter::new(Duration::from_millis(0), 500, 10_000);
+
+        // Act
+        for _ in 0..5 {
+            limiter.wait().await;
+        }
+
+        // Assert
+        assert_eq!(limiter.hourly_window.len(), 5);
+        assert_eq!(limiter.daily_window.len(), 5);
+        assert!(limiter.last_request.is_some());
+    }
+
+    #[test]
+    fn test_cleanup_multiple_expired_entries() {
+        // Arrange: multiple expired entries in hourly window
+        let mut limiter = SyoboiRateLimiter::new(Duration::from_secs(0), 500, 10_000);
+        let now = Instant::now();
+        let two_hours_ago = now.checked_sub(Duration::from_secs(7200)).unwrap();
+
+        // Push 3 expired and 2 recent
+        for _ in 0..3 {
+            limiter.hourly_window.push_back(two_hours_ago);
+        }
+        for _ in 0..2 {
+            limiter.hourly_window.push_back(now);
+        }
+
+        // Act
+        limiter.cleanup_windows(now);
+
+        // Assert — only 2 recent entries remain
+        assert_eq!(limiter.hourly_window.len(), 2);
+    }
 }

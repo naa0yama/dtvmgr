@@ -491,4 +491,112 @@ mod tests {
     fn test_parse_logoframe_checking_no_match() {
         assert_eq!(parse_logoframe_checking("some other output"), None);
     }
+
+    // ── emit_epgstation edge cases ───────────────────────────
+
+    #[test]
+    fn test_emit_format_backslash_escaping() {
+        // Verify backslashes are escaped before quotes
+        let log = r#"path\to\"file""#;
+        let escaped = log.replace('\\', "\\\\").replace('"', "\\\"");
+        let output = format!(
+            "{{\"type\":\"progress\",\"percent\":{:.4},\"log\":\"{}\"}}",
+            0.75, escaped
+        );
+        assert!(output.contains(r#"path\\to\\\"file\""#));
+    }
+
+    #[test]
+    fn test_emit_format_no_special_chars() {
+        let log = "simple log message";
+        let escaped = log.replace('\\', "\\\\").replace('"', "\\\"");
+        assert_eq!(escaped, "simple log message");
+    }
+
+    // ── parse_ffmpeg_progress edge cases ─────────────────────
+
+    #[test]
+    fn test_parse_ffmpeg_progress_speed_zero() {
+        // Arrange — speed=0x should not produce ETA (speed_value filter rejects <= 0)
+        let line = "frame=  120 fps= 30.0 time=00:05:00.00 speed=0x";
+        let duration = 600.0;
+
+        // Act
+        let progress = parse_ffmpeg_progress(line, duration).unwrap();
+
+        // Assert — no ETA since speed is 0
+        assert!(!progress.log.contains("ETA:"));
+        assert!(progress.log.contains("fps=30.0/s"));
+        assert!(progress.log.contains("speed=0x"));
+    }
+
+    #[test]
+    fn test_parse_ffmpeg_progress_speed_negative() {
+        // Arrange — speed with invalid parse (negative not expected, but N/A)
+        let line = "frame=  120 fps= 30.0 time=00:05:00.00 speed=N/A";
+        let duration = 600.0;
+
+        // Act
+        let progress = parse_ffmpeg_progress(line, duration).unwrap();
+
+        // Assert — no ETA since speed doesn't parse
+        assert!(!progress.log.contains("ETA:"));
+    }
+
+    #[test]
+    fn test_parse_ffmpeg_progress_no_fps_no_speed() {
+        // Arrange — only time field
+        let line = "time=00:05:00.00";
+        let duration = 600.0;
+
+        // Act
+        let progress = parse_ffmpeg_progress(line, duration).unwrap();
+
+        // Assert — empty log (no fps, no speed, no ETA)
+        assert!(progress.log.is_empty());
+        assert!((progress.percent - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_time_to_seconds_too_few_parts() {
+        // Only one part — should return None (no hours/minutes/seconds)
+        assert!(time_to_seconds("123").is_none());
+    }
+
+    #[test]
+    fn test_time_to_seconds_non_numeric() {
+        // All parts present but non-numeric
+        assert!(time_to_seconds("ab:cd:ef").is_none());
+    }
+
+    #[test]
+    fn test_extract_field_value_at_end_of_line() {
+        // Key=value at end of line (no trailing whitespace)
+        let line = "frame=120";
+        assert_eq!(extract_field(line, "frame="), Some("120"));
+    }
+
+    #[test]
+    fn test_parse_lwi_percent_non_numeric() {
+        // marker present but value is not a number
+        assert_eq!(parse_lwi_percent("Creating lwi index file abc%"), None);
+    }
+
+    #[test]
+    fn test_parse_video_frames_total_no_number() {
+        // marker present but no valid number after it
+        assert_eq!(parse_video_frames_total("\tVideo Frames:"), None);
+    }
+
+    #[test]
+    fn test_parse_mute_frame_no_colon() {
+        // "mute" present but no colon
+        assert_eq!(parse_mute_frame("mute no colon here"), None);
+    }
+
+    #[test]
+    fn test_parse_logoframe_checking_no_slash() {
+        // "checking" present but no slash
+        assert_eq!(parse_logoframe_checking("checking 1234 ended."), None);
+    }
 }

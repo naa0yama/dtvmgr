@@ -874,4 +874,141 @@ mod tests {
         // Assert
         assert_eq!(filtered, vec!["anime"]);
     }
+
+    #[test]
+    fn test_parse_keywords_none() {
+        // Act
+        let result = parse_keywords(None);
+
+        // Assert
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_keywords_empty_string() {
+        // Act
+        let result = parse_keywords(Some(String::new()));
+
+        // Assert
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_keywords_with_whitespace_entries() {
+        // Act
+        let result = parse_keywords(Some(String::from("anime, , comedy,  ,action")));
+
+        // Assert — empty and whitespace-only entries filtered out
+        assert_eq!(result, vec!["anime", "comedy", "action"]);
+    }
+
+    #[test]
+    fn test_serialize_keywords_non_empty() {
+        // Arrange
+        let keywords = vec![String::from("spy"), String::from("family")];
+
+        // Act
+        let result = serialize_keywords(&keywords);
+
+        // Assert
+        assert_eq!(result, Some(String::from("spy,family")));
+    }
+
+    #[test]
+    fn test_serialize_keywords_empty() {
+        // Act
+        let result = serialize_keywords(&[]);
+
+        // Assert
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_filter_keywords_all_excluded() {
+        // Arrange — every keyword matches an exclusion rule
+        let keywords = vec![
+            String::from("wikipedia:page"),
+            String::from("Test Title"),
+            String::from("  "),
+        ];
+
+        // Act
+        let filtered = filter_keywords(&keywords, "Test Title", None);
+
+        // Assert
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn test_filter_keywords_empty_input() {
+        // Act
+        let filtered = filter_keywords(&[], "Test Title", None);
+
+        // Assert
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_upsert_empty_titles() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+
+        // Act
+        let changed = upsert_titles(&conn, &[]).unwrap();
+
+        // Assert
+        assert_eq!(changed, 0);
+        let loaded = load_titles(&conn).unwrap();
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_update_tmdb_mapping_nonexistent_tid() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+
+        // Act — updating a row that doesn't exist should succeed (0 rows affected)
+        update_tmdb_mapping(&conn, 99999, Some(100), Some(1), Some(200)).unwrap();
+
+        // Assert
+        let loaded = load_titles(&conn).unwrap();
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_load_titles_by_tids_no_matches() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let titles = vec![make_title(100, "Title A", "2024-01-01 00:00:00")];
+        upsert_titles(&conn, &titles).unwrap();
+
+        // Act — query tids that don't exist
+        let loaded = load_titles_by_tids(&conn, &[999, 888]).unwrap();
+
+        // Assert
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_delete_titles_by_cat_all_allowed() {
+        // Arrange: all titles have allowed cats
+        let (conn, _dir) = setup_db();
+        let titles = vec![
+            make_title_with_cat(1, "Anime", Some(1)),
+            make_title_with_cat(2, "OVA", Some(7)),
+        ];
+        upsert_titles(&conn, &titles).unwrap();
+
+        // Act
+        let deleted = delete_titles_by_cat_not_in(&conn, &[1, 7]).unwrap();
+        let remaining = load_titles(&conn).unwrap();
+
+        // Assert
+        assert_eq!(deleted, 0);
+        assert_eq!(remaining.len(), 2);
+    }
 }
