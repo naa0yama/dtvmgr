@@ -253,6 +253,9 @@ case ":$PATH:" in
 esac
 alias cc="claude --dangerously-skip-permissions"
 
+# dtvmgr
+eval "$(dtvmgr completion bash)"
+
 _DOC_
 EOF
 

@@ -87,6 +87,23 @@ pub fn parse_frame_rate(s: &str) -> Result<FrameRate> {
     })
 }
 
+/// Check whether a specific stream exists in `input_file`.
+///
+/// Queries the `codec_name` property; returns `true` if the stream
+/// is present (non-empty output), `false` otherwise.
+///
+/// # Errors
+///
+/// Returns an error if `ffprobe` itself fails to run.
+#[instrument(skip_all, err(level = "error"))]
+pub fn stream_exists(binary: &Path, input_file: &Path, stream: &str) -> Result<bool> {
+    let args = build_probe_args(input_file, stream, "stream=codec_name");
+    let os_args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    let stdout = super::run_capture(binary, &os_args)
+        .with_context(|| format!("failed to check stream existence for {stream}"))?;
+    Ok(!stdout.trim().is_empty())
+}
+
 /// Query the duration of a specific stream in `input_file` using `ffprobe`.
 ///
 /// Returns `Ok(None)` if the stream does not exist or reports `N/A`.
@@ -403,6 +420,53 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
+    }
+
+    // ── stream_exists via write_script ─────────────────
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_stream_exists_true() {
+        // Arrange: ffprobe returns a codec name → stream exists
+        let dir = tempfile::tempdir().unwrap();
+        let script = super::super::test_utils::write_script(
+            dir.path(),
+            "ffprobe.sh",
+            "#!/bin/sh\necho 'av1'",
+        );
+        let input = dir.path().join("video.mkv");
+        std::fs::write(&input, "dummy").unwrap();
+
+        // Act / Assert
+        assert!(stream_exists(&script, &input, "v:0").unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_stream_exists_false() {
+        // Arrange: ffprobe returns empty → stream does not exist
+        let dir = tempfile::tempdir().unwrap();
+        let script =
+            super::super::test_utils::write_script(dir.path(), "ffprobe.sh", "#!/bin/sh\necho ''");
+        let input = dir.path().join("video.mkv");
+        std::fs::write(&input, "dummy").unwrap();
+
+        // Act / Assert
+        assert!(!stream_exists(&script, &input, "v:0").unwrap());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_stream_exists_failure() {
+        // Arrange: ffprobe exits with error
+        let dir = tempfile::tempdir().unwrap();
+        let script =
+            super::super::test_utils::write_script(dir.path(), "ffprobe.sh", "#!/bin/sh\nexit 1");
+        let input = dir.path().join("video.mkv");
+        std::fs::write(&input, "dummy").unwrap();
+
+        // Act / Assert
+        assert!(stream_exists(&script, &input, "v:0").is_err());
     }
 
     // ── stream_duration via write_script ───────────────
