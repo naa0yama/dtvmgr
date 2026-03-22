@@ -7,15 +7,15 @@
 		{
 			"type": "lldb",
 			"request": "launch",
-			"name": "Debug executable 'app'",
+			"name": "Debug executable 'dtvmgr'",
 			"cargo": {
 				"args": [
 					"build",
-					"--bin=app",
-					"--package=app"
+					"--bin=dtvmgr",
+					"--package=dtvmgr"
 				],
 				"filter": {
-					"name": "app",
+					"name": "dtvmgr",
 					"kind": "bin"
 				}
 			},
@@ -25,16 +25,16 @@
 		{
 			"type": "lldb",
 			"request": "launch",
-			"name": "Debug unit tests in executable 'app'",
+			"name": "Debug unit tests in executable 'dtvmgr'",
 			"cargo": {
 				"args": [
 					"test",
 					"--no-run",
-					"--bin=app",
-					"--package=app"
+					"--bin=dtvmgr",
+					"--package=dtvmgr"
 				],
 				"filter": {
-					"name": "app",
+					"name": "dtvmgr",
 					"kind": "bin"
 				}
 			},

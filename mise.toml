@@ -163,6 +163,35 @@ esac
 curl -fsSL https://claude.ai/install.sh | bash
 """
 
+[tasks."badges:init"]
+description = "Initialize orphan badges branch with empty placeholder files"
+run = """
+set -euo pipefail
+
+# Idempotent: skip if remote badges branch already exists
+if git ls-remote --heads origin badges | grep -q badges; then
+  echo 'Remote badges branch already exists — skipping.'
+  exit 0
+fi
+
+# Create orphan branch in a temporary worktree
+tmp="$(mktemp -d)"
+trap 'git worktree remove --force "${tmp}" 2>/dev/null; rm -rf "${tmp}"' EXIT
+git worktree add --detach "${tmp}"
+git -C "${tmp}" config --local --unset core.hookspath 2>/dev/null || true
+cd "${tmp}"
+git checkout --orphan badges
+git clean -fd > /dev/null 2>&1
+
+# Empty placeholders — octocov overwrites these on first CI run
+touch coverage.svg time.svg
+git add coverage.svg time.svg
+git commit -m "chore: initialize badges branch"
+git push origin badges
+
+echo 'badges branch initialized. Badges will be generated on first CI run.'
+"""
+
 [tasks."o2:install"]
 description = "Install OpenObserve Enterprise to ~/.local/bin"
 run = """
