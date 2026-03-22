@@ -1,5 +1,4 @@
 # Clippy設定ファイル
-# docs/project_rules.md のルールに準拠した設定
 
 # 複雑度閾値の設定
 cognitive-complexity-threshold = 25
