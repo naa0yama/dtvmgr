@@ -99,7 +99,7 @@ jobs:
           git fetch origin "${PR_BRANCH}"
           git checkout -f "${PR_BRANCH}"
           unset RUSTC_WRAPPER
-          RUSTC_WRAPPER='' cargo generate-lockfile
+          "$(rustup which cargo)" generate-lockfile
           if ! git diff --quiet Cargo.lock; then
             FILE_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/contents/Cargo.lock?ref=${PR_BRANCH}" --jq '.sha')
             jq -n \
