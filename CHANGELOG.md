@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.2.6](https://github.com/naa0yama/dtvmgr/compare/v0.2.5...v0.2.6) - 2026-03-22
+### Development Environment 🔧
+- chore(deps): update taiki-e/install-action action to v2.68.31 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/114
+- chore: backport boilerplate-rust infrastructure changes by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/116
+
 ## [v0.2.5](https://github.com/naa0yama/dtvmgr/compare/v0.2.4...v0.2.5) - 2026-03-22
 
 ### Documentation 🗒️
