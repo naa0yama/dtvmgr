@@ -15,6 +15,7 @@
 crates/
 ├── dtvmgr-cli/      # CLI エントリーポイント・設定管理・TUI
 ├── dtvmgr-jlse/     # CM 検出パイプライン (チャンネル検出、パラメータ、エンコード、バリデーション)
+├── dtvmgr-vmaf/     # VMAF ベース品質パラメータ探索 (補間二分探索)
 ├── dtvmgr-tsduck/   # TSDuck ラッパー (PAT/EIT パース、TS シーク)
 ├── dtvmgr-api/      # 外部 API クライアント (しょぼいカレンダー、TMDB)
 └── dtvmgr-db/       # SQLite キャッシュ DB
@@ -61,7 +62,8 @@ dtvmgr jlse run --input recording.ts --encode \
   --add-chapter \
   --target cutcm_logo \
   --outdir /output/ \
-  --skip-duration-check       # エンコード前の尺チェックをスキップ
+  --skip-duration-check \
+  --force
 
 # TUI モード
 dtvmgr jlse run --input recording.ts --encode --tui
@@ -89,6 +91,7 @@ dtvmgr jlse tsduck --input /path/to/recording.ts
 | `[jlse.bins]`                    | 外部バイナリパス                      |
 | `[jlse.encode]`                  | エンコード設定 (format, video, audio) |
 | `[[jlse.encode.duration_check]]` | エンコード前尺チェックルール          |
+| `[jlse.encode.quality_search]`   | VMAF 品質探索設定                     |
 
 ### エンコード前尺チェック
 
@@ -110,6 +113,29 @@ dtvmgr jlse tsduck --input /path/to/recording.ts
 min_min = 0
 max_min = 10
 min_percent = 68
+```
+
+### VMAF 品質探索
+
+エンコード前に VMAF (Video Multi-Method Assessment Fusion) スコアを基準とした最適な品質パラメータ(CRF 等)を補間二分探索で自動決定します。TS からサンプルを抽出し、1080p にアップスケールした VMAF 測定を行い、目標スコアを満たす最適値を探索します。
+
+対応エンコーダプリセット: `av1_qsv`, `libsvtav1`, `h264_qsv`, `hevc_qsv`, `libx264`, `libx265`
+
+設定例:
+
+```toml
+[jlse.encode.quality_search]
+enabled = true
+target_vmaf = 95.0
+max_encoded_percent = 80
+min_vmaf_tolerance = 0.5
+sample_duration_secs = 20
+skip_secs = 30
+sample_every_secs = 720
+min_samples = 3
+max_samples = 10
+vmaf_subsample = 1
+thorough = false
 ```
 
 ## 開発

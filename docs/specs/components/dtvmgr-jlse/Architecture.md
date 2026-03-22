@@ -1,4 +1,4 @@
-# recmgr-jlse Architecture
+# dtvmgr-jlse Architecture
 
 > 親ドキュメント: [IMPROVEMENT_PLAN.md](../../archive/IMPROVEMENT_PLAN.md) (アーカイブ)
 
@@ -59,8 +59,13 @@ flowchart TD
 
     OUT_AVS --> FILTER_CHECK{--filter ?}
     FILTER_CHECK -->|Yes| FFMPEG_FILTER[FFmpeg フィルタ生成]
-    FILTER_CHECK -->|No| ENCODE_CHECK
+    FILTER_CHECK -->|No| QS_CHECK
 
+    FFMPEG_FILTER --> QS_CHECK{quality_search<br/>enabled ?}
+    QS_CHECK -->|Yes| VMAF_SEARCH[VMAF 品質探索<br/>dtvmgr-vmaf<br/>補間二分探索]
+    QS_CHECK -->|No| ENCODE_CHECK
+
+    VMAF_SEARCH --> ENCODE_CHECK
     OUT_CHAPTER --> ENCODE_CHECK{--encode ?}
     ENCODE_CHECK -->|Yes| FFMPEG[ffmpeg エンコード]
     ENCODE_CHECK -->|No| REMOVE_CHECK
@@ -90,6 +95,7 @@ flowchart TD
 | AVS 連結        | [output_avs.md](./output_avs.md)       | 2     | **完了** | AVS ファイル連結                        |
 | チャプター生成  | [chapter.md](./chapter.md)             | 3     | **完了** | TrimReader + CreateChapter + OutputData |
 | パイプライン    | [pipeline.md](./pipeline.md)           | 3     | **完了** | オーケストレーション + CLI              |
+| VMAF 品質探索   | [pipeline.md](./pipeline.md)           | 4     | **完了** | VMAF ベース品質パラメータ自動探索       |
 | ffmpeg          | [ffmpeg.md](./ffmpeg.md)               | 4     | 未実装   | エンコード実行                          |
 | FFmpeg フィルタ | [ffmpeg_filter.md](./ffmpeg_filter.md) | 4     | 未実装   | filter_complex 文字列生成               |
 
@@ -196,9 +202,10 @@ crates/dtvmgr-jlse/src/
 
 ### 追加予定
 
-| クレート | 用途             |
-| -------- | ---------------- |
-| `clap`   | CLI 引数パーサー |
+| クレート       | 用途                          |
+| -------------- | ----------------------------- |
+| `clap`         | CLI 引数パーサー              |
+| `dtvmgr-vmaf`  | VMAF ベース品質パラメータ探索 |
 
 ---
 

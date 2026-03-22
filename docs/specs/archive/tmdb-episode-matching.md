@@ -145,7 +145,7 @@ GET https://api.themoviedb.org/3/tv/295366/season/1?language=ja-JP
 ### Rust 実装
 
 自前の `TmdbClient` (`dtvmgr-api` クレート) を使用。
-詳細は [TmdbClient 仕様](./recmgr-api/tmdbClient.md) を参照。
+詳細は [TmdbClient 仕様](../components/dtvmgr-api/tmdbClient.md) を参照。
 
 ---
 

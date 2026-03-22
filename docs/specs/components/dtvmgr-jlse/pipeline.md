@@ -32,6 +32,7 @@
 | (なし)           |       | `boolean` | `false`        | TUI 進捗表示                     | `--tui`                 |
 | (なし)           |       | `boolean` | `false`        | EPGStation モード                | `--epgstation`          |
 | (なし)           |       | `boolean` | `false`        | エンコード前尺チェックをスキップ | `--skip-duration-check` |
+| (なし)           |       | `boolean` | `false`        | ステップキャッシュを無視して再実行 | `--force`             |
 
 ### パイプライン実行順序
 
@@ -42,17 +43,22 @@
 3. パラメータ検出 ([param.md](./param.md))
 4. `obs_param.txt` 書き出し
 5. 入力 AVS 生成 ([avs.md](./avs.md))
-6. chapter_exe ([chapter_exe.md](./chapter_exe.md))
-7. logoframe ([logoframe.md](./logoframe.md))
-8. join_logo_scp ([join_logo_scp.md](./join_logo_scp.md))
+6. chapter_exe ([chapter_exe.md](./chapter_exe.md)) ※ステップキャッシュ対象
+7. logoframe ([logoframe.md](./logoframe.md)) ※ステップキャッシュ対象
+8. join_logo_scp ([join_logo_scp.md](./join_logo_scp.md)) ※ステップキャッシュ対象
 9. AVS 連結 ([output_avs.md](./output_avs.md))
 10. チャプター生成 ([chapter.md](./chapter.md))
 11. (任意) FFmpeg フィルタ生成 ([ffmpeg_filter.md](./ffmpeg_filter.md))
+11.5. (任意) VMAF 品質探索 (`quality_search.enabled` 時)
 12. (任意) エンコード
     - 12a. EIT 抽出 (MKV メタデータ用)
     - 12b. エンコード前尺チェック ([validate.md](./validate.md))
     - 12c. ffmpeg エンコード ([ffmpeg.md](./ffmpeg.md))
 13. (任意) 中間ファイル削除
+
+**ステップキャッシュ**: `chapter_exe`, `logoframe`, `join_logo_scp` の出力はキャッシュされ、再実行時にスキップされる。`--force` フラグでキャッシュを無視して再実行可能。
+
+**動的ステージ数**: 品質探索が有効な場合はステージ数が 5 に増加する(無効時は 4)。パイプラインサマリは構造化ログ(入力/出力のネスト JSON)として出力される。
 
 ### CLI サブコマンド
 
@@ -99,6 +105,7 @@ dtvmgr jlse run --input /path/to/recording.ts [--encode] [--filter]
 dtvmgr jlse run --input /path/to/recording.ts --encode --tui
 dtvmgr jlse run --epgstation [--tui]
 dtvmgr jlse run --input /path/to/recording.ts --encode --skip-duration-check
+dtvmgr jlse run --input /path/to/recording.ts --encode --force
 ```
 
 ## 型定義
@@ -119,6 +126,8 @@ pub struct PipelineContext {
     pub remove: bool,
     pub progress_mode: Option<ProgressMode>,
     pub skip_duration_check: bool,
+    pub force: bool,
+    pub out_extension: Option<String>,
 }
 
 /// Encode target AVS selection.
@@ -130,10 +139,20 @@ pub enum AvsTarget {
 }
 ```
 
+## VMAF 品質探索
+
+`[jlse.encode.quality_search]` が有効な場合、フィルタ生成後・エンコード前に VMAF ベースの品質パラメータ探索(Step 11.5)を実行する。`dtvmgr-vmaf` クレートを利用し、補間二分探索アルゴリズムで目標 VMAF スコアを満たす最適な CRF 値を自動決定する。
+
+- TS からサンプルを `-c:v copy` で抽出
+- 1080p にアップスケールした VMAF 測定
+- `n_subsample` によるVMAF 計算の高速化をサポート
+- 対応エンコーダ: `av1_qsv`, `libsvtav1`, `h264_qsv`, `hevc_qsv`, `libx264`, `libx265`
+
 ## テスト方針
 
 - CLI 引数パース: `clap` でのパース結果が正しいこと
 - パイプライン全体の結合テスト (外部バイナリはモック)
+- VMAF 品質探索: モックベースのパイプラインテスト
 
 ## 依存モジュール
 
