@@ -154,7 +154,7 @@ pub enum AvsTarget {
 
 - **`build_vmaf_hw_input_args`**: `JlseEncode` の `input.init_hw_device` / `input.filter_hw_device` を抽出し、`-init_hw_device` / `-filter_hw_device` 引数を生成する。HW フィルタデバイスが未設定の場合は空の `Vec` を返す
 - **`build_vmaf_video_filter`**: `filter_hw_device` が設定されている場合は `prepare_hw_filter` に委譲し、`hwupload=extra_hw_frames=64` の先頭付加と `vpp_qsv` セグメントへの `format={pix_fmt}` インジェクションを行う。SW フィルタの場合はそのまま返す
-- **`build_vmaf_reference_filter`**: HW フィルタ使用時に `{video_filter},hwdownload` を返す。FFV1 は CPU のみのエンコーダであるため、QSV VPP が出力する HW サーフェスフレームを `hwdownload` でシステムメモリに戻す必要がある。HW フィルタが未設定の場合は `None` を返し、呼び出し側は `video_filter` にフォールバックする
+- **`build_vmaf_reference_filter`**: HW フィルタ使用時に `{video_filter},hwdownload,format={fmt}` を返す。FFV1 は CPU のみのエンコーダであるため、QSV VPP が出力する HW サーフェスフレームを `hwdownload` でシステムメモリに戻す必要がある。`hwdownload` 後に明示的な `format=` が必要であり、`pix_fmt` が設定されている場合はその値を、未設定の場合は `nv12` をデフォルトとして使用する。HW フィルタが未設定の場合は `None` を返し、呼び出し側は `video_filter` にフォールバックする
 
 ### VPP フィルタバリデーション
 

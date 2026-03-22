@@ -10,7 +10,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
-use tracing::instrument;
+use tracing::{info, instrument};
 
 /// The string prefix ffmpeg prints before the final VMAF score.
 const SCORE_PREFIX: &str = "VMAF score: ";
@@ -40,22 +40,26 @@ pub(crate) fn measure_vmaf(
          [distorted][reference]libvmaf=model=version=vmaf_v0.6.1:n_subsample={n_subsample}"
     );
 
+    let args = [
+        OsStr::new("-i"),
+        distorted.as_os_str(),
+        OsStr::new("-i"),
+        reference.as_os_str(),
+        OsStr::new("-filter_complex"),
+        OsStr::new(&filter_complex),
+        OsStr::new("-an"),
+        OsStr::new("-sn"),
+        OsStr::new("-dn"),
+        OsStr::new("-hide_banner"),
+        OsStr::new("-f"),
+        OsStr::new("null"),
+        OsStr::new("-"),
+    ];
+
+    info!(cmd = %ffmpeg.display(), ?args, "running command (measure VMAF)");
+
     let mut child = Command::new(ffmpeg)
-        .args([
-            OsStr::new("-i"),
-            distorted.as_os_str(),
-            OsStr::new("-i"),
-            reference.as_os_str(),
-            OsStr::new("-filter_complex"),
-            OsStr::new(&filter_complex),
-            OsStr::new("-an"),
-            OsStr::new("-sn"),
-            OsStr::new("-dn"),
-            OsStr::new("-hide_banner"),
-            OsStr::new("-f"),
-            OsStr::new("null"),
-            OsStr::new("-"),
-        ])
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

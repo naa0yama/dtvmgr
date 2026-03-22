@@ -1,10 +1,14 @@
 # Changelog
 
 ## [v0.3.0](https://github.com/naa0yama/dtvmgr/compare/v0.2.6...v0.3.0) - 2026-03-22
+
 ### Development Environment 🔧
+
 - fix(tagpr): update Cargo.lock via workflow step by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/121
 - fix(tagpr): use postVersionCommand with MISE_ENV profile by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/122
+
 ### Other Changes
+
 - fix(tagpr): stage Cargo.lock in postVersionCommand by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/118
 
 ## [v0.2.6](https://github.com/naa0yama/dtvmgr/compare/v0.2.5...v0.2.6) - 2026-03-22

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-use tracing::{debug, instrument};
+use tracing::{info, instrument};
 
 use crate::types::EncoderConfig;
 
@@ -98,17 +98,7 @@ pub(crate) fn encode_sample(
 
     args.push(output.as_os_str());
 
-    debug!(
-        cmd = format!(
-            "{} {}",
-            ffmpeg.display(),
-            args.iter()
-                .map(|a| a.to_string_lossy().to_string())
-                .collect::<Vec<_>>()
-                .join(" ")
-        ),
-        "encoding sample"
-    );
+    info!(cmd = %ffmpeg.display(), ?args, "running command (encode sample)");
 
     let status = Command::new(ffmpeg)
         .args(&args)
