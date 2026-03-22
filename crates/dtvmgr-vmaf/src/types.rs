@@ -33,8 +33,28 @@ pub struct SearchConfig {
     pub extra_encode_args: Vec<String>,
     /// Additional ffmpeg input args (prepended before `-i`).
     pub extra_input_args: Vec<String>,
+    /// Video filter for FFV1 reference creation.
+    ///
+    /// When `None`, [`video_filter`](Self::video_filter) is reused.
+    /// Set this when the encode filter outputs HW surface frames
+    /// (e.g. QSV VPP) that need `hwdownload,format=…` appended
+    /// before the CPU-only FFV1 encoder.
+    pub reference_filter: Option<String>,
     /// Temporary directory for intermediate files (uses system default if `None`).
     pub temp_dir: Option<PathBuf>,
+}
+
+impl SearchConfig {
+    /// Return the effective video filter for FFV1 reference creation.
+    ///
+    /// Uses [`reference_filter`](Self::reference_filter) when set,
+    /// otherwise falls back to [`video_filter`](Self::video_filter).
+    #[must_use]
+    pub fn effective_reference_filter(&self) -> &str {
+        self.reference_filter
+            .as_deref()
+            .unwrap_or(&self.video_filter)
+    }
 }
 
 /// A content segment identified by start and end timestamps in seconds.
@@ -226,6 +246,59 @@ mod tests {
         assert_eq!(cfg.min_samples, 5);
         assert_eq!(cfg.max_samples, 15);
         assert_eq!(cfg.vmaf_subsample, 5);
+    }
+
+    // ── SearchConfig ─────────────────────────────────────────
+
+    #[test]
+    fn effective_reference_filter_uses_reference_when_set() {
+        // Arrange
+        let config = SearchConfig {
+            ffmpeg_bin: PathBuf::new(),
+            input_file: PathBuf::new(),
+            content_segments: Vec::new(),
+            encoder: crate::EncoderConfig::libx264(),
+            video_filter: String::from("yadif,scale=1280:720"),
+            target_vmaf: 93.0,
+            max_encoded_percent: 80.0,
+            min_vmaf_tolerance: 1.0,
+            thorough: false,
+            sample: SampleConfig::default(),
+            extra_encode_args: Vec::new(),
+            extra_input_args: Vec::new(),
+            reference_filter: Some(String::from("vpp_qsv=...,hwdownload")),
+            temp_dir: None,
+        };
+
+        // Act / Assert
+        assert_eq!(
+            config.effective_reference_filter(),
+            "vpp_qsv=...,hwdownload"
+        );
+    }
+
+    #[test]
+    fn effective_reference_filter_falls_back_to_video_filter() {
+        // Arrange
+        let config = SearchConfig {
+            ffmpeg_bin: PathBuf::new(),
+            input_file: PathBuf::new(),
+            content_segments: Vec::new(),
+            encoder: crate::EncoderConfig::libx264(),
+            video_filter: String::from("yadif,scale=1280:720"),
+            target_vmaf: 93.0,
+            max_encoded_percent: 80.0,
+            min_vmaf_tolerance: 1.0,
+            thorough: false,
+            sample: SampleConfig::default(),
+            extra_encode_args: Vec::new(),
+            extra_input_args: Vec::new(),
+            reference_filter: None,
+            temp_dir: None,
+        };
+
+        // Act / Assert
+        assert_eq!(config.effective_reference_filter(), "yadif,scale=1280:720");
     }
 
     // ── QualityParam ────────────────────────────────────────

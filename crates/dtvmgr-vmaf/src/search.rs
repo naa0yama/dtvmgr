@@ -440,6 +440,7 @@ mod tests {
             sample: SampleConfig::default(),
             extra_encode_args: Vec::new(),
             extra_input_args: Vec::new(),
+            reference_filter: None,
             temp_dir: None,
         }
     }
@@ -680,6 +681,7 @@ mod tests {
             },
             extra_encode_args: Vec::new(),
             extra_input_args: Vec::new(),
+            reference_filter: None,
             temp_dir: Some(dir.path().to_owned()),
         };
 

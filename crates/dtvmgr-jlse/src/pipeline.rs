@@ -769,6 +769,11 @@ fn validate_encode_config(encode: Option<&JlseEncode>) -> Result<()> {
         return Ok(());
     };
 
+    // Reject VPP filter with redundant :format= (pix_fmt is the source of truth)
+    if let Some(filter) = enc.video.as_ref().and_then(|v| v.filter.as_deref()) {
+        super::command::ffmpeg::validate_vpp_no_format(filter)?;
+    }
+
     let qs_enabled = enc.quality_search.as_ref().is_some_and(|qs| qs.enabled);
     if !qs_enabled {
         return Ok(());
@@ -849,12 +854,10 @@ fn run_quality_search(
     // Build EncoderConfig from JlseEncode video settings
     let encoder = build_encoder_config(encode_cfg);
 
-    // Build video filter (same chain used for final encode)
-    let video_filter = encode_cfg
-        .video
-        .as_ref()
-        .and_then(|v| v.filter.clone())
-        .unwrap_or_default();
+    // Build video filter with hwupload prepend when HW filter device is set
+    let video_filter = build_vmaf_video_filter(encode_cfg);
+    let hw_input_args = build_vmaf_hw_input_args(encode_cfg);
+    let reference_filter = build_vmaf_reference_filter(encode_cfg, &video_filter);
 
     let sample_cfg = dtvmgr_vmaf::SampleConfig {
         duration_secs: qs.sample_duration_secs.unwrap_or(3.0),
@@ -881,7 +884,8 @@ fn run_quality_search(
             .as_ref()
             .map(|v| v.extra.clone())
             .unwrap_or_default(),
-        extra_input_args: Vec::new(),
+        extra_input_args: hw_input_args,
+        reference_filter,
         temp_dir: None,
     };
 
@@ -948,6 +952,82 @@ fn build_encoder_config(encode: &JlseEncode) -> dtvmgr_vmaf::EncoderConfig {
     }
 
     cfg
+}
+
+/// Build HW device init args from [`JlseEncode`] for VMAF search.
+///
+/// Extracts `-init_hw_device` and `-filter_hw_device` values so that
+/// QSV VPP filters work during sample encoding and reference creation.
+/// Returns an empty `Vec` when no HW filter device is configured.
+fn build_vmaf_hw_input_args(encode: &JlseEncode) -> Vec<String> {
+    let Some(input) = encode.input.as_ref() else {
+        return Vec::new();
+    };
+    let mut args = Vec::new();
+    if let Some(ref hw) = input.init_hw_device {
+        args.push("-init_hw_device".to_owned());
+        args.push(hw.clone());
+    }
+    if let Some(ref hw) = input.filter_hw_device {
+        args.push("-filter_hw_device".to_owned());
+        args.push(hw.clone());
+    }
+    args
+}
+
+/// Build the video filter string for VMAF sample encoding.
+///
+/// Delegates to [`prepare_hw_filter`](super::command::ffmpeg::prepare_hw_filter)
+/// when `filter_hw_device` is set, which handles `hwupload`
+/// prepend and `format={pix_fmt}` injection into VPP segments.
+fn build_vmaf_video_filter(encode: &JlseEncode) -> String {
+    let raw_filter = encode
+        .video
+        .as_ref()
+        .and_then(|v| v.filter.clone())
+        .unwrap_or_default();
+
+    if raw_filter.is_empty() {
+        return raw_filter;
+    }
+
+    let needs_hw = encode
+        .input
+        .as_ref()
+        .and_then(|i| i.filter_hw_device.as_ref())
+        .is_some();
+
+    if needs_hw {
+        let pix_fmt = encode.video.as_ref().and_then(|v| v.pix_fmt.as_deref());
+        super::command::ffmpeg::prepare_hw_filter(&raw_filter, pix_fmt)
+    } else {
+        raw_filter
+    }
+}
+
+/// Build the reference filter for FFV1 lossless reference creation.
+///
+/// FFV1 is a CPU-only encoder, so when VPP filters produce QSV
+/// surface frames, `hwdownload` must be appended to transfer
+/// frames back to system memory.  The pixel format after download
+/// is auto-negotiated by ffmpeg from the HW surface format, so no
+/// explicit `format=` is needed (FFV1 accepts both `nv12` and
+/// `p010le`).
+///
+/// Returns `None` when no HW filter device is configured (the
+/// caller should fall back to `video_filter`).
+fn build_vmaf_reference_filter(encode: &JlseEncode, video_filter: &str) -> Option<String> {
+    let has_hw_filter = encode
+        .input
+        .as_ref()
+        .and_then(|i| i.filter_hw_device.as_ref())
+        .is_some();
+
+    if !has_hw_filter || video_filter.is_empty() {
+        return None;
+    }
+
+    Some(format!("{video_filter},hwdownload"))
 }
 
 /// Emit a structured summary log with all pipeline metrics.
@@ -1459,6 +1539,46 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[test]
+    fn test_validate_encode_config_vpp_format_rejected() {
+        // Arrange — VPP filter with redundant :format=
+        let enc = JlseEncode {
+            video: Some(crate::types::EncodeVideo {
+                filter: Some("vpp_qsv=deinterlace=advanced:format=p010le:height=720".to_owned()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        // Act
+        let result = validate_encode_config(Some(&enc));
+
+        // Assert
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("redundant"),
+            "error should mention redundancy"
+        );
+    }
+
+    #[test]
+    fn test_validate_encode_config_vpp_without_format_ok() {
+        // Arrange — VPP filter without :format= (correct usage)
+        let enc = JlseEncode {
+            video: Some(crate::types::EncodeVideo {
+                filter: Some("vpp_qsv=deinterlace=advanced:height=720".to_owned()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        // Act
+        let result = validate_encode_config(Some(&enc));
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
     // ── inject_quality_override ──────────────────────────────
 
     fn make_search_result(param: &str, value: f32) -> dtvmgr_vmaf::SearchResult {
@@ -1781,6 +1901,236 @@ mod tests {
         // Assert — TOML values override encoder defaults
         assert_eq!(cfg.preset.as_deref(), Some("veryslow"));
         assert_eq!(cfg.pix_fmt.as_deref(), Some("yuv420p10le"));
+    }
+
+    // ── build_vmaf_hw_input_args ──────────────────────────────
+
+    #[test]
+    fn test_build_vmaf_hw_input_args_with_hw_device() {
+        // Arrange
+        let enc = JlseEncode {
+            input: Some(crate::types::EncodeInput {
+                init_hw_device: Some("qsv=hw".to_owned()),
+                filter_hw_device: Some("hw".to_owned()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        // Act
+        let args = build_vmaf_hw_input_args(&enc);
+
+        // Assert
+        assert_eq!(
+            args,
+            vec!["-init_hw_device", "qsv=hw", "-filter_hw_device", "hw"]
+        );
+    }
+
+    #[test]
+    fn test_build_vmaf_hw_input_args_no_hw() {
+        // Arrange
+        let enc = JlseEncode::default();
+
+        // Act
+        let args = build_vmaf_hw_input_args(&enc);
+
+        // Assert
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn test_build_vmaf_hw_input_args_only_init_hw_device() {
+        // Arrange
+        let enc = JlseEncode {
+            input: Some(crate::types::EncodeInput {
+                init_hw_device: Some("qsv=hw".to_owned()),
+                filter_hw_device: None,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        // Act
+        let args = build_vmaf_hw_input_args(&enc);
+
+        // Assert
+        assert_eq!(args, vec!["-init_hw_device", "qsv=hw"]);
+    }
+
+    // ── build_vmaf_video_filter ─────────────────────────────
+
+    #[test]
+    fn test_build_vmaf_video_filter_sw_passthrough() {
+        // Arrange — SW mode: no filter_hw_device
+        let enc = JlseEncode {
+            video: Some(crate::types::EncodeVideo {
+                filter: Some(
+                    "yadif=mode=send_frame:parity=auto:deint=all,scale=w=1280:h=720".to_owned(),
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        // Act
+        let filter = build_vmaf_video_filter(&enc);
+
+        // Assert — unchanged
+        assert_eq!(
+            filter,
+            "yadif=mode=send_frame:parity=auto:deint=all,scale=w=1280:h=720"
+        );
+    }
+
+    #[test]
+    fn test_build_vmaf_video_filter_hwupload_auto_prepend_and_format_inject() {
+        // Arrange — HW mode: filter_hw_device set, pix_fmt = p010le
+        let enc = JlseEncode {
+            input: Some(crate::types::EncodeInput {
+                init_hw_device: Some("qsv=hw".to_owned()),
+                filter_hw_device: Some("hw".to_owned()),
+                ..Default::default()
+            }),
+            video: Some(crate::types::EncodeVideo {
+                filter: Some("vpp_qsv=deinterlace=advanced:height=720:width=1280".to_owned()),
+                pix_fmt: Some("p010le".to_owned()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        // Act
+        let filter = build_vmaf_video_filter(&enc);
+
+        // Assert — hwupload prepended, format=p010le injected
+        assert_eq!(
+            filter,
+            "hwupload=extra_hw_frames=64,vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le"
+        );
+    }
+
+    #[test]
+    fn test_build_vmaf_video_filter_hwupload_already_present() {
+        // Arrange — user already included hwupload
+        let enc = JlseEncode {
+            input: Some(crate::types::EncodeInput {
+                filter_hw_device: Some("hw".to_owned()),
+                ..Default::default()
+            }),
+            video: Some(crate::types::EncodeVideo {
+                filter: Some("hwupload=extra_hw_frames=32,vpp_qsv=framerate=30".to_owned()),
+                pix_fmt: Some("p010le".to_owned()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        // Act
+        let filter = build_vmaf_video_filter(&enc);
+
+        // Assert — no duplicate hwupload, format injected
+        assert_eq!(
+            filter,
+            "hwupload=extra_hw_frames=32,vpp_qsv=framerate=30:format=p010le"
+        );
+    }
+
+    #[test]
+    fn test_build_vmaf_video_filter_default_sw_filter() {
+        // Arrange — default config uses SW yadif+scale filter
+        let enc = JlseEncode::default();
+
+        // Act
+        let filter = build_vmaf_video_filter(&enc);
+
+        // Assert — default SW filter unchanged (no HW device)
+        assert!(!filter.is_empty());
+        assert!(filter.contains("yadif"), "expected default SW filter");
+    }
+
+    // ── build_vmaf_reference_filter ─────────────────────────
+
+    #[test]
+    fn test_build_vmaf_reference_filter_hw_mode() {
+        // Arrange — video_filter already processed by build_vmaf_video_filter
+        // (hwupload prepended, format= injected by prepare_hw_filter)
+        let enc = JlseEncode {
+            input: Some(crate::types::EncodeInput {
+                filter_hw_device: Some("hw".to_owned()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let video_filter = "hwupload=extra_hw_frames=64,vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le,setfield=mode=prog";
+
+        // Act
+        let ref_filter = build_vmaf_reference_filter(&enc, video_filter);
+
+        // Assert — hwdownload appended for FFV1
+        assert_eq!(
+            ref_filter.as_deref(),
+            Some(
+                "hwupload=extra_hw_frames=64,vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le,setfield=mode=prog,hwdownload"
+            )
+        );
+    }
+
+    #[test]
+    fn test_build_vmaf_reference_filter_sw_mode() {
+        // Arrange — no HW
+        let enc = JlseEncode::default();
+        let video_filter = "yadif=mode=send_frame,scale=1280:720";
+
+        // Act
+        let ref_filter = build_vmaf_reference_filter(&enc, video_filter);
+
+        // Assert — None, caller falls back to video_filter
+        assert!(ref_filter.is_none());
+    }
+
+    #[test]
+    fn test_build_vmaf_reference_filter_hw_no_pix_fmt() {
+        // Arrange — HW mode, no pix_fmt — hwdownload auto-negotiates format
+        let enc = JlseEncode {
+            input: Some(crate::types::EncodeInput {
+                filter_hw_device: Some("hw".to_owned()),
+                ..Default::default()
+            }),
+            video: Some(crate::types::EncodeVideo {
+                pix_fmt: None,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let video_filter = "hwupload=extra_hw_frames=64,vpp_qsv=framerate=30";
+
+        // Act
+        let ref_filter = build_vmaf_reference_filter(&enc, video_filter);
+
+        // Assert — hwdownload without explicit format
+        assert_eq!(
+            ref_filter.as_deref(),
+            Some("hwupload=extra_hw_frames=64,vpp_qsv=framerate=30,hwdownload")
+        );
+    }
+
+    #[test]
+    fn test_build_vmaf_reference_filter_empty_filter() {
+        // Arrange — HW mode but empty filter
+        let enc = JlseEncode {
+            input: Some(crate::types::EncodeInput {
+                filter_hw_device: Some("hw".to_owned()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        // Act
+        let ref_filter = build_vmaf_reference_filter(&enc, "");
+
+        // Assert — empty filter → None
+        assert!(ref_filter.is_none());
     }
 
     // ── round1 / round3 ─────────────────────────────────────

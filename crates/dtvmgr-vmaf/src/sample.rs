@@ -157,7 +157,8 @@ pub(crate) fn extract_samples(
         create_reference(
             &config.ffmpeg_bin,
             &sample_path,
-            &config.video_filter,
+            config.effective_reference_filter(),
+            &config.extra_input_args,
             &reference_path,
         )
         .with_context(|| format!("failed to create reference for sample {current}"))?;
@@ -233,22 +234,35 @@ fn extract_copy(
 /// ffmpeg -y -i {sample} -vf {filter} -c:v ffv1 -an {output}
 /// ```
 // NOTEST(external-cmd): requires ffmpeg — FFV1 reference creation
-fn create_reference(ffmpeg: &Path, sample: &Path, video_filter: &str, output: &Path) -> Result<()> {
+fn create_reference(
+    ffmpeg: &Path,
+    sample: &Path,
+    video_filter: &str,
+    extra_input_args: &[String],
+    output: &Path,
+) -> Result<()> {
+    let mut args: Vec<&OsStr> = Vec::with_capacity(20);
+    args.push(OsStr::new("-y"));
+
+    // HW device init args must appear before -i
+    for arg in extra_input_args {
+        args.push(OsStr::new(arg));
+    }
+
+    args.push(OsStr::new("-i"));
+    args.push(sample.as_os_str());
+    args.push(OsStr::new("-vf"));
+    args.push(OsStr::new(video_filter));
+    args.push(OsStr::new("-c:v"));
+    args.push(OsStr::new("ffv1"));
+    args.push(OsStr::new("-an"));
+    args.push(OsStr::new("-hide_banner"));
+    args.push(OsStr::new("-loglevel"));
+    args.push(OsStr::new("error"));
+    args.push(output.as_os_str());
+
     let status = Command::new(ffmpeg)
-        .args([
-            OsStr::new("-y"),
-            OsStr::new("-i"),
-            sample.as_os_str(),
-            OsStr::new("-vf"),
-            OsStr::new(video_filter),
-            OsStr::new("-c:v"),
-            OsStr::new("ffv1"),
-            OsStr::new("-an"),
-            OsStr::new("-hide_banner"),
-            OsStr::new("-loglevel"),
-            OsStr::new("error"),
-            output.as_os_str(),
-        ])
+        .args(&args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -682,6 +696,7 @@ mod tests {
             },
             extra_encode_args: Vec::new(),
             extra_input_args: Vec::new(),
+            reference_filter: None,
             temp_dir: Some(dir.path().to_owned()),
         };
 
