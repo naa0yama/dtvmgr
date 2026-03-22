@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-use tracing::{debug, instrument};
+use tracing::{debug, info, instrument};
 
 use crate::types::{ContentSegment, SampleConfig, SearchConfig, SearchProgress};
 
@@ -139,7 +139,6 @@ pub(crate) fn extract_samples(
         let reference_path = temp_dir.join(format!("vmaf_ref_{current:03}.mkv"));
 
         // NOTEST(external-cmd): requires ffmpeg — sample extraction loop
-        // Step 1: Extract sample from TS via -c:v copy
         extract_copy(
             &config.ffmpeg_bin,
             &config.input_file,
@@ -153,7 +152,6 @@ pub(crate) fn extract_samples(
             .with_context(|| format!("failed to stat sample {current}"))?
             .len();
 
-        // Step 2: Create lossless reference (decode + filter → FFV1)
         create_reference(
             &config.ffmpeg_bin,
             &sample_path,
@@ -194,24 +192,28 @@ fn extract_copy(
     let start_str = format!("{start_secs:.6}");
     let dur_str = format!("{duration_secs:.6}");
 
+    let args = [
+        OsStr::new("-y"),
+        OsStr::new("-ss"),
+        OsStr::new(&start_str),
+        OsStr::new("-t"),
+        OsStr::new(&dur_str),
+        OsStr::new("-i"),
+        input.as_os_str(),
+        OsStr::new("-c:v"),
+        OsStr::new("copy"),
+        OsStr::new("-an"),
+        OsStr::new("-sn"),
+        OsStr::new("-hide_banner"),
+        OsStr::new("-loglevel"),
+        OsStr::new("error"),
+        output.as_os_str(),
+    ];
+
+    info!(cmd = %ffmpeg.display(), ?args, "running command (extract copy)");
+
     let status = Command::new(ffmpeg)
-        .args([
-            OsStr::new("-y"),
-            OsStr::new("-ss"),
-            OsStr::new(&start_str),
-            OsStr::new("-t"),
-            OsStr::new(&dur_str),
-            OsStr::new("-i"),
-            input.as_os_str(),
-            OsStr::new("-c:v"),
-            OsStr::new("copy"),
-            OsStr::new("-an"),
-            OsStr::new("-sn"),
-            OsStr::new("-hide_banner"),
-            OsStr::new("-loglevel"),
-            OsStr::new("error"),
-            output.as_os_str(),
-        ])
+        .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -260,6 +262,8 @@ fn create_reference(
     args.push(OsStr::new("-loglevel"));
     args.push(OsStr::new("error"));
     args.push(output.as_os_str());
+
+    info!(cmd = %ffmpeg.display(), ?args, "running command (create reference)");
 
     let status = Command::new(ffmpeg)
         .args(&args)
