@@ -1,9 +1,13 @@
 # Changelog
 
 ## [v0.2.5](https://github.com/naa0yama/dtvmgr/compare/v0.2.4...v0.2.5) - 2026-03-22
+
 ### Documentation 🗒️
+
 - feat(vmaf): add VMAF-based quality parameter search by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/110
+
 ### Development Environment 🔧
+
 - chore(deps): update taiki-e/install-action action to v2.68.28 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/108
 - chore(deps): update taiki-e/install-action action to v2.68.29 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/111
 - chore(deps): update actions-rust-lang/setup-rust-toolchain action to v1.15.4 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/112
