@@ -99,15 +99,17 @@ jobs:
           git fetch origin "${PR_BRANCH}"
           git checkout -f "${PR_BRANCH}"
           unset RUSTC_WRAPPER
-          "$(rustup which cargo)" generate-lockfile
+          RUSTC_WRAPPER='' cargo generate-lockfile
           if ! git diff --quiet Cargo.lock; then
             FILE_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/contents/Cargo.lock?ref=${PR_BRANCH}" --jq '.sha')
-            gh api "repos/${GITHUB_REPOSITORY}/contents/Cargo.lock" \
-              --method PUT \
-              -f message="[tagpr] update Cargo.lock" \
-              -f content="$(base64 -w 0 Cargo.lock)" \
-              -f sha="${FILE_SHA}" \
-              -f branch="${PR_BRANCH}"
+            jq -n \
+              --arg message "[tagpr] update Cargo.lock" \
+              --arg content "$(base64 -w 0 Cargo.lock)" \
+              --arg sha "${FILE_SHA}" \
+              --arg branch "${PR_BRANCH}" \
+              '{message: $message, content: $content, sha: $sha, branch: $branch}' \
+            | gh api "repos/${GITHUB_REPOSITORY}/contents/Cargo.lock" \
+                --method PUT --input -
           fi
 
       - name: Format CHANGELOG.md
