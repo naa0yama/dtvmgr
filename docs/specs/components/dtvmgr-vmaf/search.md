@@ -54,9 +54,9 @@
 
 `SearchProgress` enum のコールバックにより、以下のイベントを通知する:
 
-| バリアント | タイミング |
-| ---------- | ---------- |
-| `SampleExtract` | サンプル抽出中(n / total) |
-| `Encoding` | サンプルエンコード中(イテレーション、品質値、n / total) |
-| `Scoring` | VMAF 計測中(イテレーション、品質値、n / total) |
-| `IterationResult` | イテレーション完了(品質値、VMAF、サイズ比) |
+| バリアント        | タイミング                                              |
+| ----------------- | ------------------------------------------------------- |
+| `SampleExtract`   | サンプル抽出中(n / total)                               |
+| `Encoding`        | サンプルエンコード中(イテレーション、品質値、n / total) |
+| `Scoring`         | VMAF 計測中(イテレーション、品質値、n / total)          |
+| `IterationResult` | イテレーション完了(品質値、VMAF、サイズ比)              |

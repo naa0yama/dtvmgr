@@ -11,25 +11,25 @@
 
 ## サブコマンド構成
 
-| コマンド                      | 概要                                              |
-| ----------------------------- | ------------------------------------------------- |
-| `init`                        | デフォルトテンプレートで設定ファイルを生成         |
-| `syoboi prog`                 | しょぼいカレンダー API から番組表を取得           |
-| `syoboi titles`               | しょぼいカレンダー API からタイトル一覧を取得     |
-| `syoboi channels select`      | TUI でチャンネルを対話選択                        |
-| `syoboi channels list`        | 選択済みチャンネルを一覧表示                      |
-| `tmdb search-tv / search-movie` | TMDB で TV / 映画を検索                         |
-| `tmdb tv-details / tv-season` | TMDB の TV 詳細 / シーズン情報を取得              |
-| `db sync`                     | しょぼいデータをローカル DB に同期                |
-| `db list`                     | キャッシュ済みタイトル / 番組を TUI で閲覧        |
-| `db normalize`                | タイトル正規化結果を TUI でプレビュー             |
-| `db tmdb-lookup`              | キャッシュ済みタイトルの TMDB 検索・マッピング保存 |
-| `jlse run`                    | CM 検出パイプライン実行 (FFmpeg エンコード対応)   |
-| `jlse channel`                | ファイル名から放送チャンネルを検出                |
-| `jlse param`                  | チャンネル・ファイル名から JL パラメータを検出     |
-| `jlse tsduck`                 | TSDuck で EIT 番組情報を抽出・表示                |
-| `epgstation encode`           | EPGStation 録画を TUI で選択しエンコードキュー投入 |
-| `completion`                  | シェル補完スクリプトを生成                        |
+| コマンド                        | 概要                                               |
+| ------------------------------- | -------------------------------------------------- |
+| `init`                          | デフォルトテンプレートで設定ファイルを生成         |
+| `syoboi prog`                   | しょぼいカレンダー API から番組表を取得            |
+| `syoboi titles`                 | しょぼいカレンダー API からタイトル一覧を取得      |
+| `syoboi channels select`        | TUI でチャンネルを対話選択                         |
+| `syoboi channels list`          | 選択済みチャンネルを一覧表示                       |
+| `tmdb search-tv / search-movie` | TMDB で TV / 映画を検索                            |
+| `tmdb tv-details / tv-season`   | TMDB の TV 詳細 / シーズン情報を取得               |
+| `db sync`                       | しょぼいデータをローカル DB に同期                 |
+| `db list`                       | キャッシュ済みタイトル / 番組を TUI で閲覧         |
+| `db normalize`                  | タイトル正規化結果を TUI でプレビュー              |
+| `db tmdb-lookup`                | キャッシュ済みタイトルの TMDB 検索・マッピング保存 |
+| `jlse run`                      | CM 検出パイプライン実行 (FFmpeg エンコード対応)    |
+| `jlse channel`                  | ファイル名から放送チャンネルを検出                 |
+| `jlse param`                    | チャンネル・ファイル名から JL パラメータを検出     |
+| `jlse tsduck`                   | TSDuck で EIT 番組情報を抽出・表示                 |
+| `epgstation encode`             | EPGStation 録画を TUI で選択しエンコードキュー投入 |
+| `completion`                    | シェル補完スクリプトを生成                         |
 
 ## 設定管理
 
@@ -49,20 +49,20 @@
 
 ### 内部クレート
 
-| クレート         | 用途                               |
-| ---------------- | ---------------------------------- |
-| `dtvmgr-api`     | しょぼいカレンダー / EPGStation API |
-| `dtvmgr-db`      | SQLite キャッシュ DB               |
-| `dtvmgr-jlse`    | CM 検出パイプライン                |
-| `dtvmgr-tmdb`    | TMDB API クライアント              |
-| `dtvmgr-tsduck`  | TSDuck 連携                        |
-| `dtvmgr-tui`     | TUI コンポーネント                 |
+| クレート        | 用途                                |
+| --------------- | ----------------------------------- |
+| `dtvmgr-api`    | しょぼいカレンダー / EPGStation API |
+| `dtvmgr-db`     | SQLite キャッシュ DB                |
+| `dtvmgr-jlse`   | CM 検出パイプライン                 |
+| `dtvmgr-tmdb`   | TMDB API クライアント               |
+| `dtvmgr-tsduck` | TSDuck 連携                         |
+| `dtvmgr-tui`    | TUI コンポーネント                  |
 
 ### 主要外部クレート
 
-| クレート   | 用途                         |
-| ---------- | ---------------------------- |
-| `clap`     | コマンドライン引数パース     |
-| `toml`     | 設定ファイル読み書き         |
-| `tracing`  | 構造化ログ / OTel トレース   |
-| `anyhow`   | エラーハンドリング           |
+| クレート  | 用途                       |
+| --------- | -------------------------- |
+| `clap`    | コマンドライン引数パース   |
+| `toml`    | 設定ファイル読み書き       |
+| `tracing` | 構造化ログ / OTel トレース |
+| `anyhow`  | エラーハンドリング         |

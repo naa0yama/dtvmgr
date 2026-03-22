@@ -11,13 +11,13 @@
 
 ## コンポーネント構成
 
-| コンポーネント       | エントリ関数                | 概要                                            |
-| -------------------- | --------------------------- | ----------------------------------------------- |
-| `channel_selector`   | `run_channel_selector`      | チャンネルグループ / チャンネルの対話選択        |
-| `encode_selector`    | `setup_terminal` / イベントループ | EPGStation 録画からエンコード対象を選択・設定   |
-| `title_viewer`       | `run_title_viewer` (推定)    | キャッシュ済みタイトル / 番組の閲覧・除外設定    |
-| `normalize_viewer`   | `run_normalize_viewer` (推定)| タイトル正規化結果のプレビューと正規表現編集      |
-| `progress_viewer`    | `run_progress_viewer`       | CM 検出パイプラインのリアルタイム進捗表示        |
+| コンポーネント     | エントリ関数                      | 概要                                          |
+| ------------------ | --------------------------------- | --------------------------------------------- |
+| `channel_selector` | `run_channel_selector`            | チャンネルグループ / チャンネルの対話選択     |
+| `encode_selector`  | `setup_terminal` / イベントループ | EPGStation 録画からエンコード対象を選択・設定 |
+| `title_viewer`     | `run_title_viewer` (推定)         | キャッシュ済みタイトル / 番組の閲覧・除外設定 |
+| `normalize_viewer` | `run_normalize_viewer` (推定)     | タイトル正規化結果のプレビューと正規表現編集  |
+| `progress_viewer`  | `run_progress_viewer`             | CM 検出パイプラインのリアルタイム進捗表示     |
 
 ## 共通アーキテクチャ
 
@@ -39,15 +39,15 @@
 
 ### Rust クレート
 
-| クレート     | 用途                          |
-| ------------ | ----------------------------- |
-| `ratatui`    | TUI ウィジェットフレームワーク |
-| `crossterm`  | ターミナル制御 / イベント入力 |
-| `regex`      | タイトル正規化パターン        |
+| クレート    | 用途                           |
+| ----------- | ------------------------------ |
+| `ratatui`   | TUI ウィジェットフレームワーク |
+| `crossterm` | ターミナル制御 / イベント入力  |
+| `regex`     | タイトル正規化パターン         |
 
 ### 内部依存
 
-| クレート      | 用途                                          |
-| ------------- | --------------------------------------------- |
-| `dtvmgr-db`   | `CachedTitle`, `CachedChannel` 等の型参照     |
-| `dtvmgr-jlse` | `ProgressEvent` 型 (進捗ビューア)             |
+| クレート      | 用途                                      |
+| ------------- | ----------------------------------------- |
+| `dtvmgr-db`   | `CachedTitle`, `CachedChannel` 等の型参照 |
+| `dtvmgr-jlse` | `ProgressEvent` 型 (進捗ビューア)         |

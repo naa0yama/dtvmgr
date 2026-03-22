@@ -17,22 +17,22 @@
 
 ### CLI 引数 (yargs → clap マッピング)
 
-| yargs オプション | 短縮  | 型        | デフォルト     | 説明                             | clap 案                 |
-| ---------------- | ----- | --------- | -------------- | -------------------------------- | ----------------------- |
-| `--input`        | `-i`  | `string`  | (必須)         | 入力 TS ファイルパス             | `--input` / `-i`        |
-| `--filter`       | `-f`  | `boolean` | `false`        | ffmpeg フィルタ出力を有効化      | `--filter` / `-f`       |
-| `--addchapter`   | `-ac` | `boolean` | `false`        | エンコード時にチャプター付与     | `--add-chapter`         |
-| `--channel`      | `-c`  | `boolean` | `false`        | 環境変数 `CHNNELNAME` を参照     | `--channel <name>`      |
-| `--encode`       | `-e`  | `boolean` | `false`        | ffmpeg エンコードを有効化        | `--encode` / `-e`       |
-| `--target`       | `-t`  | `choice`  | `"cutcm_logo"` | エンコード対象 AVS               | `--target <cutcm/logo>` |
-| `--option`       | `-o`  | `string`  | `""`           | ffmpeg 追加オプション            | `--ffmpeg-option`       |
-| `--outdir`       | `-d`  | `string`  | `""`           | エンコード出力先ディレクトリ     | `--outdir`              |
-| `--outname`      | `-n`  | `string`  | `""`           | エンコード出力ファイル名         | `--outname`             |
-| `--remove`       | `-r`  | `boolean` | `false`        | 処理後に中間ファイルを削除       | `--remove` / `-r`       |
-| (なし)           |       | `boolean` | `false`        | TUI 進捗表示                     | `--tui`                 |
-| (なし)           |       | `boolean` | `false`        | EPGStation モード                | `--epgstation`          |
-| (なし)           |       | `boolean` | `false`        | エンコード前尺チェックをスキップ | `--skip-duration-check` |
-| (なし)           |       | `boolean` | `false`        | ステップキャッシュを無視して再実行 | `--force`             |
+| yargs オプション | 短縮  | 型        | デフォルト     | 説明                               | clap 案                 |
+| ---------------- | ----- | --------- | -------------- | ---------------------------------- | ----------------------- |
+| `--input`        | `-i`  | `string`  | (必須)         | 入力 TS ファイルパス               | `--input` / `-i`        |
+| `--filter`       | `-f`  | `boolean` | `false`        | ffmpeg フィルタ出力を有効化        | `--filter` / `-f`       |
+| `--addchapter`   | `-ac` | `boolean` | `false`        | エンコード時にチャプター付与       | `--add-chapter`         |
+| `--channel`      | `-c`  | `boolean` | `false`        | 環境変数 `CHNNELNAME` を参照       | `--channel <name>`      |
+| `--encode`       | `-e`  | `boolean` | `false`        | ffmpeg エンコードを有効化          | `--encode` / `-e`       |
+| `--target`       | `-t`  | `choice`  | `"cutcm_logo"` | エンコード対象 AVS                 | `--target <cutcm/logo>` |
+| `--option`       | `-o`  | `string`  | `""`           | ffmpeg 追加オプション              | `--ffmpeg-option`       |
+| `--outdir`       | `-d`  | `string`  | `""`           | エンコード出力先ディレクトリ       | `--outdir`              |
+| `--outname`      | `-n`  | `string`  | `""`           | エンコード出力ファイル名           | `--outname`             |
+| `--remove`       | `-r`  | `boolean` | `false`        | 処理後に中間ファイルを削除         | `--remove` / `-r`       |
+| (なし)           |       | `boolean` | `false`        | TUI 進捗表示                       | `--tui`                 |
+| (なし)           |       | `boolean` | `false`        | EPGStation モード                  | `--epgstation`          |
+| (なし)           |       | `boolean` | `false`        | エンコード前尺チェックをスキップ   | `--skip-duration-check` |
+| (なし)           |       | `boolean` | `false`        | ステップキャッシュを無視して再実行 | `--force`               |
 
 ### パイプライン実行順序
 
@@ -49,7 +49,7 @@
 9. AVS 連結 ([output_avs.md](./output_avs.md))
 10. チャプター生成 ([chapter.md](./chapter.md))
 11. (任意) FFmpeg フィルタ生成 ([ffmpeg_filter.md](./ffmpeg_filter.md))
-11.5. (任意) VMAF 品質探索 (`quality_search.enabled` 時)
+    11.5. (任意) VMAF 品質探索 (`quality_search.enabled` 時)
 12. (任意) エンコード
     - 12a. EIT 抽出 (MKV メタデータ用)
     - 12b. エンコード前尺チェック ([validate.md](./validate.md))
@@ -147,6 +147,18 @@ pub enum AvsTarget {
 - 1080p にアップスケールした VMAF 測定
 - `n_subsample` によるVMAF 計算の高速化をサポート
 - 対応エンコーダ: `av1_qsv`, `libsvtav1`, `h264_qsv`, `hevc_qsv`, `libx264`, `libx265`
+
+### QSV VPP HW エンコード対応
+
+`filter_hw_device` が設定されている場合、VMAF 品質探索は HW アクセラレーションを活用してサンプルのエンコードとリファレンス生成を行う。以下の 3 つのヘルパー関数がフィルタチェーンを構築する:
+
+- **`build_vmaf_hw_input_args`**: `JlseEncode` の `input.init_hw_device` / `input.filter_hw_device` を抽出し、`-init_hw_device` / `-filter_hw_device` 引数を生成する。HW フィルタデバイスが未設定の場合は空の `Vec` を返す
+- **`build_vmaf_video_filter`**: `filter_hw_device` が設定されている場合は `prepare_hw_filter` に委譲し、`hwupload=extra_hw_frames=64` の先頭付加と `vpp_qsv` セグメントへの `format={pix_fmt}` インジェクションを行う。SW フィルタの場合はそのまま返す
+- **`build_vmaf_reference_filter`**: HW フィルタ使用時に `{video_filter},hwdownload` を返す。FFV1 は CPU のみのエンコーダであるため、QSV VPP が出力する HW サーフェスフレームを `hwdownload` でシステムメモリに戻す必要がある。HW フィルタが未設定の場合は `None` を返し、呼び出し側は `video_filter` にフォールバックする
+
+### VPP フィルタバリデーション
+
+`validate_encode_config` はパイプラインのステップ実行前に `validate_vpp_no_format` を呼び出し、VPP フィルタセグメント内の冗長な `:format=` パラメータを検出してエラーにする。`filter_hw_device` が設定されている場合、ピクセルフォーマットは `[jlse.encode.video] pix_fmt` が唯一の真のソースであり、VPP 内の `format=` は冗長かつ不整合の原因となる。
 
 ## テスト方針
 

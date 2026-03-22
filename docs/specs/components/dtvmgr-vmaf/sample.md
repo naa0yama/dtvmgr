@@ -41,17 +41,20 @@
 1. **ストリームコピー抽出**: `ffmpeg -ss {start} -t {duration} -i {input} -c:v copy -an {output.ts}`
    - 再エンコードなしで高速抽出
    - 音声・字幕は除外(`-an -sn`)
-2. **FFV1 リファレンス生成**: `ffmpeg -i {sample.ts} -vf {filter} -c:v ffv1 -an {output.mkv}`
+2. **FFV1 リファレンス生成**: `ffmpeg -y {extra_input_args...} -i {sample.ts} -vf {reference_filter} -c:v ffv1 -an {output.mkv}`
+   - `extra_input_args`(`-init_hw_device`, `-filter_hw_device` 等の HW デバイス初期化引数)は `-i` の前に挿入される
+   - `reference_filter` は `SearchConfig::reference_filter` が `Some` の場合はその値、`None` の場合は `video_filter` にフォールバックする
+   - HW フィルタ(QSV VPP 等)使用時は、VPP が出力する HW サーフェスフレームを `hwdownload` でシステムメモリに転送してから CPU のみの FFV1 エンコーダに渡す必要がある。ピクセルフォーマットは ffmpeg が HW サーフェスから自動ネゴシエーションする
    - ビデオフィルタチェーン(デインタレース、スケール等)を適用してからロスレスエンコード
    - VMAF 計測時の「理想的な出力」として使用
 
 ## SampleConfig パラメータ
 
-| パラメータ | デフォルト | 説明 |
-| ---------- | ---------- | ---- |
-| `duration_secs` | `3.0` | 各サンプルの長さ(秒) |
-| `skip_secs` | `120.0` | 先頭・末尾からスキップする秒数 |
-| `sample_every_secs` | `720.0` | コンテンツ N 秒ごとに 1 サンプル(12 分) |
-| `min_samples` | `5` | 最小サンプル数 |
-| `max_samples` | `15` | 最大サンプル数 |
-| `vmaf_subsample` | `5` | VMAF の `n_subsample`(N フレームごとにスコア計算) |
+| パラメータ          | デフォルト | 説明                                              |
+| ------------------- | ---------- | ------------------------------------------------- |
+| `duration_secs`     | `3.0`      | 各サンプルの長さ(秒)                              |
+| `skip_secs`         | `120.0`    | 先頭・末尾からスキップする秒数                    |
+| `sample_every_secs` | `720.0`    | コンテンツ N 秒ごとに 1 サンプル(12 分)           |
+| `min_samples`       | `5`        | 最小サンプル数                                    |
+| `max_samples`       | `15`       | 最大サンプル数                                    |
+| `vmaf_subsample`    | `5`        | VMAF の `n_subsample`(N フレームごとにスコア計算) |

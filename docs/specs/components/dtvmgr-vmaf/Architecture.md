@@ -20,15 +20,15 @@ VMAF ベースの品質パラメータ自動探索クレート。[ab-av1](https:
 
 ## モジュール構成
 
-| モジュール | 責務 |
-| ---------- | ---- |
-| `lib`      | 公開 API (`find_optimal_quality()`) と型の再エクスポート |
+| モジュール | 責務                                                                       |
+| ---------- | -------------------------------------------------------------------------- |
+| `lib`      | 公開 API (`find_optimal_quality()`) と型の再エクスポート                   |
 | `types`    | `SearchConfig`, `EncoderConfig`, `QualityParam`, `SampleConfig` 等の型定義 |
-| `encoder`  | エンコーダプリセット(6 種)と品質空間変換(`QualityConverter`) |
-| `sample`   | TS からのサンプル抽出と FFV1 リファレンス生成 |
-| `encode`   | 候補品質値でのサンプルエンコード |
-| `vmaf`     | ffmpeg `libvmaf` フィルタによる VMAF スコア計測 |
-| `search`   | 補間二分探索の実行ループと収束判定 |
+| `encoder`  | エンコーダプリセット(6 種)と品質空間変換(`QualityConverter`)               |
+| `sample`   | TS からのサンプル抽出と FFV1 リファレンス生成                              |
+| `encode`   | 候補品質値でのサンプルエンコード                                           |
+| `vmaf`     | ffmpeg `libvmaf` フィルタによる VMAF スコア計測                            |
+| `search`   | 補間二分探索の実行ループと収束判定                                         |
 
 ## 処理フロー
 
@@ -60,20 +60,39 @@ pub fn find_optimal_quality(
 
 `SearchConfig` でエンコーダ設定、目標 VMAF、サンプリング条件を指定し、`SearchResult` で最適品質値・達成 VMAF・予測サイズ比を返す。`on_progress` コールバックにより進捗(サンプル抽出、エンコード、スコアリング、イテレーション結果)を通知する。
 
+### SearchConfig フィールド
+
+| フィールド            | 型                    | 説明                                                                                                                                                                                              |
+| --------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ffmpeg_bin`          | `PathBuf`             | `ffmpeg` バイナリのパス                                                                                                                                                                           |
+| `input_file`          | `PathBuf`             | 入力 TS ファイルのパス                                                                                                                                                                            |
+| `content_segments`    | `Vec<ContentSegment>` | CM カット後の本編区間(秒単位)                                                                                                                                                                     |
+| `encoder`             | `EncoderConfig`       | エンコーダ固有の設定                                                                                                                                                                              |
+| `video_filter`        | `String`              | ffmpeg ビデオフィルタチェーン(例: `"yadif=...,scale=1280:720"`)                                                                                                                                   |
+| `target_vmaf`         | `f32`                 | 目標 VMAF スコア(デフォルト: `93.0`)                                                                                                                                                              |
+| `max_encoded_percent` | `f32`                 | エンコード後サイズの上限(オリジナルに対するパーセント、デフォルト: `80.0`)                                                                                                                        |
+| `min_vmaf_tolerance`  | `f32`                 | 目標 VMAF からの許容ショートフォール(デフォルト: `1.0`)                                                                                                                                           |
+| `thorough`            | `bool`                | 厳密トレランスモード(将来用途に予約)                                                                                                                                                              |
+| `sample`              | `SampleConfig`        | サンプル抽出の設定                                                                                                                                                                                |
+| `extra_encode_args`   | `Vec<String>`         | ffmpeg 出力引数に追加される追加引数(コーデック/品質引数の後に付加)                                                                                                                                |
+| `extra_input_args`    | `Vec<String>`         | ffmpeg 入力引数に追加される追加引数(`-i` の前に挿入)。HW デバイス初期化(`-init_hw_device`, `-filter_hw_device`)に使用                                                                             |
+| `reference_filter`    | `Option<String>`      | FFV1 リファレンス生成用のビデオフィルタ。`None` の場合は `video_filter` にフォールバック。HW フィルタ(QSV VPP 等)使用時は `hwdownload` を付加して HW サーフェスフレームをシステムメモリに転送する |
+| `temp_dir`            | `Option<PathBuf>`     | 中間ファイルの一時ディレクトリ(`None` の場合はシステムデフォルトを使用)                                                                                                                           |
+
 ## 依存関係
 
 ### 外部ツール
 
-| バイナリ | 用途 |
-| -------- | ---- |
+| バイナリ | 用途                                                  |
+| -------- | ----------------------------------------------------- |
 | `ffmpeg` | サンプル抽出、エンコード、VMAF 計測(libvmaf フィルタ) |
 
 ### Rust クレート
 
-| クレート  | 用途 |
-| --------- | ---- |
+| クレート  | 用途               |
+| --------- | ------------------ |
 | `anyhow`  | エラーハンドリング |
-| `tracing` | 構造化ログ |
+| `tracing` | 構造化ログ         |
 
 ### 内部依存
 
