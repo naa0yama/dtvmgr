@@ -283,4 +283,52 @@ mod tests {
         // Assert: no dtvmgr.toml → None
         assert!(result.unwrap().is_none());
     }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_detect_config_in_dir_invalid_toml() {
+        // Arrange: create dtvmgr.toml with invalid TOML content
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("dtvmgr.toml"), "{{{{invalid").unwrap();
+
+        // Act
+        let result = detect_config_in_dir(dir.path());
+
+        // Assert: should return an error
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("failed to parse"),
+            "expected 'failed to parse' in: {err}"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_resolve_data_dir_nonexistent_config_path() {
+        // Arrange: config path that doesn't exist
+        let config = PathBuf::from("/nonexistent/dtvmgr.toml");
+
+        // Act
+        let result = resolve_data_dir(Some(&config));
+
+        // Assert: canonicalize fails
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_detect_config_in_dir_not_a_table() {
+        // Arrange: valid TOML but top-level is a string, not a table
+        // (toml crate parses this as a table with a single key, so we need
+        //  a TOML file that parses to a table but has no marker keys)
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("dtvmgr.toml"), "foo = 42\nbar = \"baz\"\n").unwrap();
+
+        // Act
+        let result = detect_config_in_dir(dir.path());
+
+        // Assert: no marker keys → None
+        assert!(result.unwrap().is_none());
+    }
 }

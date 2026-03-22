@@ -226,4 +226,95 @@ mod tests {
         assert_eq!(count, 1);
         assert_eq!(size, 5);
     }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_log_storage_stats_valid_dirs() {
+        // Arrange
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.ts"), b"data").unwrap();
+
+        // Act & Assert — should not panic
+        log_storage_stats(tmp.path(), None);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_log_storage_stats_with_out_dir() {
+        // Arrange
+        let ts_dir = tempfile::tempdir().unwrap();
+        let out_dir = tempfile::tempdir().unwrap();
+        std::fs::write(ts_dir.path().join("a.ts"), b"ts").unwrap();
+        std::fs::write(out_dir.path().join("b.mp4"), b"enc").unwrap();
+
+        // Act & Assert — should not panic
+        log_storage_stats(ts_dir.path(), Some(out_dir.path()));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_log_storage_stats_nonexistent_dirs() {
+        // Act & Assert — should not panic (warns internally)
+        log_storage_stats(
+            &PathBuf::from("/nonexistent_ts_dir_12345"),
+            Some(Path::new("/nonexistent_out_dir_12345")),
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_free_bytes_tmp() {
+        // Act
+        let result = free_bytes(Path::new("/tmp"));
+
+        // Assert
+        assert!(result.is_some());
+        assert!(result.unwrap() > 0);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_free_bytes_nonexistent() {
+        // Act
+        let result = free_bytes(Path::new("/nonexistent_path_12345"));
+
+        // Assert
+        assert!(result.is_none());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_collect_storage_stats_empty_dir() {
+        // Arrange
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Act
+        let stats = collect_storage_stats(tmp.path()).unwrap();
+
+        // Assert
+        assert_eq!(stats.used_bytes, 0);
+        assert_eq!(stats.file_count, 0);
+        assert!((stats.usage_ratio - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_scan_dir_nonexistent() {
+        // Act
+        let (count, size) = scan_dir(Path::new("/nonexistent_scan_dir_12345"));
+
+        // Assert
+        assert_eq!(count, 0);
+        assert_eq!(size, 0);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_statvfs_nonexistent() {
+        // Act
+        let result = statvfs(Path::new("/nonexistent_statvfs_12345"));
+
+        // Assert
+        assert!(result.is_none());
+    }
 }

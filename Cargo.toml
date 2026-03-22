@@ -10,6 +10,7 @@ members = [
 	"crates/dtvmgr-jlse",
 	"crates/dtvmgr-tsduck",
 	"crates/dtvmgr-tui",
+	"crates/dtvmgr-vmaf",
 ]
 
 [workspace.package]
@@ -73,12 +74,12 @@ dtvmgr-db = { path = "crates/dtvmgr-db" }
 dtvmgr-jlse = { path = "crates/dtvmgr-jlse" }
 dtvmgr-tsduck = { path = "crates/dtvmgr-tsduck" }
 dtvmgr-tui = { path = "crates/dtvmgr-tui" }
+dtvmgr-vmaf = { path = "crates/dtvmgr-vmaf" }
 
 # - -------------------------------------------------------------------------------------------------
 # - Lints
 # -
 [workspace.lints.clippy]
-# project_rules.md に基づくlint設定（priority=-1で個別設定を優先）
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }

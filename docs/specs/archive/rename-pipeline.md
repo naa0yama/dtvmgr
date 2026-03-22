@@ -2,8 +2,8 @@
 
 > 関連ドキュメント:
 >
-> - [TMDB クライアント仕様](recmgr-api/tmdbClient.md)
-> - [しょぼかるクライアント仕様](recmgr-api/syoboiClient.md)
+> - [TMDB クライアント仕様](../components/dtvmgr-api/tmdbClient.md)
+> - [しょぼかるクライアント仕様](../components/dtvmgr-api/syoboiClient.md)
 > - [TMDB エピソード照合ロジック](tmdb-episode-matching.md)
 > - [ファイル名生成仕様](filename-generation.md)
 

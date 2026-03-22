@@ -348,4 +348,76 @@ mod tests {
         // Assert
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_find_boundary_partial_verification_two_packets() {
+        // Arrange — buffer with exactly 2 valid packets at offset 0, not enough for full verification
+        let mut buf = vec![0u8; 188 * 2];
+        buf[0] = 0x47;
+        buf[188] = 0x47;
+
+        // Act
+        let offset = find_packet_boundary(&buf);
+
+        // Assert — accepts partial verification with 2 packets
+        assert_eq!(offset, Some(0));
+    }
+
+    #[test]
+    fn test_find_boundary_partial_verification_false_then_real() {
+        // Arrange — false 0x47 at 0, real boundary at 10 with only 2 packets
+        let mut buf = vec![0u8; 10 + 188 * 2];
+        buf[0] = 0x47; // false positive (no second sync at 188)
+        buf[10] = 0x47;
+        buf[10 + 188] = 0x47;
+
+        // Act
+        let offset = find_packet_boundary(&buf);
+
+        // Assert
+        assert_eq!(offset, Some(10));
+    }
+
+    #[test]
+    fn test_find_boundary_empty_buffer() {
+        // Act
+        let offset = find_packet_boundary(&[]);
+
+        // Assert
+        assert_eq!(offset, None);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_extract_middle_chunk_large_request_clamped() {
+        // Arrange — file is above MIN_FILE_SIZE but request a huge chunk
+        let packet_count: usize = 10000;
+        let mut data = vec![0u8; 188 * packet_count];
+        for i in 0..packet_count {
+            data[i * 188] = 0x47;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("clamped.ts");
+        std::fs::write(&path, &data).unwrap();
+
+        // Act — request 100MB but file is ~1.8MB
+        let chunk = extract_middle_chunk(&path, 100 * 1024 * 1024).unwrap();
+
+        // Assert — chunk should not exceed file size and must be aligned
+        assert!(chunk.len() <= data.len());
+        assert_eq!(chunk.len() % 188, 0);
+    }
+
+    #[test]
+    fn test_find_boundary_sync_at_end_insufficient() {
+        // Arrange — single sync byte at the very end of buffer
+        let mut buf = vec![0u8; 200];
+        buf[199] = 0x47;
+
+        // Act
+        let offset = find_packet_boundary(&buf);
+
+        // Assert — only 1 packet, not enough for verification
+        assert_eq!(offset, None);
+    }
 }

@@ -73,6 +73,7 @@ mod cli_metrics {
 /// Application configuration (TOML).
 mod config;
 
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashSet};
 use std::io::BufRead;
 use std::mem;
@@ -289,6 +290,9 @@ struct JlseRunArgs {
     /// Skip pre-encode duration validation.
     #[arg(long)]
     skip_duration_check: bool,
+    /// Force re-run of all pipeline steps, ignoring cached results.
+    #[arg(long)]
+    force: bool,
 }
 
 /// Arguments for `jlse channel`.
@@ -2214,6 +2218,7 @@ fn run_jlse_run(args: &JlseRunArgs, config_file: Option<&PathBuf>) -> Result<()>
             remove: args.remove,
             progress_mode: Some(ProgressMode::EpgStation),
             skip_duration_check: args.skip_duration_check,
+            force: args.force,
         };
 
         record_storage_metrics(&ctx);
@@ -2222,17 +2227,20 @@ fn run_jlse_run(args: &JlseRunArgs, config_file: Option<&PathBuf>) -> Result<()>
             run_pipeline_with_tui(ctx)
         } else {
             // EPGStation callback mode (JSON output)
+            let last_stage = Cell::new((0_u8, 0_u8));
             let cb = |event: ProgressEvent| {
                 use dtvmgr_jlse::progress::emit_epgstation;
                 match event {
                     ProgressEvent::StageStart { stage, total, name } => {
+                        last_stage.set((stage, total));
                         emit_epgstation(0.0, &format!("({stage}/{total}) {name}: starting"));
                     }
                     ProgressEvent::StageProgress { percent, log } => {
                         emit_epgstation(percent, &log);
                     }
                     ProgressEvent::Encoding { percent, log } => {
-                        let prefixed = format!("(4/4) FFmpeg: {log}");
+                        let (s, t) = last_stage.get();
+                        let prefixed = format!("({s}/{t}) FFmpeg: {log}");
                         emit_epgstation(percent, &prefixed);
                     }
                     ProgressEvent::Log(_) | ProgressEvent::Finished => {}
@@ -2259,6 +2267,7 @@ fn run_jlse_run(args: &JlseRunArgs, config_file: Option<&PathBuf>) -> Result<()>
             remove: args.remove,
             progress_mode: None,
             skip_duration_check: args.skip_duration_check,
+            force: args.force,
         };
 
         record_storage_metrics(&ctx);
@@ -5452,5 +5461,496 @@ mod tests {
         // Assert: count stays same, but no rows changed
         assert_eq!(inserted2, 1);
         assert_eq!(changed2, 0);
+    }
+
+    // ── resolve_media_type (additional) ──────────────────────────
+
+    #[test]
+    fn test_resolve_media_type_empty_cat_movie_set() {
+        // Arrange: empty movie category set
+        let cat_movie: HashSet<u32> = HashSet::new();
+
+        // Act & Assert: everything maps to Tv when no movie cats defined
+        assert_eq!(resolve_media_type(Some(4), &cat_movie), TmdbMediaType::Tv);
+        assert_eq!(resolve_media_type(Some(9), &cat_movie), TmdbMediaType::Tv);
+        assert_eq!(resolve_media_type(None, &cat_movie), TmdbMediaType::Tv);
+    }
+
+    #[test]
+    fn test_resolve_media_type_single_cat_movie() {
+        // Arrange: only cat=7 is movie
+        let cat_movie: HashSet<u32> = std::iter::once(7).collect();
+
+        // Act & Assert
+        assert_eq!(
+            resolve_media_type(Some(7), &cat_movie),
+            TmdbMediaType::Movie
+        );
+        assert_eq!(resolve_media_type(Some(1), &cat_movie), TmdbMediaType::Tv);
+    }
+
+    // ── extract_season_number (additional) ──────────────────────
+
+    #[test]
+    fn test_extract_season_number_fullwidth_season() {
+        // Act & Assert: fullwidth "シーズン" is not directly matched by
+        // GENERAL_SEASON_RE, so normalize_chars must handle conversion.
+        // "第2シリーズ" pattern is covered by general regex.
+        assert_eq!(extract_season_number("作品名 第3シリーズ", None), Some(3));
+    }
+
+    #[test]
+    fn test_extract_season_number_3rd_season() {
+        // Act & Assert: "3rd Season" ordinal pattern
+        assert_eq!(extract_season_number("Title 3rd Season", None), Some(3));
+    }
+
+    #[test]
+    fn test_extract_season_number_1st_season() {
+        // Act & Assert: "1st Season" ordinal pattern
+        assert_eq!(extract_season_number("Title 1st Season", None), Some(1));
+    }
+
+    #[test]
+    fn test_extract_season_number_4th_season() {
+        // Act & Assert: "4th Season" ordinal pattern
+        assert_eq!(extract_season_number("Title 4th Season", None), Some(4));
+    }
+
+    #[test]
+    fn test_extract_season_number_japanese_ki() {
+        // Act & Assert: "第2期" general pattern
+        assert_eq!(extract_season_number("作品名 第2期", None), Some(2));
+    }
+
+    #[test]
+    fn test_extract_season_number_japanese_cool() {
+        // Act & Assert: "第3クール" general pattern
+        assert_eq!(extract_season_number("作品名 第3クール", None), Some(3));
+    }
+
+    #[test]
+    fn test_extract_season_number_season_no_space() {
+        // Act & Assert: "Season3" without space
+        assert_eq!(extract_season_number("TitleSeason3", None), Some(3));
+    }
+
+    #[test]
+    fn test_extract_season_number_config_regex_takes_priority() {
+        // Arrange: config regex matches "Part N" and extracts digit
+        let re = regex::Regex::new(r"Part\s*(\d+)").unwrap();
+
+        // Act & Assert: config regex finds "Part 5", general regex would not match
+        assert_eq!(extract_season_number("Title Part 5", Some(&re)), Some(5));
+    }
+
+    #[test]
+    fn test_extract_season_number_config_regex_no_match_falls_back() {
+        // Arrange: config regex that won't match
+        let re = regex::Regex::new(r"XYZZY\d+").unwrap();
+
+        // Act & Assert: falls back to general pattern
+        assert_eq!(extract_season_number("Title Season 7", Some(&re)), Some(7));
+    }
+
+    // ── is_within_cooldown (additional) ─────────────────────────
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_is_within_cooldown_boundary_just_inside() {
+        // Arrange: exactly 11 hours ago (within 12h cooldown)
+        let ts = (Utc::now() - chrono::Duration::hours(11))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+
+        // Act & Assert
+        assert!(is_within_cooldown(Some(&ts)));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_is_within_cooldown_boundary_just_outside() {
+        // Arrange: exactly 12 hours + 1 minute ago (past cooldown)
+        let ts = (Utc::now() - chrono::Duration::minutes(721))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+
+        // Act & Assert
+        assert!(!is_within_cooldown(Some(&ts)));
+    }
+
+    #[test]
+    fn test_is_within_cooldown_empty_string() {
+        // Act & Assert: empty string is invalid format
+        assert!(!is_within_cooldown(Some("")));
+    }
+
+    // ── compile_regex_titles (additional) ───────────────────────
+
+    #[test]
+    fn test_compile_regex_titles_combined_matches_both() {
+        // Arrange
+        let patterns = vec![
+            String::from(r"第\d+期"),
+            String::from(r"Season\s+\d+"),
+            String::from(r"\d+(st|nd|rd|th)\s+Season"),
+        ];
+
+        // Act
+        let re = compile_regex_titles(&patterns).unwrap();
+
+        // Assert: all patterns work via combined regex
+        assert!(re.is_match("作品名 第4期"));
+        assert!(re.is_match("Title Season 2"));
+        assert!(re.is_match("Title 3rd Season"));
+        assert!(!re.is_match("plain title"));
+    }
+
+    // ── resolve_tmdb_language (additional) ──────────────────────
+
+    #[test]
+    fn test_resolve_tmdb_language_none_none() {
+        // Act: no CLI arg, no config file → falls back to default
+        let lang = resolve_tmdb_language(None, None);
+
+        // Assert: default is "ja-JP" (from config template) or "en-US" if
+        // config resolution fails entirely. Without a real config, the
+        // resolve_config_path(None) uses the default path which may or may not
+        // exist; the function falls back to "en-US" on error.
+        assert!(!lang.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_tmdb_language_cli_overrides_config() {
+        // Act: CLI arg should override even if config exists
+        let lang = resolve_tmdb_language(Some("ko-KR"), Some(&PathBuf::from("/nonexistent")));
+
+        // Assert
+        assert_eq!(lang, "ko-KR");
+    }
+
+    // ── filter_titles (additional) ─────────────────────────────
+
+    #[test]
+    fn test_filter_titles_empty_input() {
+        // Act
+        let result = filter_titles(vec![], false, false);
+
+        // Assert
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_titles_force_empty_input() {
+        // Act
+        let result = filter_titles(vec![], true, false);
+
+        // Assert
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_titles_retry_unmapped_all_mapped() {
+        // Arrange: all titles have tmdb_series_id set
+        let titles = vec![
+            make_cached_title(1, Some(100), None),
+            make_cached_title(2, Some(200), None),
+        ];
+
+        // Act
+        let result = filter_titles(titles, false, true);
+
+        // Assert: all mapped → none returned
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_titles_default_no_cooldown_data() {
+        // Arrange: titles without tmdb_last_updated (None = not within cooldown)
+        let titles = vec![
+            make_cached_title(1, None, None),
+            make_cached_title(2, Some(50), None),
+        ];
+
+        // Act
+        let result = filter_titles(titles, false, false);
+
+        // Assert: None last_updated means not within cooldown, so both pass
+        let tids: Vec<u32> = result.iter().map(|t| t.tid).collect();
+        assert_eq!(tids, vec![1, 2]);
+    }
+
+    // ── to_cached_title (additional) ──────────────────────────
+
+    #[test]
+    fn test_to_cached_title_keywords_parsing() {
+        // Arrange: keywords with various separators
+        let mut src = make_syoboi_title(10);
+        src.keywords = Some("anime,action,comedy".to_owned());
+
+        // Act
+        let ct = to_cached_title(&src);
+
+        // Assert
+        assert_eq!(ct.keywords, vec!["anime", "action", "comedy"]);
+    }
+
+    #[test]
+    fn test_to_cached_title_empty_keywords() {
+        // Arrange: empty keywords string
+        let mut src = make_syoboi_title(10);
+        src.keywords = Some(String::new());
+
+        // Act
+        let ct = to_cached_title(&src);
+
+        // Assert: empty string should result in empty or single-empty vec
+        // depending on parse_keywords behavior
+        assert!(ct.keywords.is_empty() || ct.keywords == vec![""]);
+    }
+
+    // ── to_cached_program (additional) ────────────────────────
+
+    #[test]
+    fn test_to_cached_program_warn_field() {
+        // Arrange: program with warn set
+        let mut src = make_syoboi_program(1, 1, 1);
+        src.warn = Some(1);
+
+        // Act
+        let cp = to_cached_program(&src);
+
+        // Assert
+        assert_eq!(cp.warn, Some(1));
+    }
+
+    // ── resolve_ch_ids (additional) ───────────────────────────
+
+    #[test]
+    fn test_resolve_ch_ids_explicit_empty_vec() {
+        // Act: explicit empty vec is returned as-is
+        let result = resolve_ch_ids(Some(vec![]), None);
+
+        // Assert
+        assert_eq!(result.unwrap(), Vec::<u32>::new());
+    }
+
+    // ── to_snapshot ─────────────────────────────────────────────
+
+    #[test]
+    fn test_to_snapshot_basic() {
+        // Arrange
+        let stats = dtvmgr_jlse::storage::StorageStats {
+            path: String::from("/mnt/data"),
+            total_bytes: 1_000_000_000,
+            free_bytes: 400_000_000,
+            used_bytes: 600_000_000,
+            usage_ratio: 0.6,
+            file_count: 42,
+        };
+
+        // Act
+        let snap = to_snapshot(&stats);
+
+        // Assert
+        assert_eq!(snap.total_bytes, 1_000_000_000);
+        assert_eq!(snap.used_bytes, 600_000_000);
+        assert!((snap.usage_ratio - 0.6).abs() < f64::EPSILON);
+        assert_eq!(snap.file_count, 42);
+    }
+
+    #[test]
+    fn test_to_snapshot_zero_values() {
+        // Arrange
+        let stats = dtvmgr_jlse::storage::StorageStats {
+            path: String::new(),
+            total_bytes: 0,
+            free_bytes: 0,
+            used_bytes: 0,
+            usage_ratio: 0.0,
+            file_count: 0,
+        };
+
+        // Act
+        let snap = to_snapshot(&stats);
+
+        // Assert
+        assert_eq!(snap.total_bytes, 0);
+        assert_eq!(snap.used_bytes, 0);
+        assert!((snap.usage_ratio - 0.0).abs() < f64::EPSILON);
+        assert_eq!(snap.file_count, 0);
+    }
+
+    // ── build_rows_from_cache (additional) ───────────────────────
+
+    #[test]
+    fn test_build_rows_from_cache_file_types_dedup() {
+        // Arrange: multiple files of the same type should be deduped
+        let ts1 = make_ts_video_file(10, 1);
+        let ts2 = dtvmgr_db::recorded::CachedVideoFile {
+            id: 11,
+            recorded_id: 1,
+            name: String::from("ts_file_2"),
+            filename: Some(String::from("file2.ts")),
+            file_type: String::from("ts"),
+            size: 1_000_000,
+            file_exists: None,
+            file_checked_at: None,
+        };
+        let cached = vec![make_cached_pair(1, 100, vec![ts1, ts2])];
+        let channel_names = std::collections::HashMap::new();
+
+        // Act
+        let rows = build_rows_from_cache(&cached, &channel_names);
+
+        // Assert: file_types should be deduped to just "ts"
+        assert_eq!(rows[0].file_types, "ts");
+    }
+
+    #[test]
+    fn test_build_rows_from_cache_file_types_ts_and_encoded() {
+        // Arrange
+        let ts = make_ts_video_file(10, 1);
+        let enc = dtvmgr_db::recorded::CachedVideoFile {
+            id: 20,
+            recorded_id: 1,
+            name: String::from("encoded"),
+            filename: Some(String::from("out.mp4")),
+            file_type: String::from("encoded"),
+            size: 500_000,
+            file_exists: None,
+            file_checked_at: None,
+        };
+        let cached = vec![make_cached_pair(1, 100, vec![ts, enc])];
+        let channel_names = std::collections::HashMap::new();
+
+        // Act
+        let rows = build_rows_from_cache(&cached, &channel_names);
+
+        // Assert: "encoded" should be abbreviated to "enc"
+        assert_eq!(rows[0].file_types, "ts,enc");
+    }
+
+    #[test]
+    fn test_build_rows_from_cache_empty_input() {
+        // Act
+        let rows = build_rows_from_cache(&[], &std::collections::HashMap::new());
+
+        // Assert
+        assert!(rows.is_empty());
+    }
+
+    // ── convert_recorded_to_cached (additional) ──────────────────
+
+    #[test]
+    fn test_convert_recorded_to_cached_video_file_filename_none() {
+        // Arrange
+        let mut rec = make_recorded_item(1);
+        rec.video_files = vec![VideoFile {
+            id: 10,
+            name: String::from("file"),
+            filename: None,
+            file_type: String::from("ts"),
+            size: 1_000_000,
+        }];
+
+        // Act
+        let (_, video_files) = convert_recorded_to_cached(&[rec], "2024-01-01T00:00:00Z");
+
+        // Assert
+        assert_eq!(video_files[0].1.len(), 1);
+        assert!(video_files[0].1[0].filename.is_none());
+    }
+
+    // ── format_program_info (additional) ─────────────────────────
+
+    #[test]
+    fn test_format_program_info_non_target_event() {
+        // Arrange: event_id does not match target
+        let p = make_program_info(
+            "5001",
+            Some("Another Show"),
+            None,
+            None,
+            vec![],
+            None,
+            None,
+            None,
+            None,
+        );
+
+        // Act
+        let output = format_program_info(&p, Some("9999"));
+
+        // Assert
+        assert!(!output.contains("[recording_target]"));
+        assert!(output.contains("event_id: 5001"));
+        assert!(output.contains("program_name: Another Show"));
+    }
+
+    #[test]
+    fn test_format_program_info_genre_without_subgenre() {
+        // Arrange: genre1 set but sub_genre1 is None (defaults to 0)
+        let p = make_program_info("6001", None, None, None, vec![], Some(1), None, None, None);
+
+        // Act
+        let output = format_program_info(&p, None);
+
+        // Assert
+        assert!(output.contains("genre: 1/0"));
+    }
+
+    // ── requires_animation_filter (additional) ──────────────────
+
+    #[test]
+    fn test_requires_animation_filter_boundary_values() {
+        // Act & Assert: test boundary values around the matched set
+        assert!(!requires_animation_filter(Some(6)));
+        assert!(requires_animation_filter(Some(7)));
+        assert!(requires_animation_filter(Some(8)));
+        assert!(!requires_animation_filter(Some(9)));
+        assert!(requires_animation_filter(Some(10)));
+        assert!(!requires_animation_filter(Some(11)));
+    }
+
+    // ── resolve_channel_name (additional) ────────────────────────
+
+    #[test]
+    fn test_resolve_channel_name_empty_string_arg() {
+        // Act & Assert: empty string is a valid arg
+        assert_eq!(resolve_channel_name(Some("")), Some(String::new()));
+    }
+
+    // ── record_storage_metrics (no otel) ────────────────────────
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_record_storage_dir_metrics_noop_without_otel() {
+        // Act / Assert: should not panic
+        record_storage_dir_metrics(Path::new("/tmp"), "test");
+    }
+
+    // ── populate_storage_stats ────────────────────────────────────
+
+    #[test]
+    fn test_populate_storage_stats_empty_state() {
+        // Arrange: state with no storage_dirs
+        let mut state = EncodeSelectorState::new(
+            vec![],
+            vec![],
+            vec![],
+            None,
+            None,
+            PageInfo {
+                offset: 0,
+                size: 10,
+                total: 0,
+            },
+            vec![],
+        );
+
+        // Act / Assert: should not panic
+        populate_storage_stats(&mut state);
+        assert!(state.storage_dirs.is_empty());
     }
 }

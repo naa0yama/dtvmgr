@@ -278,11 +278,8 @@ impl JlseEncode {
                     .as_ref()
                     .and_then(|i| i.filter_hw_device.as_ref())
                     .is_some();
-                let has_hwupload = filter
-                    .split(',')
-                    .any(|seg| seg.trim_start().starts_with("hwupload"));
-                if needs_hwupload && !has_hwupload {
-                    args.push(format!("hwupload=extra_hw_frames=64,{filter}"));
+                if needs_hwupload {
+                    args.push(prepare_hw_filter(filter, video.pix_fmt.as_deref()));
                 } else {
                     args.push(filter.clone());
                 }
@@ -341,6 +338,88 @@ impl JlseEncode {
         }
         (input_args, output_args)
     }
+}
+
+// ── VPP filter helpers ──────────────────────────────────────
+
+/// Check whether a VPP filter segment contains a `format=` parameter.
+///
+/// VPP parameters use `:` as separator (e.g.
+/// `vpp_qsv=deinterlace=advanced:format=p010le:height=720`).
+/// Returns `true` when any `vpp_qsv` segment contains `:format=`.
+fn vpp_segment_has_format(filter: &str) -> bool {
+    filter.split(',').any(|seg| {
+        let seg = seg.trim();
+        seg.starts_with("vpp_qsv") && seg.contains(":format=")
+    })
+}
+
+/// Validate that no VPP segment contains an explicit `format=`
+/// parameter.
+///
+/// When `filter_hw_device` is set, `pix_fmt` is the single source
+/// of truth for pixel format.  Specifying `format=` inside VPP
+/// creates a redundant (and potentially inconsistent) setting.
+///
+/// # Errors
+///
+/// Returns an error with a user-friendly message when `format=`
+/// is found inside a VPP filter segment.
+pub(crate) fn validate_vpp_no_format(filter: &str) -> Result<()> {
+    if vpp_segment_has_format(filter) {
+        bail!(
+            "VPP filter contains `:format=…` which is redundant with `pix_fmt`. \
+             Remove `:format=…` from the VPP parameters — the pixel format \
+             is derived automatically from `[jlse.encode.video] pix_fmt`"
+        );
+    }
+    Ok(())
+}
+
+/// Prepare a video filter string for HW-accelerated encoding.
+///
+/// 1. Prepends `hwupload=extra_hw_frames=64,` when
+///    `filter_hw_device` is set and the filter does not already
+///    start with `hwupload`.
+/// 2. Injects `format={pix_fmt}` into each `vpp_qsv` segment so
+///    that the VPP output surface matches the encoder pixel format.
+pub(crate) fn prepare_hw_filter(filter: &str, pix_fmt: Option<&str>) -> String {
+    let injected = inject_vpp_format(filter, pix_fmt);
+
+    let has_hwupload = injected
+        .split(',')
+        .any(|seg| seg.trim_start().starts_with("hwupload"));
+
+    if has_hwupload {
+        injected
+    } else {
+        format!("hwupload=extra_hw_frames=64,{injected}")
+    }
+}
+
+/// Inject `format={pix_fmt}` into each `vpp_qsv` segment that
+/// does not already contain it.
+///
+/// Example: `vpp_qsv=deinterlace=advanced:h=720:w=1280` with
+/// `pix_fmt = "p010le"` becomes
+/// `vpp_qsv=deinterlace=advanced:h=720:w=1280:format=p010le`.
+fn inject_vpp_format(filter: &str, pix_fmt: Option<&str>) -> String {
+    let Some(fmt) = pix_fmt else {
+        return filter.to_owned();
+    };
+
+    filter
+        .split(',')
+        .map(|seg| {
+            let trimmed = seg.trim();
+            if trimmed.starts_with("vpp_qsv") && !trimmed.contains(":format=") {
+                format!("{seg}:format={fmt}")
+            } else {
+                seg.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 // ── Progress-aware FFmpeg execution ─────────────────────────
@@ -868,6 +947,7 @@ mod tests {
                 extra: vec![],
             }),
             duration_check: None,
+            quality_search: None,
         };
 
         // Act
@@ -1074,8 +1154,8 @@ mod tests {
     // ── hwupload auto-prepend ──────────────────────────────
 
     #[test]
-    fn test_to_output_args_hwupload_prepended_when_filter_hw_device_set() {
-        // Arrange — AVS + QSV HW encode: filter_hw_device triggers hwupload
+    fn test_to_output_args_hwupload_prepended_and_format_injected() {
+        // Arrange — QSV HW encode: filter_hw_device triggers hwupload + format inject
         let encode = JlseEncode {
             input: Some(EncodeInput {
                 init_hw_device: Some("qsv=hw".to_owned()),
@@ -1085,6 +1165,7 @@ mod tests {
             video: Some(EncodeVideo {
                 codec: Some("av1_qsv".to_owned()),
                 filter: Some("vpp_qsv=framerate=30".to_owned()),
+                pix_fmt: Some("p010le".to_owned()),
                 ..EncodeVideo::default()
             }),
             ..JlseEncode::default()
@@ -1093,11 +1174,11 @@ mod tests {
         // Act
         let args = encode.to_output_args();
 
-        // Assert — hwupload prepended to filter string
+        // Assert — hwupload prepended, format=p010le injected into VPP
         let vf_idx = args.iter().position(|a| a == "-vf").unwrap();
         assert_eq!(
             args[vf_idx + 1],
-            "hwupload=extra_hw_frames=64,vpp_qsv=framerate=30"
+            "hwupload=extra_hw_frames=64,vpp_qsv=framerate=30:format=p010le"
         );
     }
 
@@ -1134,6 +1215,7 @@ mod tests {
             video: Some(EncodeVideo {
                 codec: Some("av1_qsv".to_owned()),
                 filter: Some("hwupload=extra_hw_frames=32,vpp_qsv=framerate=30".to_owned()),
+                pix_fmt: Some("p010le".to_owned()),
                 ..EncodeVideo::default()
             }),
             ..JlseEncode::default()
@@ -1142,11 +1224,11 @@ mod tests {
         // Act
         let args = encode.to_output_args();
 
-        // Assert — no duplicate hwupload prepended
+        // Assert — no duplicate hwupload, format=p010le injected
         let vf_idx = args.iter().position(|a| a == "-vf").unwrap();
         assert_eq!(
             args[vf_idx + 1],
-            "hwupload=extra_hw_frames=32,vpp_qsv=framerate=30"
+            "hwupload=extra_hw_frames=32,vpp_qsv=framerate=30:format=p010le"
         );
     }
 
@@ -1164,6 +1246,7 @@ mod tests {
                 filter: Some(
                     "scale=1280:720,hwupload=extra_hw_frames=64,vpp_qsv=framerate=30".to_owned(),
                 ),
+                pix_fmt: Some("p010le".to_owned()),
                 ..EncodeVideo::default()
             }),
             ..JlseEncode::default()
@@ -1172,11 +1255,115 @@ mod tests {
         // Act
         let args = encode.to_output_args();
 
-        // Assert — no duplicate hwupload prepended
+        // Assert — no duplicate hwupload, format=p010le injected into VPP
         let vf_idx = args.iter().position(|a| a == "-vf").unwrap();
         assert_eq!(
             args[vf_idx + 1],
-            "scale=1280:720,hwupload=extra_hw_frames=64,vpp_qsv=framerate=30"
+            "scale=1280:720,hwupload=extra_hw_frames=64,vpp_qsv=framerate=30:format=p010le"
+        );
+    }
+
+    // ── VPP filter helpers ─────────────────────────────────
+
+    #[test]
+    fn test_validate_vpp_no_format_passes_without_format() {
+        // Arrange
+        let filter = "vpp_qsv=deinterlace=advanced:height=720:width=1280";
+
+        // Act / Assert
+        assert!(validate_vpp_no_format(filter).is_ok());
+    }
+
+    #[test]
+    fn test_validate_vpp_no_format_fails_with_format() {
+        // Arrange
+        let filter = "vpp_qsv=deinterlace=advanced:format=p010le:height=720";
+
+        // Act
+        let err = validate_vpp_no_format(filter).unwrap_err();
+
+        // Assert
+        assert!(
+            err.to_string().contains("redundant"),
+            "error should mention redundancy: {err}"
+        );
+    }
+
+    #[test]
+    fn test_validate_vpp_no_format_passes_for_sw_filter() {
+        // Arrange — SW filter, no VPP
+        let filter = "yadif=mode=send_frame,scale=1280:720";
+
+        // Act / Assert
+        assert!(validate_vpp_no_format(filter).is_ok());
+    }
+
+    #[test]
+    fn test_inject_vpp_format_basic() {
+        // Arrange
+        let filter = "vpp_qsv=deinterlace=advanced:height=720:width=1280";
+
+        // Act
+        let result = inject_vpp_format(filter, Some("p010le"));
+
+        // Assert
+        assert_eq!(
+            result,
+            "vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le"
+        );
+    }
+
+    #[test]
+    fn test_inject_vpp_format_with_setfield() {
+        // Arrange — VPP followed by SW filter
+        let filter = "vpp_qsv=deinterlace=advanced:height=720:width=1280,setfield=mode=prog";
+
+        // Act
+        let result = inject_vpp_format(filter, Some("p010le"));
+
+        // Assert — format injected only into VPP segment
+        assert_eq!(
+            result,
+            "vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le,setfield=mode=prog"
+        );
+    }
+
+    #[test]
+    fn test_inject_vpp_format_no_pix_fmt() {
+        // Arrange — no pix_fmt
+        let filter = "vpp_qsv=deinterlace=advanced:height=720";
+
+        // Act
+        let result = inject_vpp_format(filter, None);
+
+        // Assert — unchanged
+        assert_eq!(result, "vpp_qsv=deinterlace=advanced:height=720");
+    }
+
+    #[test]
+    fn test_inject_vpp_format_non_vpp_filter_unchanged() {
+        // Arrange — SW filter
+        let filter = "yadif=mode=send_frame,scale=1280:720";
+
+        // Act
+        let result = inject_vpp_format(filter, Some("p010le"));
+
+        // Assert — SW filters unchanged
+        assert_eq!(result, "yadif=mode=send_frame,scale=1280:720");
+    }
+
+    #[test]
+    fn test_prepare_hw_filter_full_chain() {
+        // Arrange
+        let filter = "vpp_qsv=deinterlace=advanced:height=720:width=1280,setfield=mode=prog";
+
+        // Act
+        let result = prepare_hw_filter(filter, Some("p010le"));
+
+        // Assert — hwupload prepended, format injected
+        assert_eq!(
+            result,
+            "hwupload=extra_hw_frames=64,vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le,setfield=mode=prog"
         );
     }
 

@@ -4,24 +4,24 @@
 
 join_logo_scp_trial の Rust 書き直し (PLAN.md) に加え、以下の機能を新規追加する。
 
-1. **VMAF ベースの CRF 自動決定** -- ab-av1 の手法を参考に、映像品質評価で最適な CRF を決定
+1. ~~**VMAF ベースの CRF 自動決定** -- ab-av1 の手法を参考に、映像品質評価で最適な CRF を決定~~ (実装済み)
 2. **エンコード後ファイル名の自動生成** -- しょぼいカレンダー + TMDB API で Jellyfin/Emby/Plex 互換のパスを生成
-3. **一括リネーム機能** -- 既存ファイルをスキャンし、TUI で確認しながら一括リネーム
+3. ~~**一括リネーム機能** -- 既存ファイルをスキャンし、TUI で確認しながら一括リネーム~~ (実装済み)
 4. **EPGStation 連携** -- 録画完了フックからの自動実行、録画パス更新
-5. **ffmpeg ネイティブ CM カット** -- AviSynth+ 依存を排除し、ffmpeg filter_complex でフレーム精度カット
+5. ~~**ffmpeg ネイティブ CM カット** -- AviSynth+ 依存を排除し、ffmpeg filter_complex でフレーム精度カット~~ (実装済み)
 
 ---
 
 ## 詳細ドキュメント
 
-| ドキュメント                                                                   | 内容                                                                                                                             |
-| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| [components/vmaf-crf-auto.md](components/vmaf-crf-auto.md)                     | 機能1: VMAF ベース CRF 自動決定 (ab-av1 分析、実装設計)                                                                          |
-| [components/filename-generation.md](components/filename-generation.md)         | 機能2: ファイル名生成 (2.1-2.5, 2.7-2.9: 背景、ジャンルフラグ、処理フロー、パーサ、しょぼかる API、命名規則、エラーハンドリング) |
-| [components/tmdb-episode-matching.md](components/tmdb-episode-matching.md)     | 機能2 続き: TMDB エピソード照合 (2.6: API仕様、課題、シリーズID解決、シーズン・話数特定、再放送判定、統合フロー)                 |
-| [components/batch-rename-epgstation.md](components/batch-rename-epgstation.md) | 機能3-4: 一括リネーム・EPGStation 連携 (2.10-2.11: Bulk取得、DuckDB、TUI、キャッシュ戦略)                                        |
-| [components/ffmpeg-native-cut.md](components/ffmpeg-native-cut.md)             | 機能5: ffmpeg ネイティブ CM カット (AviSynth+ 依存排除、trim+concat/select フィルタ)                                             |
-| [api-research/api-data-collection.md](api-research/api-data-collection.md)     | **前段作業**: API データ収集・分析ツール (しょぼかる/TMDB パターン検証用)                                                        |
+| ドキュメント                                                               | 内容                                                                                                                             |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| ~~components/vmaf-crf-auto.md~~                                            | ~~機能1: VMAF ベース CRF 自動決定 (ab-av1 分析、実装設計)~~ (実装済み・削除)                                                     |
+| [filename-generation.md](filename-generation.md)                           | 機能2: ファイル名生成 (2.1-2.5, 2.7-2.9: 背景、ジャンルフラグ、処理フロー、パーサ、しょぼかる API、命名規則、エラーハンドリング) |
+| [tmdb-episode-matching.md](tmdb-episode-matching.md)                       | 機能2 続き: TMDB エピソード照合 (2.6: API仕様、課題、シリーズID解決、シーズン・話数特定、再放送判定、統合フロー)                 |
+| [batch-rename-epgstation.md](batch-rename-epgstation.md)                   | 機能3-4: 一括リネーム・EPGStation 連携 (2.10-2.11: Bulk取得、DuckDB、TUI、キャッシュ戦略)                                        |
+| ~~components/ffmpeg-native-cut.md~~                                        | ~~機能5: ffmpeg ネイティブ CM カット (AviSynth+ 依存排除、trim+concat/select フィルタ)~~ (実装済み・削除)                        |
+| [api-research/api-data-collection.md](api-research/api-data-collection.md) | **前段作業**: API データ収集・分析ツール (しょぼかる/TMDB パターン検証用)                                                        |
 
 ---
 

@@ -111,6 +111,17 @@ pub fn frame_to_msec(frame: u32) -> u64 {
     (u64::from(frame) * 1001 + 15) / 30
 }
 
+/// Convert a frame number to seconds at 29.97fps (high precision).
+///
+/// Formula: `frame * 1001.0 / 30000.0`
+///
+/// Used for VMAF sample positioning where sub-millisecond precision
+/// is preferred over integer truncation.
+#[must_use]
+pub fn frame_to_secs(frame: u32) -> f64 {
+    f64::from(frame) * 1001.0 / 30000.0
+}
+
 /// Convert a frame count to seconds at 29.97fps (for type classification).
 ///
 /// Formula: `floor((frames * 1001 + 15000) / 30000)`
@@ -1350,5 +1361,54 @@ mod tests {
         update_part_cut(&mut b, &mut n, ChapterType::Empty);
         assert_eq!(n, 0);
         assert_eq!(b, 1);
+    }
+
+    // ── frame_to_secs ────────────────────────────────────────
+
+    #[test]
+    fn test_frame_to_secs_zero() {
+        // Arrange / Act
+        let secs = frame_to_secs(0);
+
+        // Assert
+        assert!((secs - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_frame_to_secs_one() {
+        // Arrange / Act — 1 * 1001 / 30000 ≈ 0.03337
+        let secs = frame_to_secs(1);
+
+        // Assert
+        let expected = 1001.0 / 30000.0;
+        assert!(
+            (secs - expected).abs() < 1e-9,
+            "frame 1: got {secs}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn test_frame_to_secs_hundred() {
+        // Arrange / Act — 100 * 1001 / 30000 ≈ 3.3367
+        let secs = frame_to_secs(100);
+
+        // Assert
+        let expected = 100.0 * 1001.0 / 30000.0;
+        assert!(
+            (secs - expected).abs() < 1e-9,
+            "frame 100: got {secs}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn test_frame_to_secs_30000() {
+        // Arrange / Act — 30000 * 1001 / 30000 = 1001.0
+        let secs = frame_to_secs(30000);
+
+        // Assert
+        assert!(
+            (secs - 1001.0).abs() < 1e-9,
+            "frame 30000: got {secs}, expected 1001.0"
+        );
     }
 }

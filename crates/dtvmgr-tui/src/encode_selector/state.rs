@@ -668,7 +668,7 @@ impl EncodeSelectorState {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
     use super::*;
 
@@ -1304,5 +1304,334 @@ mod tests {
         let state =
             EncodeSelectorState::new(vec![], vec![], vec![], None, Some("subdir"), page, vec![]);
         assert_eq!(state.settings.directory, "subdir");
+    }
+
+    // ── move_up / move_down on empty state ────────────────────────
+
+    #[test]
+    fn move_up_on_empty_state_is_noop() {
+        let mut state = make_state(0);
+        assert_eq!(state.table_state.selected(), None);
+
+        state.move_up();
+        assert_eq!(state.table_state.selected(), None);
+    }
+
+    #[test]
+    fn move_down_on_empty_state_is_noop() {
+        let mut state = make_state(0);
+        assert_eq!(state.table_state.selected(), None);
+
+        state.move_down();
+        assert_eq!(state.table_state.selected(), None);
+    }
+
+    // ── page_up / page_down ───────────────────────────────────────
+
+    #[test]
+    fn page_up_moves_by_n() {
+        let mut state = make_state(10);
+        // Move cursor to row 7
+        for _ in 0..7 {
+            state.move_down();
+        }
+        assert_eq!(state.table_state.selected(), Some(7));
+
+        // Page up by 3
+        state.page_up(3);
+        assert_eq!(state.table_state.selected(), Some(4));
+    }
+
+    #[test]
+    fn page_up_clamps_at_top() {
+        let mut state = make_state(5);
+        state.move_down(); // cursor at 1
+        state.page_up(10); // should clamp at 0
+        assert_eq!(state.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn page_up_on_empty_is_noop() {
+        let mut state = make_state(0);
+        state.page_up(5);
+        assert_eq!(state.table_state.selected(), None);
+    }
+
+    #[test]
+    fn page_down_moves_by_n() {
+        let mut state = make_state(10);
+        assert_eq!(state.table_state.selected(), Some(0));
+
+        state.page_down(4);
+        assert_eq!(state.table_state.selected(), Some(4));
+    }
+
+    #[test]
+    fn page_down_clamps_at_bottom() {
+        let mut state = make_state(5);
+        state.page_down(100);
+        assert_eq!(state.table_state.selected(), Some(4));
+    }
+
+    #[test]
+    fn page_down_on_empty_is_noop() {
+        let mut state = make_state(0);
+        state.page_down(5);
+        assert_eq!(state.table_state.selected(), None);
+    }
+
+    // ── toggle_current edge cases ─────────────────────────────────
+
+    #[test]
+    fn toggle_current_selects_and_deselects() {
+        let mut state = make_state(3);
+        assert!(state.selected.is_empty());
+
+        // Select row 0
+        state.toggle_current();
+        assert!(state.selected.contains(&0));
+
+        // Deselect row 0
+        state.toggle_current();
+        assert!(!state.selected.contains(&0));
+    }
+
+    #[test]
+    fn toggle_current_unavailable_row_is_noop() {
+        let mut state = make_mixed_state();
+        // Move cursor to row 1 (file_exists=false)
+        state.move_down();
+        assert_eq!(state.table_state.selected(), Some(1));
+
+        state.toggle_current();
+        assert!(state.selected.is_empty());
+    }
+
+    #[test]
+    fn toggle_current_no_source_video_is_noop() {
+        let mut state = make_mixed_state();
+        // Move cursor to row 2 (source_video_file_id=None)
+        state.move_down();
+        state.move_down();
+        assert_eq!(state.table_state.selected(), Some(2));
+
+        state.toggle_current();
+        assert!(state.selected.is_empty());
+    }
+
+    // ── toggle_storage_dir ────────────────────────────────────────
+
+    #[test]
+    fn toggle_storage_dir_toggles_visibility() {
+        let page = PageInfo {
+            offset: 0,
+            size: 10,
+            total: 0,
+        };
+        let mut state = EncodeSelectorState::new(
+            vec![],
+            vec![],
+            vec![],
+            None,
+            None,
+            page,
+            vec![
+                (String::from("recorded"), String::from("/data/recorded")),
+                (String::from("encoded"), String::from("/data/encoded")),
+            ],
+        );
+
+        assert!(state.storage_dirs[0].visible);
+        state.toggle_storage_dir(0);
+        assert!(!state.storage_dirs[0].visible);
+        state.toggle_storage_dir(0);
+        assert!(state.storage_dirs[0].visible);
+    }
+
+    #[test]
+    fn toggle_storage_dir_out_of_bounds_is_noop() {
+        let page = PageInfo {
+            offset: 0,
+            size: 10,
+            total: 0,
+        };
+        let mut state = EncodeSelectorState::new(
+            vec![],
+            vec![],
+            vec![],
+            None,
+            None,
+            page,
+            vec![(String::from("recorded"), String::from("/data/recorded"))],
+        );
+
+        // Should not panic
+        state.toggle_storage_dir(99);
+        assert!(state.storage_dirs[0].visible);
+    }
+
+    // ── encode_queue_status / is_in_encode_queue ──────────────────
+
+    #[test]
+    fn encode_queue_status_no_queue() {
+        let state = make_state(3);
+        assert_eq!(state.encode_queue_status(0), "");
+        assert!(!state.is_in_encode_queue(0));
+    }
+
+    #[test]
+    fn encode_queue_status_running() {
+        let mut state = make_state(3);
+        state.encode_queue = Some(EncodeQueueInfo {
+            running: vec![RunningEncodeItem {
+                recorded_id: 1,
+                name: String::from("test"),
+                mode: String::from("H.264"),
+                percent: Some(0.5),
+                log: None,
+            }],
+            waiting_count: 0,
+            waiting_ids: BTreeSet::new(),
+        });
+
+        assert_eq!(state.encode_queue_status(1), "run");
+        assert!(state.is_in_encode_queue(1));
+        assert_eq!(state.encode_queue_status(0), "");
+        assert!(!state.is_in_encode_queue(0));
+    }
+
+    #[test]
+    fn encode_queue_status_waiting() {
+        let mut state = make_state(3);
+        let mut waiting_ids = BTreeSet::new();
+        waiting_ids.insert(2);
+        state.encode_queue = Some(EncodeQueueInfo {
+            running: vec![],
+            waiting_count: 1,
+            waiting_ids,
+        });
+
+        assert_eq!(state.encode_queue_status(2), "wait");
+        assert!(state.is_in_encode_queue(2));
+        assert_eq!(state.encode_queue_status(0), "");
+    }
+
+    // ── toggle_hide_queued ────────────────────────────────────────
+
+    #[test]
+    fn toggle_hide_queued_filters_queued_rows() {
+        let mut state = make_state(3);
+        let mut waiting_ids = BTreeSet::new();
+        waiting_ids.insert(1);
+        state.encode_queue = Some(EncodeQueueInfo {
+            running: vec![RunningEncodeItem {
+                recorded_id: 0,
+                name: String::from("test"),
+                mode: String::from("H.264"),
+                percent: None,
+                log: None,
+            }],
+            waiting_count: 1,
+            waiting_ids,
+        });
+
+        assert_eq!(state.filtered_indices().len(), 3);
+
+        // Act — hide queued items
+        state.toggle_hide_queued();
+
+        // Assert — rows 0 (running) and 1 (waiting) are hidden
+        assert_eq!(state.filtered_indices().len(), 1);
+        assert_eq!(state.filtered_indices()[0], 2);
+
+        // Act — show again
+        state.toggle_hide_queued();
+        assert_eq!(state.filtered_indices().len(), 3);
+    }
+
+    // ── update_file_exists with non-existent ID ───────────────────
+
+    #[test]
+    fn update_file_exists_nonexistent_id_is_noop() {
+        let mut state = make_state(3);
+        // Should not panic or change anything
+        state.update_file_exists(999, true);
+        assert_eq!(state.rows.len(), 3);
+    }
+
+    // ── new with recorded_dirs ────────────────────────────────────
+
+    #[test]
+    fn new_populates_storage_dirs() {
+        let page = PageInfo {
+            offset: 0,
+            size: 10,
+            total: 0,
+        };
+        let state = EncodeSelectorState::new(
+            vec![],
+            vec![],
+            vec![],
+            None,
+            None,
+            page,
+            vec![
+                (String::from("recorded"), String::from("/data/recorded")),
+                (String::from("encoded"), String::from("/data/encoded")),
+            ],
+        );
+
+        assert_eq!(state.storage_dirs.len(), 2);
+        assert_eq!(state.storage_dirs[0].name, "recorded");
+        assert_eq!(state.storage_dirs[0].path, "/data/recorded");
+        assert!(state.storage_dirs[0].visible);
+        assert!(state.storage_dirs[0].stats.is_none());
+        assert_eq!(state.storage_dirs[1].name, "encoded");
+    }
+
+    // ── rebuild_filter resets cursor ──────────────────────────────
+
+    #[test]
+    fn rebuild_filter_resets_cursor_when_all_filtered_out() {
+        let mut state = make_mixed_state();
+        // Select cursor at row 2
+        state.move_down();
+        state.move_down();
+        assert_eq!(state.table_state.selected(), Some(2));
+
+        // Hide unavailable — only row 0 remains
+        state.toggle_hide_unavailable();
+        // Cursor should be reset to 0
+        assert_eq!(state.table_state.selected(), Some(0));
+
+        // Now mark last available row as unavailable too
+        state.rows[0].file_exists = false;
+        state.rebuild_filter();
+        // All filtered out — cursor is None
+        assert_eq!(state.table_state.selected(), None);
+        assert!(state.filtered_indices().is_empty());
+    }
+
+    // ── new with non-matching default_preset ──────────────────────
+
+    #[test]
+    fn new_with_nonexistent_default_preset_falls_back() {
+        let page = PageInfo {
+            offset: 0,
+            size: 10,
+            total: 0,
+        };
+        let state = EncodeSelectorState::new(
+            vec![],
+            vec![String::from("H.264"), String::from("H.265")],
+            vec![],
+            Some("AV1"), // not in the list
+            None,
+            page,
+            vec![],
+        );
+        // Falls back to index 0
+        assert_eq!(state.settings.preset_index, 0);
+        assert_eq!(state.settings.mode, "H.264");
     }
 }

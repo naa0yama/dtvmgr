@@ -48,7 +48,7 @@ pub struct DetectionParam {
 }
 
 /// Configuration for the jlse CM detection pipeline.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct JlseConfig {
     /// Directory paths (JL, logo, result).
     #[serde(default)]
@@ -76,7 +76,7 @@ pub struct DurationCheckRule {
 }
 
 /// Encode configuration for the `FFmpeg` step.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct JlseEncode {
     /// Output container format extension (default: `"mkv"`).
     pub format: Option<String>,
@@ -92,6 +92,9 @@ pub struct JlseEncode {
     /// Duration check rules. Uses defaults if omitted.
     #[serde(default)]
     pub duration_check: Option<Vec<DurationCheckRule>>,
+    /// VMAF-based quality parameter search settings.
+    #[serde(default)]
+    pub quality_search: Option<QualitySearchConfig>,
 }
 
 impl Default for JlseEncode {
@@ -102,8 +105,43 @@ impl Default for JlseEncode {
             video: Some(EncodeVideo::default()),
             audio: Some(EncodeAudio::default()),
             duration_check: None,
+            quality_search: None,
         }
     }
+}
+
+/// VMAF-based quality parameter search settings.
+///
+/// When enabled, the pipeline automatically determines the optimal
+/// CRF / ICQ value by sampling the input and measuring VMAF scores.
+///
+/// TOML section: `[jlse.encode.quality_search]`
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct QualitySearchConfig {
+    /// Enable quality search (default: `false`).
+    #[serde(default)]
+    pub enabled: bool,
+    /// Target VMAF score (default: 93.0).
+    pub target_vmaf: Option<f32>,
+    /// Maximum encoded size as percentage of original (default: 80.0).
+    pub max_encoded_percent: Option<f32>,
+    /// Accepted VMAF shortfall from target (default: 1.0).
+    /// When target is 93.0 and tolerance is 1.0, VMAF 92.0+ is accepted.
+    pub min_vmaf_tolerance: Option<f32>,
+    /// Strict tolerance mode (default: `true`).
+    pub thorough: Option<bool>,
+    /// Duration of each sample in seconds (default: 3.0).
+    pub sample_duration_secs: Option<f64>,
+    /// Seconds to skip from start and end of content (default: 120.0).
+    pub skip_secs: Option<f64>,
+    /// Take one sample per this many seconds of content (default: 720.0 = 12 min).
+    pub sample_every_secs: Option<f64>,
+    /// Minimum number of samples (default: 5).
+    pub min_samples: Option<u32>,
+    /// Maximum number of samples (default: 15).
+    pub max_samples: Option<u32>,
+    /// VMAF `n_subsample` — score every Nth frame (default: 5).
+    pub vmaf_subsample: Option<u32>,
 }
 
 /// `FFmpeg` input processing flags.

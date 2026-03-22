@@ -655,4 +655,123 @@ mod tests {
             .unwrap();
         assert_eq!(count, 0);
     }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_upsert_empty_items() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+
+        // Act
+        let changed = upsert_recorded_items(&conn, &[], &[]).unwrap();
+
+        // Assert
+        assert_eq!(changed, 0);
+        let loaded = load_recorded_items(&conn).unwrap();
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_load_recorded_items_page_empty() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+
+        // Act
+        let (items, total) = load_recorded_items_page(&conn, 0, 10).unwrap();
+
+        // Assert
+        assert_eq!(total, 0);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_load_recorded_items_page_offset_beyond() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let items = vec![make_item(1, 1_000_000)];
+        upsert_recorded_items(&conn, &items, &[]).unwrap();
+
+        // Act — offset beyond the total count
+        let (page, total) = load_recorded_items_page(&conn, 100, 10).unwrap();
+
+        // Assert
+        assert_eq!(total, 1);
+        assert!(page.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_update_file_exists_false() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let items = vec![make_item(1, 1_000_000)];
+        let vf = vec![(1, vec![make_video_file(10, 1, "ts")])];
+        upsert_recorded_items(&conn, &items, &vf).unwrap();
+
+        // Act — mark as not existing
+        update_file_exists(&conn, 10, false, "2024-06-01T00:00:00Z").unwrap();
+        let loaded = load_recorded_items(&conn).unwrap();
+
+        // Assert
+        assert_eq!(loaded[0].1[0].file_exists, Some(false));
+        assert_eq!(
+            loaded[0].1[0].file_checked_at.as_deref(),
+            Some("2024-06-01T00:00:00Z")
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_delete_recorded_items_not_in_all_kept() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let items = vec![make_item(1, 1_000_000), make_item(2, 2_000_000)];
+        upsert_recorded_items(&conn, &items, &[]).unwrap();
+
+        // Act — keep all items
+        let deleted = delete_recorded_items_not_in(&conn, &[1, 2]).unwrap();
+        let remaining = load_recorded_items(&conn).unwrap();
+
+        // Assert
+        assert_eq!(deleted, 0);
+        assert_eq!(remaining.len(), 2);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_upsert_multiple_video_files() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let items = vec![make_item(1, 1_000_000)];
+        let vf = vec![(
+            1,
+            vec![
+                make_video_file(10, 1, "ts"),
+                make_video_file(11, 1, "encoded"),
+            ],
+        )];
+
+        // Act
+        upsert_recorded_items(&conn, &items, &vf).unwrap();
+        let loaded = load_recorded_items(&conn).unwrap();
+
+        // Assert
+        assert_eq!(loaded[0].1.len(), 2);
+        assert_eq!(loaded[0].1[0].file_type, "ts");
+        assert_eq!(loaded[0].1[1].file_type, "encoded");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_invalidate_file_exists_no_video_files() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let items = vec![make_item(1, 1_000_000)];
+        upsert_recorded_items(&conn, &items, &[]).unwrap();
+
+        // Act — should not error even when no video files exist
+        invalidate_file_exists(&conn, 1).unwrap();
+    }
 }

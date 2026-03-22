@@ -1079,4 +1079,101 @@ mod tests {
         assert!(!display.contains('%'));
         assert!(display.contains("H.265"));
     }
+
+    #[test]
+    fn fmt_datetime_overflow_returns_fallback() {
+        // Arrange: u64::MAX / 1000 wraps to negative i64, chrono returns None
+        assert_eq!(fmt_datetime(u64::MAX), "----");
+    }
+
+    #[test]
+    fn fmt_duration_partial_minute() {
+        // 59 seconds = 59_000 ms → rounds down to 0m
+        assert_eq!(fmt_duration(0, 59_000), "0m");
+        // 90 seconds = 90_000 ms → 1m
+        assert_eq!(fmt_duration(0, 90_000), "1m");
+    }
+
+    #[test]
+    fn build_queue_lines_running_no_progress_empty_line2() {
+        // Arrange: running item with no percent and no log → line2 empty
+        let mut state = EncodeSelectorState::new(
+            vec![],
+            vec![],
+            vec![],
+            None,
+            None,
+            PageInfo {
+                offset: 0,
+                size: 10,
+                total: 0,
+            },
+            vec![],
+        );
+        state.encode_queue = Some(EncodeQueueInfo {
+            running: vec![RunningEncodeItem {
+                recorded_id: 1,
+                name: String::from("Test"),
+                mode: String::from("H.264"),
+                percent: None,
+                log: None,
+            }],
+            waiting_count: 0,
+            waiting_ids: BTreeSet::new(),
+        });
+
+        // Act
+        let result = build_queue_lines(&state);
+
+        // Assert
+        let first = result[0].to_string();
+        assert!(first.contains("Test"));
+        assert!(first.contains("H.264"));
+        // Line 2 should be empty since no progress info
+        assert!(result[1].to_string().is_empty());
+    }
+
+    #[test]
+    fn build_queue_lines_running_log_only_no_percent() {
+        // Arrange: running item with log but no percent
+        let mut state = EncodeSelectorState::new(
+            vec![],
+            vec![],
+            vec![],
+            None,
+            None,
+            PageInfo {
+                offset: 0,
+                size: 10,
+                total: 0,
+            },
+            vec![],
+        );
+        state.encode_queue = Some(EncodeQueueInfo {
+            running: vec![RunningEncodeItem {
+                recorded_id: 1,
+                name: String::from("Test"),
+                mode: String::from("H.264"),
+                percent: None,
+                log: Some(String::from("muxing")),
+            }],
+            waiting_count: 0,
+            waiting_ids: BTreeSet::new(),
+        });
+
+        // Act
+        let result = build_queue_lines(&state);
+
+        // Assert
+        let second = result[1].to_string();
+        assert!(second.contains("muxing"));
+        // No percent shown
+        assert!(!second.contains('%'));
+    }
+
+    #[test]
+    fn fmt_size_large_value() {
+        // 1 TB = 1_099_511_627_776 bytes = 1,048,576 MB
+        assert_eq!(fmt_size(1_099_511_627_776), "1,048,576 MB");
+    }
 }
