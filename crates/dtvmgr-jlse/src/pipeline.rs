@@ -1009,10 +1009,11 @@ fn build_vmaf_video_filter(encode: &JlseEncode) -> String {
 ///
 /// FFV1 is a CPU-only encoder, so when VPP filters produce QSV
 /// surface frames, `hwdownload` must be appended to transfer
-/// frames back to system memory.  The pixel format after download
-/// is auto-negotiated by ffmpeg from the HW surface format, so no
-/// explicit `format=` is needed (FFV1 accepts both `nv12` and
-/// `p010le`).
+/// frames back to system memory.  After `hwdownload`, an explicit
+/// `format=` is required so that ffmpeg can negotiate a pixel
+/// format that the software encoder (FFV1) accepts.  When
+/// `pix_fmt` is configured (e.g. `p010le`), that value is used;
+/// otherwise `nv12` is used as a safe default.
 ///
 /// Returns `None` when no HW filter device is configured (the
 /// caller should fall back to `video_filter`).
@@ -1027,7 +1028,13 @@ fn build_vmaf_reference_filter(encode: &JlseEncode, video_filter: &str) -> Optio
         return None;
     }
 
-    Some(format!("{video_filter},hwdownload"))
+    let fmt = encode
+        .video
+        .as_ref()
+        .and_then(|v| v.pix_fmt.as_deref())
+        .unwrap_or("nv12");
+
+    Some(format!("{video_filter},hwdownload,format={fmt}"))
 }
 
 /// Emit a structured summary log with all pipeline metrics.
@@ -2060,6 +2067,10 @@ mod tests {
                 filter_hw_device: Some("hw".to_owned()),
                 ..Default::default()
             }),
+            video: Some(crate::types::EncodeVideo {
+                pix_fmt: Some("p010le".to_owned()),
+                ..Default::default()
+            }),
             ..Default::default()
         };
         let video_filter = "hwupload=extra_hw_frames=64,vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le,setfield=mode=prog";
@@ -2067,11 +2078,11 @@ mod tests {
         // Act
         let ref_filter = build_vmaf_reference_filter(&enc, video_filter);
 
-        // Assert — hwdownload appended for FFV1
+        // Assert — hwdownload + format= appended for FFV1
         assert_eq!(
             ref_filter.as_deref(),
             Some(
-                "hwupload=extra_hw_frames=64,vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le,setfield=mode=prog,hwdownload"
+                "hwupload=extra_hw_frames=64,vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le,setfield=mode=prog,hwdownload,format=p010le"
             )
         );
     }
@@ -2108,10 +2119,10 @@ mod tests {
         // Act
         let ref_filter = build_vmaf_reference_filter(&enc, video_filter);
 
-        // Assert — hwdownload without explicit format
+        // Assert — hwdownload with default nv12 format
         assert_eq!(
             ref_filter.as_deref(),
-            Some("hwupload=extra_hw_frames=64,vpp_qsv=framerate=30,hwdownload")
+            Some("hwupload=extra_hw_frames=64,vpp_qsv=framerate=30,hwdownload,format=nv12")
         );
     }
 
