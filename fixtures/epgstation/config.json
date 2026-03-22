@@ -1,0 +1,20 @@
+{
+	"encode": [
+		{
+			"name": "H.264"
+		},
+		{
+			"name": "H.265"
+		}
+	],
+	"recorded": [
+		{
+			"name": "recorded",
+			"path": "/mnt/recorded"
+		},
+		{
+			"name": "encoded",
+			"path": "/mnt/encoded"
+		}
+	]
+}

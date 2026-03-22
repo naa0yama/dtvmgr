@@ -1,0 +1,28 @@
+[package]
+name = "dtvmgr-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Terminal UI components for dtvmgr"
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+crossterm = { workspace = true }
+open = { workspace = true }
+ratatui = { workspace = true }
+regex = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+unicode-normalization = { workspace = true }
+
+dtvmgr-api = { workspace = true }
+dtvmgr-db = { workspace = true }
+dtvmgr-jlse = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

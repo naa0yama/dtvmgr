@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ChLookupResponse>
+    <Result>
+        <Code>200</Code>
+        <Message></Message>
+    </Result>
+    <ChItems>
+        <ChItem id="1">
+            <LastUpdate>2020-10-11 05:58:16</LastUpdate>
+            <ChID>1</ChID>
+            <ChName>NHK総合</ChName>
+            <ChiEPGName>ＮＨＫ総合</ChiEPGName>
+            <ChURL>https://www.nhk.or.jp/</ChURL>
+            <ChEPGURL>https://www.nhk.jp/timetable/</ChEPGURL>
+            <ChComment></ChComment>
+            <ChGID>11</ChGID>
+            <ChNumber>1</ChNumber>
+        </ChItem>
+        <ChItem id="2">
+            <LastUpdate>2020-10-11 05:58:25</LastUpdate>
+            <ChID>2</ChID>
+            <ChName>NHK Eテレ</ChName>
+            <ChiEPGName>ＮＨＫ教育</ChiEPGName>
+            <ChURL>https://www.nhk.or.jp/</ChURL>
+            <ChEPGURL>https://www.nhk.jp/timetable/</ChEPGURL>
+            <ChComment>NHK Eテレ1</ChComment>
+            <ChGID>11</ChGID>
+            <ChNumber>2</ChNumber>
+        </ChItem>
+        <ChItem id="3">
+            <LastUpdate>2018-10-17 03:29:19</LastUpdate>
+            <ChID>3</ChID>
+            <ChName>フジテレビ</ChName>
+            <ChiEPGName>フジテレビ</ChiEPGName>
+            <ChURL>https://www.fujitv.co.jp/index.html</ChURL>
+            <ChEPGURL>https://www.fujitv.co.jp/timetable/weekly/index.html</ChEPGURL>
+            <ChComment></ChComment>
+            <ChGID>1</ChGID>
+            <ChNumber>8</ChNumber>
+        </ChItem>
+    </ChItems>
+</ChLookupResponse>
