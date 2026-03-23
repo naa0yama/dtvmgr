@@ -178,7 +178,7 @@ impl TmdbClient {
                 .with_context(|| format!("failed to build request: {path}"))?;
 
             // SECURITY: URL does not contain auth token (Bearer is in header)
-            tracing::Span::current().record("http.url", tracing::field::display(request.url()));
+            tracing::Span::current().record("url.full", tracing::field::display(request.url()));
 
             let response = match self.http_client.execute(request).await {
                 Ok(resp) => resp,
@@ -195,7 +195,7 @@ impl TmdbClient {
                     let kind = crate::classify_reqwest_error(&e);
                     if let Some(status) = e.status() {
                         tracing::Span::current()
-                            .record("http.status_code", i64::from(status.as_u16()));
+                            .record("http.response.status_code", i64::from(status.as_u16()));
                     }
                     bail!("{kind}: {path}: {e:#}");
                 }
@@ -203,7 +203,7 @@ impl TmdbClient {
 
             let span = tracing::Span::current();
             let status = response.status();
-            span.record("http.status_code", i64::from(status.as_u16()));
+            span.record("http.response.status_code", i64::from(status.as_u16()));
 
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 #[cfg(feature = "otel")]
@@ -258,10 +258,10 @@ impl TmdbClient {
     /// Sends a GET request with Bearer auth, query params, and rate limiting.
     #[instrument(skip_all, fields(
         otel.kind = "Client",
-        http.method = "GET",
-        http.path = path,
-        http.url = tracing::field::Empty,
-        http.status_code = tracing::field::Empty,
+        http.request.method = "GET",
+        url.path = path,
+        url.full = tracing::field::Empty,
+        http.response.status_code = tracing::field::Empty,
         http.response.body = tracing::field::Empty,
     ), err(level = "warn"))]
     async fn get_json<T: serde::de::DeserializeOwned>(

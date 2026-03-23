@@ -2662,13 +2662,13 @@ async fn main() -> Result<()> {
     let (tracer_provider, logger_provider, meter_provider) = {
         let env_filter =
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-        let fmt_layer = tracing_subscriber::fmt::layer()
-            .with_target(false)
-            .with_writer(if tui_mode {
-                tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::sink)
-            } else {
-                tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::stderr)
-            });
+        // TUI mode: omit fmt layer — stdout/stderr belong to the terminal renderer.
+        // Non-TUI mode: log to stderr for console visibility.
+        let fmt_layer = if tui_mode {
+            None
+        } else {
+            Some(tracing_subscriber::fmt::layer().with_target(false))
+        };
 
         let otel_parts = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
             .ok()
@@ -2702,7 +2702,7 @@ async fn main() -> Result<()> {
                             env!("GIT_HASH"),
                         ),
                         opentelemetry::KeyValue::new(
-                            "vcs.repository.url",
+                            "vcs.repository.url.full",
                             env!("CARGO_PKG_REPOSITORY"),
                         ),
                     ])
@@ -2720,10 +2720,7 @@ async fn main() -> Result<()> {
 
                 let meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
                     .with_resource(resource.clone())
-                    .with_reader(
-                        opentelemetry_sdk::metrics::PeriodicReader::builder(metric_exporter)
-                            .build(),
-                    )
+                    .with_periodic_exporter(metric_exporter)
                     .build();
 
                 opentelemetry::global::set_meter_provider(meter_provider.clone());
@@ -2813,14 +2810,16 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Shut down in reverse initialization order — logger last so that
+    // log export remains available while traces and metrics are flushing.
     #[cfg(feature = "otel")]
     {
-        if let Some(provider) = logger_provider {
+        if let Some(provider) = tracer_provider {
             if let Err(e) = provider.force_flush() {
-                tracing::warn!("failed to flush OTel logger provider: {e:#}");
+                tracing::warn!("failed to flush OTel tracer provider: {e:#}");
             }
             if let Err(e) = provider.shutdown() {
-                tracing::warn!("failed to shutdown OTel logger provider: {e:#}");
+                tracing::warn!("failed to shutdown OTel tracer provider: {e:#}");
             }
         }
         if let Some(provider) = meter_provider {
@@ -2831,12 +2830,12 @@ async fn main() -> Result<()> {
                 tracing::warn!("failed to shutdown OTel meter provider: {e:#}");
             }
         }
-        if let Some(provider) = tracer_provider {
+        if let Some(provider) = logger_provider {
             if let Err(e) = provider.force_flush() {
-                tracing::warn!("failed to flush OTel tracer provider: {e:#}");
+                tracing::warn!("failed to flush OTel logger provider: {e:#}");
             }
             if let Err(e) = provider.shutdown() {
-                tracing::warn!("failed to shutdown OTel tracer provider: {e:#}");
+                tracing::warn!("failed to shutdown OTel logger provider: {e:#}");
             }
         }
     }
