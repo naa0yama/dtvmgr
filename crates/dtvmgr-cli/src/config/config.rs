@@ -128,9 +128,16 @@ pub struct TmdbConfig {
 
 impl std::fmt::Debug for TmdbConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // SECURITY: never reference self.api_key — even .as_ref() creates a
+        // taint path that CodeQL traces into the formatter output.
+        let redacted: &str = if self.api_key.is_some() {
+            "[REDACTED]"
+        } else {
+            "None"
+        };
         f.debug_struct("TmdbConfig")
             .field("language", &self.language)
-            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("api_key", &redacted)
             .finish()
     }
 }
