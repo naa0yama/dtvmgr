@@ -148,20 +148,23 @@ impl EpgStationClient {
                 Ok(resp) => resp,
                 Err(e) if !e.is_timeout() && network_retries < MAX_NETWORK_RETRIES => {
                     network_retries = network_retries.saturating_add(1);
+                    // SECURITY: log classified kind only — reqwest::Error from
+                    // execute() may carry request context; never format it.
+                    let kind = crate::classify_reqwest_error(&e);
                     tracing::debug!(
                         retry = network_retries,
-                        error = %e,
+                        error.kind = kind,
                         "transient network error, retrying"
                     );
                     continue;
                 }
                 Err(e) => {
                     let kind = crate::classify_reqwest_error(&e);
-                    if let Some(status) = e.status() {
-                        tracing::Span::current()
-                            .record("http.response.status_code", i64::from(status.as_u16()));
+                    let status_code = e.status().map(|s| i64::from(s.as_u16()));
+                    if let Some(code) = status_code {
+                        tracing::Span::current().record("http.response.status_code", code);
                     }
-                    bail!("{kind}: {path}: {e:#}");
+                    bail!("{kind}: {path}");
                 }
             };
 
@@ -201,8 +204,14 @@ impl EpgStationClient {
                 .await
                 .with_context(|| format!("failed to read response body: {path}"))?;
             span.record("http.response.body", body.as_str());
-            let parsed: T = serde_json::from_str(&body)
-                .with_context(|| format!("failed to decode JSON response: {path} body={body}"))?;
+            // SECURITY: do not include response body in error context — it is
+            // already recorded in the tracing span and may contain sensitive data.
+            let parsed: T = serde_json::from_str(&body).with_context(|| {
+                format!(
+                    "failed to decode JSON response: {path} (body_len={} bytes)",
+                    body.len()
+                )
+            })?;
 
             #[cfg(feature = "otel")]
             crate::metrics::record_request_duration("epgstation", method, request_start);

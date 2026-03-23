@@ -114,7 +114,9 @@ pub struct ChannelsConfig {
 }
 
 /// TMDB settings.
-#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+///
+/// Custom `Debug` impl redacts `api_key` to prevent accidental token leakage.
+#[derive(Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct TmdbConfig {
     /// Default language (e.g. "ja-JP"). Used when `--language` is not specified.
     #[serde(default)]
@@ -122,6 +124,15 @@ pub struct TmdbConfig {
     /// API bearer token. Falls back when `TMDB_API_TOKEN` env var is not set.
     #[serde(default)]
     pub api_key: Option<String>,
+}
+
+impl std::fmt::Debug for TmdbConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TmdbConfig")
+            .field("language", &self.language)
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 /// Default regex pattern history.

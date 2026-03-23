@@ -164,21 +164,19 @@ impl SyoboiClient {
         Ok(())
     }
 
-    /// Builds an XML decode error with a preview of the response body.
-    fn xml_decode_error(command: &str, xml: &str) -> String {
-        let preview_len = xml.len().min(500);
-        format!(
-            "{} XML decoding failed (len={}): {}",
-            command,
-            xml.len(),
-            &xml[..preview_len]
-        )
+    /// Builds an XML decode error message.
+    ///
+    /// SECURITY: do not include response body preview — the body is already
+    /// recorded in the tracing span and may contain unexpected data.
+    fn xml_decode_error(command: &str, body_len: usize) -> String {
+        format!("{command} XML decoding failed (body_len={body_len} bytes)")
     }
 
     /// Parses a `TitleLookup` XML response.
     pub(crate) fn parse_title_response(xml: &str) -> Result<Vec<SyoboiTitle>> {
         let raw_result: std::result::Result<TitleLookupResponse, _> = quick_xml::de::from_str(xml);
-        let response = raw_result.with_context(|| Self::xml_decode_error("TitleLookup", xml))?;
+        let response =
+            raw_result.with_context(|| Self::xml_decode_error("TitleLookup", xml.len()))?;
         Self::check_api_result(response.result.as_ref(), "TitleLookup")?;
         Ok(response
             .title_items
@@ -188,7 +186,8 @@ impl SyoboiClient {
     /// Parses a `ProgLookup` XML response.
     pub(crate) fn parse_prog_response(xml: &str) -> Result<Vec<SyoboiProgram>> {
         let raw_result: std::result::Result<ProgLookupResponse, _> = quick_xml::de::from_str(xml);
-        let response = raw_result.with_context(|| Self::xml_decode_error("ProgLookup", xml))?;
+        let response =
+            raw_result.with_context(|| Self::xml_decode_error("ProgLookup", xml.len()))?;
         Self::check_api_result(response.result.as_ref(), "ProgLookup")?;
         Ok(response
             .prog_items
@@ -198,7 +197,7 @@ impl SyoboiClient {
     /// Parses a `ChLookup` XML response.
     pub(crate) fn parse_ch_response(xml: &str) -> Result<Vec<SyoboiChannel>> {
         let raw_result: std::result::Result<ChLookupResponse, _> = quick_xml::de::from_str(xml);
-        let response = raw_result.with_context(|| Self::xml_decode_error("ChLookup", xml))?;
+        let response = raw_result.with_context(|| Self::xml_decode_error("ChLookup", xml.len()))?;
         Self::check_api_result(response.result.as_ref(), "ChLookup")?;
         Ok(response.ch_items.map_or_else(Vec::new, |items| items.items))
     }
@@ -207,7 +206,8 @@ impl SyoboiClient {
     pub(crate) fn parse_ch_group_response(xml: &str) -> Result<Vec<SyoboiChannelGroup>> {
         let raw_result: std::result::Result<ChGroupLookupResponse, _> =
             quick_xml::de::from_str(xml);
-        let response = raw_result.with_context(|| Self::xml_decode_error("ChGroupLookup", xml))?;
+        let response =
+            raw_result.with_context(|| Self::xml_decode_error("ChGroupLookup", xml.len()))?;
         Self::check_api_result(response.result.as_ref(), "ChGroupLookup")?;
         Ok(response
             .ch_group_items
@@ -250,16 +250,19 @@ impl SyoboiClient {
                 Ok(r) => r,
                 Err(e) if !e.is_timeout() && network_retries < MAX_NETWORK_RETRIES => {
                     network_retries = network_retries.saturating_add(1);
+                    // SECURITY: log classified kind only — reqwest::Error from
+                    // send() may carry request context; never format it.
+                    let kind = crate::classify_reqwest_error(&e);
                     tracing::debug!(
                         retry = network_retries,
-                        error = %e,
+                        error.kind = kind,
                         "transient network error, retrying"
                     );
                     continue;
                 }
                 Err(e) => {
                     let kind = crate::classify_reqwest_error(&e);
-                    bail!("{kind}: {command}: {e:#}");
+                    bail!("{kind}: {command}");
                 }
             };
 
@@ -268,12 +271,20 @@ impl SyoboiClient {
             let status = response.status();
             span.record("http.response.status_code", i64::from(status.as_u16()));
             let headers = response.headers().clone();
-            tracing::trace!(
-                %command,
-                %status,
-                ?headers,
-                "Response headers"
-            );
+            // SECURITY: log only header names, not values — response headers
+            // may contain session tokens or other sensitive data.
+            if tracing::enabled!(tracing::Level::TRACE) {
+                let header_names: Vec<&str> = headers
+                    .keys()
+                    .map(reqwest::header::HeaderName::as_str)
+                    .collect();
+                tracing::trace!(
+                    %command,
+                    %status,
+                    ?header_names,
+                    "Response header names"
+                );
+            }
 
             // Cloudflare rate-limit: respect Retry-After header.
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
@@ -965,28 +976,21 @@ mod tests {
 
     #[test]
     fn test_xml_decode_error_short_body() {
-        // Arrange
-        let xml = "<short>body</short>";
-
         // Act
-        let msg = SyoboiClient::xml_decode_error("TestCommand", xml);
+        let msg = SyoboiClient::xml_decode_error("TestCommand", 19);
 
         // Assert
         assert!(msg.contains("TestCommand XML decoding failed"));
-        assert!(msg.contains("<short>body</short>"));
+        assert!(msg.contains("body_len=19 bytes"));
     }
 
     #[test]
-    fn test_xml_decode_error_truncates_long_body() {
-        // Arrange: body longer than 500 chars
-        let xml = "x".repeat(1000);
-
+    fn test_xml_decode_error_long_body() {
         // Act
-        let msg = SyoboiClient::xml_decode_error("TestCommand", &xml);
+        let msg = SyoboiClient::xml_decode_error("TestCommand", 1000);
 
-        // Assert: preview is truncated to 500 chars
-        assert!(msg.contains("len=1000"));
-        assert!(msg.len() < 600); // header + 500 chars
+        // Assert
+        assert!(msg.contains("body_len=1000 bytes"));
     }
 
     #[test]
