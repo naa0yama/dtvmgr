@@ -1,6 +1,8 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 name: CodeQL
 on:
+  push:
+    branches: [main]
   pull_request:
   schedule:
     - cron: "0 0 * * 1"
@@ -14,7 +16,7 @@ concurrency:
 
 jobs:
   analyze:
-    name: analyze
+    name: codeql-analyze
     permissions:
       contents: read # Required to checkout the repository for CodeQL analysis
       security-events: write # Required to upload CodeQL analysis results
