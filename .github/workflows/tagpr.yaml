@@ -58,9 +58,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
+      - name: Parse tagpr pull request output
+        id: tagpr-pr
+        if: steps.tagpr.outputs.pull_request != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          PR_JSON: ${{ steps.tagpr.outputs.pull_request }}
+        with:
+          script: |
+            const pr = JSON.parse(process.env.PR_JSON);
+            core.setOutput('branch', pr.head.ref);
+            core.setOutput('number', String(pr.number));
+
       - name: Format CHANGELOG.md
         id: fmt-changelog
-        if: steps.tagpr.outputs.tag == '' && steps.tagpr.outputs.pull_request != ''
+        if: steps.tagpr.outputs.tag == '' && steps.tagpr-pr.outputs.branch != ''
         run: |
           git fetch origin "$BRANCH"
           git checkout "$BRANCH"
@@ -71,13 +83,13 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
         env:
-          BRANCH: ${{ fromJSON(steps.tagpr.outputs.pull_request).head.ref }}
+          BRANCH: ${{ steps.tagpr-pr.outputs.branch }}
 
       - name: Commit formatted CHANGELOG.md
         if: steps.fmt-changelog.outputs.changed == 'true'
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
-          BRANCH: ${{ fromJSON(steps.tagpr.outputs.pull_request).head.ref }}
+          BRANCH: ${{ steps.tagpr-pr.outputs.branch }}
         with:
           script: |
             const fs = require('fs');
@@ -114,10 +126,10 @@ jobs:
             });
 
       - name: Add CI note to release PR
-        if: steps.tagpr.outputs.tag == '' && steps.tagpr.outputs.pull_request != ''
+        if: steps.tagpr.outputs.tag == '' && steps.tagpr-pr.outputs.number != ''
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
-          PR_NUMBER: ${{ fromJSON(steps.tagpr.outputs.pull_request).number }}
+          PR_NUMBER: ${{ steps.tagpr-pr.outputs.number }}
         with:
           script: |
             const prNumber = parseInt(process.env.PR_NUMBER, 10);
