@@ -58,6 +58,32 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
+      - name: Format CHANGELOG.md on release PR
+        if: steps.tagpr.outputs.tag == ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          BRANCH=$(gh pr list --state open --json headRefName \
+            --jq '[.[] | select(.headRefName | startswith("tagpr-from-"))][0].headRefName // empty')
+          if [ -z "$BRANCH" ]; then
+            echo "No tagpr release branch found, skipping"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GH_REPO}.git"
+          git fetch origin "$BRANCH"
+          git checkout "$BRANCH"
+          dprint fmt CHANGELOG.md
+          if git diff --quiet CHANGELOG.md; then
+            echo "CHANGELOG.md already formatted, skipping"
+            exit 0
+          fi
+          git add CHANGELOG.md
+          git commit -m "[tagpr] format CHANGELOG.md with dprint"
+          git push origin "$BRANCH"
+
       - name: Add CI note to release PR
         if: steps.tagpr.outputs.tag == ''
         env:
