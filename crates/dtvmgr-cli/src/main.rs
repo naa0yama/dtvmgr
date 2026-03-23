@@ -259,15 +259,9 @@ struct JlseRunArgs {
     /// Encode target AVS.
     #[arg(short, long, value_enum, default_value_t)]
     target: AvsTargetArg,
-    /// Enable `FFmpeg` filter output.
-    #[arg(short, long)]
-    filter: bool,
     /// Enable `FFmpeg` encoding.
     #[arg(short, long)]
     encode: bool,
-    /// Additional `FFmpeg` options.
-    #[arg(long)]
-    ffmpeg_option: Option<String>,
     /// Encode output directory.
     #[arg(long)]
     outdir: Option<PathBuf>,
@@ -2207,11 +2201,9 @@ fn run_jlse_run(args: &JlseRunArgs, config_file: Option<&PathBuf>) -> Result<()>
             input,
             channel_name,
             config: jlse_config,
-            filter: args.filter,
             encode: true, // implicitly enabled
             target: AvsTarget::from(args.target),
             add_chapter: args.add_chapter,
-            ffmpeg_option: args.ffmpeg_option.clone(),
             out_dir,
             out_name,
             out_extension,
@@ -2256,11 +2248,9 @@ fn run_jlse_run(args: &JlseRunArgs, config_file: Option<&PathBuf>) -> Result<()>
             input,
             channel_name,
             config: jlse_config,
-            filter: args.filter,
             encode: args.encode,
             target: AvsTarget::from(args.target),
             add_chapter: args.add_chapter,
-            ffmpeg_option: args.ffmpeg_option.clone(),
             out_dir: args.outdir.clone(),
             out_name: args.outname.clone(),
             out_extension: None,
@@ -2696,6 +2686,26 @@ async fn main() -> Result<()> {
 
                 let resource = opentelemetry_sdk::Resource::builder()
                     .with_service_name(env!("CARGO_PKG_NAME"))
+                    .with_attributes([
+                        opentelemetry::KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+                        opentelemetry::KeyValue::new(
+                            "service.instance.id",
+                            gethostname::gethostname().to_string_lossy().into_owned(),
+                        ),
+                        opentelemetry::KeyValue::new("process.runtime.name", "rustc"),
+                        opentelemetry::KeyValue::new(
+                            "process.runtime.version",
+                            env!("RUSTC_VERSION_INFO"),
+                        ),
+                        opentelemetry::KeyValue::new(
+                            "vcs.repository.ref.revision",
+                            env!("GIT_HASH"),
+                        ),
+                        opentelemetry::KeyValue::new(
+                            "vcs.repository.url",
+                            env!("CARGO_PKG_REPOSITORY"),
+                        ),
+                    ])
                     .build();
 
                 let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()

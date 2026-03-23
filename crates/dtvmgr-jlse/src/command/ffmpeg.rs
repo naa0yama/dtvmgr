@@ -320,23 +320,16 @@ impl JlseEncode {
         args
     }
 
-    /// Build encode args from an optional TOML config and optional CLI extra options.
+    /// Build encode args from an optional TOML config.
     ///
     /// Returns `(input_args, output_args)` — input args go before `-i`,
     /// output args go after `-i`.
     #[must_use]
-    pub fn build_encode_args(
-        encode: Option<&Self>,
-        cli_opts: Option<&str>,
-    ) -> (Vec<String>, Vec<String>) {
-        let (input_args, mut output_args) = encode.map_or_else(
+    pub fn build_encode_args(encode: Option<&Self>) -> (Vec<String>, Vec<String>) {
+        encode.map_or_else(
             || (Vec::new(), Vec::new()),
             |e| (e.to_input_args(), e.to_output_args()),
-        );
-        if let Some(opts) = cli_opts {
-            output_args.extend(opts.split_whitespace().map(String::from));
-        }
-        (input_args, output_args)
+        )
     }
 }
 
@@ -1046,43 +1039,29 @@ mod tests {
         };
 
         // Act
-        let (input_args, output_args) =
-            JlseEncode::build_encode_args(Some(&encode), Some("-threads 4"));
+        let (input_args, output_args) = JlseEncode::build_encode_args(Some(&encode));
 
-        // Assert — input_args contain hwaccel, output_args contain codec + cli opts
+        // Assert — input_args contain hwaccel, output_args contain codec
         assert!(input_args.contains(&"-hwaccel".to_owned()));
         assert!(input_args.contains(&"qsv".to_owned()));
         assert!(output_args.contains(&"-c:v".to_owned()));
         assert!(output_args.contains(&"hevc_qsv".to_owned()));
-        assert!(output_args.contains(&"-threads".to_owned()));
-        assert!(output_args.contains(&"4".to_owned()));
     }
 
     // ── build_encode_args ────────────────────────────────────
 
     #[test]
-    fn test_build_encode_args_none_none() {
+    fn test_build_encode_args_none() {
         // Arrange & Act
-        let (input_args, output_args) = JlseEncode::build_encode_args(None, None);
+        let (input_args, output_args) = JlseEncode::build_encode_args(None);
 
-        // Assert — both empty when no encode config and no CLI opts
+        // Assert — both empty when no encode config
         assert!(input_args.is_empty());
         assert!(output_args.is_empty());
     }
 
     #[test]
-    fn test_build_encode_args_none_with_cli_opts() {
-        // Arrange & Act
-        let (input_args, output_args) =
-            JlseEncode::build_encode_args(None, Some("-c:v libx264 -crf 23"));
-
-        // Assert — input empty, output has CLI opts only
-        assert!(input_args.is_empty());
-        assert_eq!(output_args, vec!["-c:v", "libx264", "-crf", "23"]);
-    }
-
-    #[test]
-    fn test_build_encode_args_some_with_no_cli_opts() {
+    fn test_build_encode_args_some_with_video() {
         // Arrange
         let encode = JlseEncode {
             video: Some(EncodeVideo {
@@ -1093,9 +1072,9 @@ mod tests {
         };
 
         // Act
-        let (input_args, output_args) = JlseEncode::build_encode_args(Some(&encode), None);
+        let (input_args, output_args) = JlseEncode::build_encode_args(Some(&encode));
 
-        // Assert — input has global flags, output has video codec, no extra CLI opts
+        // Assert — input has global flags, output has video codec
         assert!(input_args.contains(&"-hide_banner".to_owned()));
         assert!(output_args.contains(&"-c:v".to_owned()));
         assert!(output_args.contains(&"hevc_qsv".to_owned()));

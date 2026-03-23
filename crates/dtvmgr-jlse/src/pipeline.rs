@@ -35,16 +35,12 @@ pub struct PipelineContext {
     pub channel_name: Option<String>,
     /// JLSE configuration.
     pub config: JlseConfig,
-    /// Generate ffmpeg `filter_complex` file.
-    pub filter: bool,
     /// Run ffmpeg encoding.
     pub encode: bool,
     /// Encode target AVS selection.
     pub target: AvsTarget,
     /// Add chapter metadata to encoded file.
     pub add_chapter: bool,
-    /// Additional ffmpeg options.
-    pub ffmpeg_option: Option<String>,
     /// Output directory override.
     pub out_dir: Option<PathBuf>,
     /// Output filename override (without extension).
@@ -109,8 +105,7 @@ pub fn run_pipeline(
     let result = run_pipeline_inner(ctx, on_progress, &mut summary);
 
     let input = &ctx.input;
-    let encode_args =
-        JlseEncode::build_encode_args(ctx.config.encode.as_ref(), ctx.ffmpeg_option.as_deref()).1;
+    let encode_args = JlseEncode::build_encode_args(ctx.config.encode.as_ref()).1;
 
     let status = if result.is_ok() {
         "completed"
@@ -376,17 +371,9 @@ fn run_pipeline_inner(
     // Step 10: Chapter generation
     generate_chapters(&paths)?;
 
-    // Step 11: (optional) FFmpeg filter generation
-    if ctx.filter {
-        info!("generating ffmpeg filter");
-        let fps = command::ffprobe::frame_rate(&bins.ffprobe, &input)?;
-        output::ffmpeg_filter::create(&paths.output_avs_cut, &paths.output_filter_cut, &fps)?;
-        debug!("ffmpeg filter generation completed");
-    }
-
     // Resolve FFmpeg encode args (always logged for visibility)
     let (input_encode_args, mut output_encode_args) =
-        JlseEncode::build_encode_args(ctx.config.encode.as_ref(), ctx.ffmpeg_option.as_deref());
+        JlseEncode::build_encode_args(ctx.config.encode.as_ref());
 
     // Step 11.5: (optional) VMAF-based quality parameter search
     if let Some(quality_result) = run_quality_search(
@@ -2336,11 +2323,9 @@ echo "1440.0"
             input: input_ts,
             channel_name: Some("TEST".to_owned()),
             config,
-            filter: false,
             encode: false,
             target: AvsTarget::CutCm,
             add_chapter: false,
-            ffmpeg_option: None,
             out_dir: None,
             out_name: None,
             out_extension: None,
@@ -2369,11 +2354,9 @@ echo "1440.0"
             input: input_ts,
             channel_name: Some("TEST".to_owned()),
             config,
-            filter: true,
             encode: false,
             target: AvsTarget::CutCm,
             add_chapter: false,
-            ffmpeg_option: None,
             out_dir: None,
             out_name: None,
             out_extension: None,
@@ -2406,11 +2389,9 @@ echo "1440.0"
             input: input_ts,
             channel_name: Some("TEST".to_owned()),
             config,
-            filter: false,
             encode: false,
             target: AvsTarget::CutCmLogo,
             add_chapter: false,
-            ffmpeg_option: None,
             out_dir: None,
             out_name: None,
             out_extension: None,
@@ -2468,11 +2449,9 @@ echo "1440.0"
             input: input_ts,
             channel_name: Some("TEST".to_owned()),
             config,
-            filter: false,
             encode: false,
             target: AvsTarget::CutCm,
             add_chapter: false,
-            ffmpeg_option: None,
             out_dir: None,
             out_name: None,
             out_extension: None,
@@ -2510,11 +2489,9 @@ echo "1440.0"
             input: input_ts,
             channel_name: None,
             config,
-            filter: false,
             encode: false,
             target: AvsTarget::CutCm,
             add_chapter: false,
-            ffmpeg_option: None,
             out_dir: None,
             out_name: None,
             out_extension: None,
@@ -2548,11 +2525,9 @@ echo "1440.0"
             input: input_ts,
             channel_name: Some("TEST".to_owned()),
             config,
-            filter: false,
             encode: false,
             target: AvsTarget::CutCm,
             add_chapter: false,
-            ffmpeg_option: None,
             out_dir: None,
             out_name: None,
             out_extension: None,
@@ -2584,11 +2559,9 @@ echo "1440.0"
             input: bad_input,
             channel_name: Some("TEST".to_owned()),
             config,
-            filter: false,
             encode: false,
             target: AvsTarget::CutCm,
             add_chapter: false,
-            ffmpeg_option: None,
             out_dir: None,
             out_name: None,
             out_extension: None,
@@ -2903,11 +2876,9 @@ echo "1440.0"
             input: input_ts,
             channel_name: Some("TEST".to_owned()),
             config,
-            filter: false,
             encode: false,
             target: AvsTarget::CutCm,
             add_chapter: false,
-            ffmpeg_option: None,
             out_dir: None,
             out_name: None,
             out_extension: None,
@@ -2956,11 +2927,9 @@ echo "1440.0"
             input: input_ts,
             channel_name: Some("TEST".to_owned()),
             config,
-            filter: false,
             encode: false,
             target: AvsTarget::CutCmLogo,
             add_chapter: false,
-            ffmpeg_option: None,
             out_dir: None,
             out_name: None,
             out_extension: None,
@@ -3018,11 +2987,9 @@ echo "1440.0"
             input: input_ts,
             channel_name: Some("TEST".to_owned()),
             config,
-            filter: true,
             encode: false,
             target: AvsTarget::CutCmLogo,
             add_chapter: false,
-            ffmpeg_option: None,
             out_dir: None,
             out_name: None,
             out_extension: None,
