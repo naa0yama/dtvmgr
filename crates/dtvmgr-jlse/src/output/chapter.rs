@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use regex::Regex;
 use tracing::{debug, instrument};
 
-/// Regex for `Trim(start,end)` AVS commands (shared with `ffmpeg_filter`).
+/// Regex for `Trim(start,end)` AVS commands.
 ///
 /// # Panics
 ///
