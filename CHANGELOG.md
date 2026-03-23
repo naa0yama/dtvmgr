@@ -1,13 +1,19 @@
 # Changelog
 
 ## [v0.3.1](https://github.com/naa0yama/dtvmgr/compare/v0.3.0...v0.3.1) - 2026-03-23
+
 ### Documentation 🗒️
+
 - fix(vmaf): append format= after hwdownload in reference filter by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/123
 - refactor(jlse): add OTel resource attributes and remove unused CLI flags by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/130
+
 ### Dependency Updates 📦
+
 - chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/127
 - chore(deps): update rust crate rusqlite to 0.39 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/120
+
 ### Development Environment 🔧
+
 - chore(deps): update taiki-e/install-action action to v2.68.32 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/124
 - fix(tagpr): format CHANGELOG.md after tagpr generates it by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/126
 - chore(deps): update dependency dprint to v0.53.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/129
@@ -15,7 +21,9 @@
 - fix(ci): exclude mise.toml from rust change detection by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/135
 - chore(deps): update dependency aqua:ast-grep/ast-grep to v0.42.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/133
 - fix(security): isolate bearer token and rename CI jobs by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/136
+
 ### Other Changes
+
 - refactor(otel): align with updated semantic conventions by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/131
 - fix(otel): sanitize reqwest error logging in TMDB client by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/134
 
