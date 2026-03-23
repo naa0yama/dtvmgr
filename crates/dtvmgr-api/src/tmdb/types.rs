@@ -516,7 +516,8 @@ pub struct TmdbEpisode {
 pub struct TmdbErrorResponse {
     /// TMDB error code.
     pub status_code: u32,
-    /// Error message.
+    /// Error message (deserialized but not propagated to error chain for security).
+    #[allow(dead_code)]
     pub status_message: String,
     /// Success flag (always false for errors).
     #[allow(dead_code)]

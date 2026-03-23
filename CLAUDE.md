@@ -41,6 +41,8 @@ All tasks use `mise run <task>`:
 | O2 (install)          | `mise run o2:install`         |
 | O2 (start)            | `mise run o2`                 |
 | O2 (stop)             | `mise run o2:stop`            |
+| CodeQL (install)      | `mise run codeql:install`     |
+| CodeQL (analyze)      | `mise run codeql`             |
 
 ## Commit Convention
 
