@@ -244,10 +244,11 @@ impl TmdbClient {
             }
 
             if !status.is_success() {
-                let body = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| String::from("<failed to read body>"));
+                let body = response.text().await.unwrap_or_else(|e| {
+                    let kind = crate::classify_reqwest_error(&e);
+                    tracing::warn!(error.kind = kind, "failed to read error response body");
+                    format!("<failed to read body: {kind}>")
+                });
                 span.record("http.response.body", &body);
                 if let Ok(error_response) = serde_json::from_str::<TmdbErrorResponse>(&body) {
                     bail!(
