@@ -1,5 +1,7 @@
 //! dtvmgr - TV program data management CLI.
 
+use secrecy::SecretString;
+
 /// `OTel` metrics instruments for CLI commands.
 #[cfg(feature = "otel")]
 mod cli_metrics {
@@ -1698,15 +1700,16 @@ async fn run_db_tmdb_lookup(args: &DbTmdbLookupArgs, config_file: Option<&PathBu
 #[instrument(skip_all, err(level = "error"))]
 fn build_tmdb_client(config_file: Option<&PathBuf>) -> Result<TmdbClient> {
     let api_token = if let Ok(token) = std::env::var("TMDB_API_TOKEN") {
-        token
+        SecretString::new(token)
     } else {
         let config_path =
             resolve_config_path(config_file).context("failed to resolve config path")?;
         let config = AppConfig::load(&config_path).context("failed to load config")?;
-        config
+        let token = config
             .tmdb
             .api_key
-            .context("TMDB_API_TOKEN env var is not set and tmdb.api_key is not configured")?
+            .context("TMDB_API_TOKEN env var is not set and tmdb.api_key is not configured")?;
+        SecretString::new(token)
     };
 
     TmdbClient::builder()
