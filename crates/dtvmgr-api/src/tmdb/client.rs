@@ -250,15 +250,18 @@ impl TmdbClient {
                     format!("<failed to read body: {kind}>")
                 });
                 span.record("http.response.body", &body);
+                // SECURITY: do not include response body or parsed fields in
+                // bail! — they sit in the taint chain from execute(request)
+                // and propagate to #[instrument(err)] log output.
+                // The body is already recorded in the span above.
                 if let Ok(error_response) = serde_json::from_str::<TmdbErrorResponse>(&body) {
                     bail!(
-                        "TMDB API error (HTTP {}): code={}, message={}",
+                        "TMDB API error (HTTP {}): code={}",
                         status,
                         error_response.status_code,
-                        error_response.status_message,
                     );
                 }
-                bail!("TMDB API error (HTTP {status}): {body}");
+                bail!("TMDB API error (HTTP {status})");
             }
 
             // SECURITY: use map_err instead of with_context to discard the
@@ -271,16 +274,17 @@ impl TmdbClient {
                 anyhow::anyhow!("failed to read response body: {path} ({kind})")
             })?;
             span.record("http.response.body", body.as_str());
-            let parsed: T = serde_json::from_str(&body)
-                .map_err(|e| {
+            let parsed: T = match serde_json::from_str(&body) {
+                Ok(val) => val,
+                Err(e) => {
                     let cat = e.classify();
-                    anyhow::anyhow!(
-                        "decode error ({cat:?}) at line {}, column {}",
+                    bail!(
+                        "failed to decode JSON response: {path} ({cat:?} at line {}, column {})",
                         e.line(),
                         e.column(),
-                    )
-                })
-                .with_context(|| format!("failed to decode JSON response: {path}"))?;
+                    );
+                }
+            };
 
             #[cfg(feature = "otel")]
             crate::metrics::record_request_duration("tmdb", method, request_start);
@@ -609,7 +613,9 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("TMDB API error"));
-        assert!(err.contains("Invalid API key"));
+        // SECURITY: status_message is excluded from error to prevent taint
+        // chain propagation. Error code (integer) is safe to include.
+        assert!(err.contains("code=7"));
     }
 
     #[cfg_attr(miri, ignore)]
@@ -961,10 +967,9 @@ mod tests {
             err.contains("TMDB API error"),
             "expected 'TMDB API error' in: {err}"
         );
-        assert!(
-            err.contains("Internal Server Error"),
-            "expected body in error: {err}"
-        );
+        // SECURITY: response body is excluded from error message to prevent
+        // taint chain propagation; it is recorded in the tracing span instead.
+        assert!(err.contains("500"), "expected status code in error: {err}");
     }
 
     #[cfg_attr(miri, ignore)]
