@@ -74,6 +74,8 @@ jobs:
         id: fmt-changelog
         if: steps.tagpr.outputs.tag == '' && steps.tagpr-pr.outputs.branch != ''
         run: |
+          git checkout -- .
+          git clean -fd
           git fetch origin "$BRANCH"
           git checkout "$BRANCH"
           dprint fmt CHANGELOG.md
