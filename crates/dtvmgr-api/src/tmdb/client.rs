@@ -260,12 +260,25 @@ impl TmdbClient {
                 bail!("TMDB API error (HTTP {status}): {body}");
             }
 
-            let body = response
-                .text()
-                .await
-                .with_context(|| format!("failed to read response body: {path}"))?;
+            // SECURITY: use map_err instead of with_context to discard the
+            // original reqwest/serde errors — they sit in a taint chain rooted
+            // at the Bearer header injected into `request`.  Dropping them
+            // breaks the CWE-532 taint path that CodeQL tracks.
+            // Extract only safe primitive labels (classify / Category / line / column).
+            let body = response.text().await.map_err(|e| {
+                let kind = crate::classify_reqwest_error(&e);
+                anyhow::anyhow!("failed to read response body: {path} ({kind})")
+            })?;
             span.record("http.response.body", body.as_str());
             let parsed: T = serde_json::from_str(&body)
+                .map_err(|e| {
+                    let cat = e.classify();
+                    anyhow::anyhow!(
+                        "decode error ({cat:?}) at line {}, column {}",
+                        e.line(),
+                        e.column(),
+                    )
+                })
                 .with_context(|| format!("failed to decode JSON response: {path}"))?;
 
             #[cfg(feature = "otel")]
