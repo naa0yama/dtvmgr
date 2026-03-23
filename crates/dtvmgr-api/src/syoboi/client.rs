@@ -262,6 +262,10 @@ impl SyoboiClient {
                 }
                 Err(e) => {
                     let kind = crate::classify_reqwest_error(&e);
+                    let status_code = e.status().map(|s| i64::from(s.as_u16()));
+                    if let Some(code) = status_code {
+                        tracing::Span::current().record("http.response.status_code", code);
+                    }
                     bail!("{kind}: {command}");
                 }
             };

@@ -191,10 +191,11 @@ impl EpgStationClient {
             }
 
             if !status.is_success() {
-                let body = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| String::from("<failed to read body>"));
+                let body = response.text().await.unwrap_or_else(|e| {
+                    let kind = crate::classify_reqwest_error(&e);
+                    tracing::warn!(error.kind = kind, "failed to read error response body");
+                    format!("<failed to read body: {kind}>")
+                });
                 span.record("http.response.body", &body);
                 bail!("EPGStation API error (HTTP {status}): {body}");
             }
@@ -294,10 +295,14 @@ impl EpgStationClient {
 
         tracing::debug!(url = %request.url(), "EPGStation API HEAD request");
 
-        self.http_client
-            .execute(request)
-            .await
-            .is_ok_and(|resp| resp.status() == reqwest::StatusCode::OK)
+        match self.http_client.execute(request).await {
+            Ok(resp) => resp.status() == reqwest::StatusCode::OK,
+            Err(e) => {
+                let kind = crate::classify_reqwest_error(&e);
+                tracing::debug!(error.kind = kind, path, "HEAD request failed");
+                false
+            }
+        }
     }
 }
 
