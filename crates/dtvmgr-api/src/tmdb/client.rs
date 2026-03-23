@@ -184,9 +184,12 @@ impl TmdbClient {
                 Ok(resp) => resp,
                 Err(e) if !e.is_timeout() && network_retries < MAX_NETWORK_RETRIES => {
                     network_retries = network_retries.saturating_add(1);
+                    // SECURITY: log classified kind only — raw reqwest::Error
+                    // could theoretically carry request context from bearer_auth.
+                    let kind = crate::classify_reqwest_error(&e);
                     tracing::debug!(
                         retry = network_retries,
-                        error = %e,
+                        error.kind = kind,
                         "transient network error, retrying"
                     );
                     continue;
@@ -197,7 +200,10 @@ impl TmdbClient {
                         tracing::Span::current()
                             .record("http.response.status_code", i64::from(status.as_u16()));
                     }
-                    bail!("{kind}: {path}: {e:#}");
+                    // SECURITY: strip URL from error display — request carried
+                    // bearer_auth token; reqwest::Error doesn't include headers
+                    // but without_url() provides defense-in-depth.
+                    bail!("{kind}: {path}: {:#}", e.without_url());
                 }
             };
 
