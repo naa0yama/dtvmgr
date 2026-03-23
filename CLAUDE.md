@@ -10,7 +10,11 @@ All tasks use `mise run <task>`:
 
 | Task                  | Command                       |
 | --------------------- | ----------------------------- |
+| Setup                 | `mise run setup`              |
 | Build                 | `mise run build`              |
+| Build (release)       | `mise run build:release`      |
+| Build (timings)       | `mise run build:timings`      |
+| Check                 | `mise run check`              |
 | Test                  | `mise run test`               |
 | TDD watch             | `mise run test:watch`         |
 | Doc tests             | `mise run test:doc`           |
@@ -19,9 +23,14 @@ All tasks use `mise run <task>`:
 | Format check          | `mise run fmt:check`          |
 | Lint (clippy)         | `mise run clippy`             |
 | Lint strict           | `mise run clippy:strict`      |
+| Lint                  | `mise run lint`               |
+| Lint (GitHub Actions) | `mise run lint:gh`            |
 | AST rules             | `mise run ast-grep`           |
 | Pre-commit (required) | `mise run pre-commit`         |
+| Pre-push              | `mise run pre-push`           |
 | Coverage              | `mise run coverage`           |
+| Coverage (HTML)       | `mise run coverage:html`      |
+| Audit                 | `mise run audit`              |
 | Deny (licenses/deps)  | `mise run deny`               |
 | Miri (UB detection)   | `mise run miri`               |
 | Clean (full)          | `mise run clean`              |
@@ -45,7 +54,7 @@ Allowed types: feat, update, fix, style, refactor, docs, perf, test, build, ci, 
 2. Implement
 3. Run `mise run test` — all tests must pass
 4. Stage only the relevant files
-5. Run `mise run pre-commit` (runs fmt:check, clippy:strict, ast-grep, lint:gh)
+5. Run `mise run pre-commit` (runs clean:sweep, fmt:check, clippy:strict, ast-grep, lint:gh)
 6. If errors, fix → re-stage → re-run `mise run pre-commit`
 
 ## Code Comments

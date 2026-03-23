@@ -13,10 +13,11 @@
 
 ```
 crates/
-├── dtvmgr-cli/      # CLI エントリーポイント・設定管理・TUI
+├── dtvmgr-cli/      # CLI エントリーポイント・設定管理
 ├── dtvmgr-jlse/     # CM 検出パイプライン (チャンネル検出、パラメータ、エンコード、バリデーション)
 ├── dtvmgr-vmaf/     # VMAF ベース品質パラメータ探索 (補間二分探索)
 ├── dtvmgr-tsduck/   # TSDuck ラッパー (PAT/EIT パース、TS シーク)
+├── dtvmgr-tui/      # TUI コンポーネント (パイプライン進捗表示、データブラウザ)
 ├── dtvmgr-api/      # 外部 API クライアント (しょぼいカレンダー、TMDB)
 └── dtvmgr-db/       # SQLite キャッシュ DB
 ```
@@ -55,15 +56,17 @@ dtvmgr jlse channel --input /path/to/recording.ts
 dtvmgr jlse param --input /path/to/recording.ts
 
 # パイプライン実行
-dtvmgr jlse run --input /path/to/recording.ts [--encode] [--filter]
+dtvmgr jlse run --input /path/to/recording.ts [--encode]
 
 # エンコード時オプション
 dtvmgr jlse run --input recording.ts --encode \
-  --add-chapter \
-  --target cutcm_logo \
+  --target cutcm-logo \
   --outdir /output/ \
   --skip-duration-check \
   --force
+
+# チャプター追加を無効化 (デフォルトは追加)
+dtvmgr jlse run --input recording.ts --encode --no-chapter
 
 # TUI モード
 dtvmgr jlse run --input recording.ts --encode --tui
@@ -76,6 +79,47 @@ dtvmgr jlse run --epgstation [--tui]
 
 ```bash
 dtvmgr jlse tsduck --input /path/to/recording.ts
+```
+
+### しょぼいカレンダー
+
+```bash
+dtvmgr syoboi prog [--time-since ...] [--time-until ...]  # 番組スケジュール取得
+dtvmgr syoboi titles [--tid ...]                           # タイトルデータ取得
+dtvmgr syoboi channels select                              # チャンネル選択 (TUI)
+dtvmgr syoboi channels list                                # 選択済みチャンネル一覧
+```
+
+### TMDB
+
+```bash
+dtvmgr tmdb search-tv --query "SPY×FAMILY"       # TV シリーズ検索
+dtvmgr tmdb search-movie --query "..."            # 映画検索
+dtvmgr tmdb tv-details --id 12345                 # TV シリーズ詳細
+dtvmgr tmdb tv-season --id 12345 --season 1       # TV シーズン詳細
+```
+
+### ローカル DB
+
+```bash
+dtvmgr db sync [--time-since ...] [--time-until ...]  # しょぼいデータをローカル DB に同期
+dtvmgr db list                                         # キャッシュ済みタイトル・番組一覧 (TUI)
+dtvmgr db normalize                                    # タイトル正規化プレビュー (TUI)
+dtvmgr db tmdb-lookup [--force]                        # TMDB 検索・結果保存
+```
+
+### EPGStation
+
+```bash
+dtvmgr epgstation encode [--keyword ...] [--limit 100]  # エンコードキュー
+```
+
+### シェル補完
+
+```bash
+dtvmgr completion bash    # bash 補完スクリプト生成
+dtvmgr completion zsh     # zsh 補完スクリプト生成
+dtvmgr completion fish    # fish 補完スクリプト生成
 ```
 
 ## 設定ファイル
