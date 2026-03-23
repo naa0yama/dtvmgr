@@ -174,19 +174,14 @@ impl TmdbClient {
         let mut network_retries = 0u32;
         let mut rate_limit_retries = 0u32;
         loop {
-            // SECURITY: build request WITHOUT auth so build errors cannot leak
-            // the bearer token. Auth is injected via raw header after build.
+            // Auth is injected after build so build errors cannot leak the token.
             let mut request = build_request()
                 .build()
                 .with_context(|| format!("failed to build request: {path}"))?;
 
-            // SECURITY: URL does not contain auth token (Bearer is in header)
             tracing::Span::current().record("url.full", tracing::field::display(request.url()));
 
-            // Inject auth header separately — keeps the token out of the
-            // RequestBuilder closure and limits the taint surface.
-            // SECURITY: discard the InvalidHeaderValue error entirely — its
-            // Display impl may echo the bearer token, breaking the taint chain.
+            // SECURITY: discard InvalidHeaderValue — its Display may echo the token.
             let Ok(auth_value) =
                 HeaderValue::from_str(&format!("Bearer {}", self.api_token.expose()))
             else {
@@ -198,8 +193,6 @@ impl TmdbClient {
                 Ok(resp) => resp,
                 Err(e) if !e.is_timeout() && network_retries < MAX_NETWORK_RETRIES => {
                     network_retries = network_retries.saturating_add(1);
-                    // SECURITY: log classified kind only — reqwest::Error from
-                    // execute() may carry request context; never format it.
                     let kind = crate::classify_reqwest_error(&e);
                     tracing::debug!(
                         retry = network_retries,
@@ -215,8 +208,7 @@ impl TmdbClient {
                         tracing::Span::current().record("http.response.status_code", code);
                     }
                     // SECURITY: do not format the raw reqwest::Error — it
-                    // originates from execute(request) where request carried
-                    // the bearer token. Only emit the classified kind.
+                    // may carry request context including auth headers.
                     bail!("{kind}: {path}");
                 }
             };
@@ -250,41 +242,28 @@ impl TmdbClient {
                     format!("<failed to read body: {kind}>")
                 });
                 span.record("http.response.body", &body);
-                // SECURITY: do not include response body or parsed fields in
-                // bail! — they sit in the taint chain from execute(request)
-                // and propagate to #[instrument(err)] log output.
-                // The body is already recorded in the span above.
                 if let Ok(error_response) = serde_json::from_str::<TmdbErrorResponse>(&body) {
                     bail!(
-                        "TMDB API error (HTTP {}): code={}",
+                        "TMDB API error (HTTP {}): code={}, message={}",
                         status,
                         error_response.status_code,
+                        error_response.status_message,
                     );
                 }
                 bail!("TMDB API error (HTTP {status})");
             }
 
-            // SECURITY: use map_err instead of with_context to discard the
-            // original reqwest/serde errors — they sit in a taint chain rooted
-            // at the Bearer header injected into `request`.  Dropping them
-            // breaks the CWE-532 taint path that CodeQL tracks.
-            // Extract only safe primitive labels (classify / Category / line / column).
-            let body = response.text().await.map_err(|e| {
-                let kind = crate::classify_reqwest_error(&e);
-                anyhow::anyhow!("failed to read response body: {path} ({kind})")
-            })?;
+            let body = response
+                .text()
+                .await
+                .with_context(|| format!("failed to read response body: {path}"))?;
             span.record("http.response.body", body.as_str());
-            let parsed: T = match serde_json::from_str(&body) {
-                Ok(val) => val,
-                Err(e) => {
-                    let cat = e.classify();
-                    bail!(
-                        "failed to decode JSON response: {path} ({cat:?} at line {}, column {})",
-                        e.line(),
-                        e.column(),
-                    );
-                }
-            };
+            let parsed: T = serde_json::from_str(&body).with_context(|| {
+                format!(
+                    "failed to decode JSON response: {path} (body_len={} bytes)",
+                    body.len()
+                )
+            })?;
 
             #[cfg(feature = "otel")]
             crate::metrics::record_request_duration("tmdb", method, request_start);
@@ -613,9 +592,8 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("TMDB API error"));
-        // SECURITY: status_message is excluded from error to prevent taint
-        // chain propagation. Error code (integer) is safe to include.
         assert!(err.contains("code=7"));
+        assert!(err.contains("message=Invalid API key"));
     }
 
     #[cfg_attr(miri, ignore)]
@@ -967,8 +945,6 @@ mod tests {
             err.contains("TMDB API error"),
             "expected 'TMDB API error' in: {err}"
         );
-        // SECURITY: response body is excluded from error message to prevent
-        // taint chain propagation; it is recorded in the tracing span instead.
         assert!(err.contains("500"), "expected status code in error: {err}");
     }
 
