@@ -223,10 +223,10 @@ impl SyoboiClient {
     /// Returns the HTTP status code alongside the parsed result.
     #[instrument(skip_all, fields(
         otel.kind = "Client",
-        http.method = "GET",
+        http.request.method = "GET",
         http.command = command,
-        http.url = tracing::field::Empty,
-        http.status_code = tracing::field::Empty,
+        url.full = tracing::field::Empty,
+        http.response.status_code = tracing::field::Empty,
         http.response.body = tracing::field::Empty,
     ), err(level = "warn"))]
     async fn request_with_retry<T, F>(
@@ -264,9 +264,9 @@ impl SyoboiClient {
             };
 
             let span = tracing::Span::current();
-            span.record("http.url", tracing::field::display(response.url()));
+            span.record("url.full", tracing::field::display(response.url()));
             let status = response.status();
-            span.record("http.status_code", i64::from(status.as_u16()));
+            span.record("http.response.status_code", i64::from(status.as_u16()));
             let headers = response.headers().clone();
             tracing::trace!(
                 %command,
