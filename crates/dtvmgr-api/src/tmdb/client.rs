@@ -185,8 +185,13 @@ impl TmdbClient {
 
             // Inject auth header separately — keeps the token out of the
             // RequestBuilder closure and limits the taint surface.
-            let auth_value = HeaderValue::from_str(&format!("Bearer {}", self.api_token.expose()))
-                .context("failed to set authorization header")?;
+            // SECURITY: discard the InvalidHeaderValue error entirely — its
+            // Display impl may echo the bearer token, breaking the taint chain.
+            let Ok(auth_value) =
+                HeaderValue::from_str(&format!("Bearer {}", self.api_token.expose()))
+            else {
+                bail!("failed to set authorization header");
+            };
             request.headers_mut().insert(AUTHORIZATION, auth_value);
 
             let response = match self.http_client.execute(request).await {
