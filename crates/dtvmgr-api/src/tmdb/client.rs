@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use reqwest::Client;
+use reqwest::header::{AUTHORIZATION, HeaderValue};
 use tokio::sync::Mutex;
 use tracing::instrument;
 use url::Url;
@@ -173,19 +174,27 @@ impl TmdbClient {
         let mut network_retries = 0u32;
         let mut rate_limit_retries = 0u32;
         loop {
-            let request = build_request()
+            // SECURITY: build request WITHOUT auth so build errors cannot leak
+            // the bearer token. Auth is injected via raw header after build.
+            let mut request = build_request()
                 .build()
                 .with_context(|| format!("failed to build request: {path}"))?;
 
             // SECURITY: URL does not contain auth token (Bearer is in header)
             tracing::Span::current().record("url.full", tracing::field::display(request.url()));
 
+            // Inject auth header separately — keeps the token out of the
+            // RequestBuilder closure and limits the taint surface.
+            let auth_value = HeaderValue::from_str(&format!("Bearer {}", self.api_token.expose()))
+                .context("failed to set authorization header")?;
+            request.headers_mut().insert(AUTHORIZATION, auth_value);
+
             let response = match self.http_client.execute(request).await {
                 Ok(resp) => resp,
                 Err(e) if !e.is_timeout() && network_retries < MAX_NETWORK_RETRIES => {
                     network_retries = network_retries.saturating_add(1);
-                    // SECURITY: log classified kind only — raw reqwest::Error
-                    // could theoretically carry request context from bearer_auth.
+                    // SECURITY: log classified kind only — reqwest::Error from
+                    // execute() may carry request context; never format it.
                     let kind = crate::classify_reqwest_error(&e);
                     tracing::debug!(
                         retry = network_retries,
@@ -196,14 +205,14 @@ impl TmdbClient {
                 }
                 Err(e) => {
                     let kind = crate::classify_reqwest_error(&e);
-                    if let Some(status) = e.status() {
-                        tracing::Span::current()
-                            .record("http.response.status_code", i64::from(status.as_u16()));
+                    let status_code = e.status().map(|s| i64::from(s.as_u16()));
+                    if let Some(code) = status_code {
+                        tracing::Span::current().record("http.response.status_code", code);
                     }
-                    // SECURITY: strip URL from error display — request carried
-                    // bearer_auth token; reqwest::Error doesn't include headers
-                    // but without_url() provides defense-in-depth.
-                    bail!("{kind}: {path}: {:#}", e.without_url());
+                    // SECURITY: do not format the raw reqwest::Error — it
+                    // originates from execute(request) where request carried
+                    // the bearer token. Only emit the classified kind.
+                    bail!("{kind}: {path}");
                 }
             };
 
@@ -280,12 +289,8 @@ impl TmdbClient {
             .join(path)
             .with_context(|| format!("failed to join URL path: {path}"))?;
 
-        let token = self.api_token.expose();
         self.request_with_retry(path, "GET", || {
-            self.http_client
-                .get(url.clone())
-                .query(query)
-                .bearer_auth(token)
+            self.http_client.get(url.clone()).query(query)
         })
         .await
     }
