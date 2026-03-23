@@ -34,8 +34,6 @@ pub struct OutputPaths {
     pub output_avs_in_cut: PathBuf,
     /// Concatenated cut+logo AVS: `in_cutcm_logo.avs`
     pub output_avs_in_cut_logo: PathBuf,
-    /// `FFmpeg` filter output: `ffmpeg.filter`
-    pub output_filter_cut: PathBuf,
     /// Chapter ORG (all sections): `obs_chapter_org.chapter.txt`
     pub file_txt_cpt_org: PathBuf,
     /// Chapter CUT (non-cut only): `obs_chapter_cut.chapter.txt`
@@ -97,7 +95,6 @@ pub fn init_output_paths(result_dir: &Path, filename: &str) -> Result<OutputPath
         output_avs_cut: save_dir.join("obs_cut.avs"),
         output_avs_in_cut: save_dir.join("in_cutcm.avs"),
         output_avs_in_cut_logo: save_dir.join("in_cutcm_logo.avs"),
-        output_filter_cut: save_dir.join("ffmpeg.filter"),
         file_txt_cpt_org: save_dir.join("obs_chapter_org.chapter.txt"),
         file_txt_cpt_cut: save_dir.join("obs_chapter_cut.chapter.txt"),
         file_txt_cpt_tvt: save_dir.join("obs_chapter_tvtplay.chapter"),
@@ -214,7 +211,6 @@ mod tests {
             &paths.output_avs_cut,
             &paths.output_avs_in_cut,
             &paths.output_avs_in_cut_logo,
-            &paths.output_filter_cut,
             &paths.file_txt_cpt_org,
             &paths.file_txt_cpt_cut,
             &paths.file_txt_cpt_tvt,
@@ -249,7 +245,6 @@ mod tests {
             (&paths.output_avs_cut, "obs_cut.avs"),
             (&paths.output_avs_in_cut, "in_cutcm.avs"),
             (&paths.output_avs_in_cut_logo, "in_cutcm_logo.avs"),
-            (&paths.output_filter_cut, "ffmpeg.filter"),
             (&paths.file_txt_cpt_org, "obs_chapter_org.chapter.txt"),
             (&paths.file_txt_cpt_cut, "obs_chapter_cut.chapter.txt"),
             (&paths.file_txt_cpt_tvt, "obs_chapter_tvtplay.chapter"),

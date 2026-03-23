@@ -2,4 +2,3 @@
 
 pub mod avs;
 pub mod chapter;
-pub mod ffmpeg_filter;
