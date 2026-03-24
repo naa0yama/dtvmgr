@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 use dtvmgr_tsduck::command::apply_pdeathsig;
-use tracing::{info, instrument};
+use tracing::{debug, instrument};
 
 use crate::progress::{self, ProgressEvent};
 use crate::types::JlseEncode;
@@ -447,7 +447,7 @@ pub fn run_with_progress(
         input_options,
         extra_options,
     );
-    info!(cmd = %binary.display(), ?args, "running ffmpeg with progress");
+    debug!(cmd = %binary.display(), ?args, "running ffmpeg with progress");
 
     let mut cmd = Command::new(binary);
     cmd.args(&args).stdout(Stdio::null()).stderr(Stdio::piped());

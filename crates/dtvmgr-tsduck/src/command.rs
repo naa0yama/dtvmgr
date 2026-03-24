@@ -36,8 +36,12 @@ impl StderrCollector {
     }
 
     /// Record a single stderr line: emit via tracing and accumulate.
+    ///
+    /// Uses `trace!` level — full stdout/stderr is verbose output per
+    /// the `OTel` instrumentation guideline. On failure, the accumulated
+    /// content is included in the `error!`-level exception event.
     pub fn push(&mut self, line: &str) {
-        debug!(cmd = %self.program, "{line}");
+        tracing::trace!(cmd = %self.program, "{line}");
         self.lines.push(line.to_owned());
     }
 
