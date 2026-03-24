@@ -1174,7 +1174,16 @@ fn inject_quality_override(output_args: &mut Vec<String>, result: &dtvmgr_vmaf::
 
     #[allow(clippy::indexing_slicing)]
     if let Some(idx) = replaced {
-        output_args[idx].clone_from(&result.quality_param);
+        // Preserve the existing stream specifier (e.g. `:v`) if present,
+        // so `-global_quality:v` is not downgraded to `-global_quality`.
+        let existing = &output_args[idx];
+        if existing.starts_with(&result.quality_param)
+            && existing.len() > result.quality_param.len()
+        {
+            // Already has a stream specifier — keep it as-is.
+        } else {
+            output_args[idx].clone_from(&result.quality_param);
+        }
         if let Some(next) = output_args.get_mut(idx.saturating_add(1)) {
             next.clone_from(&value_str);
         } else {
@@ -1615,8 +1624,8 @@ mod tests {
         // Act
         inject_quality_override(&mut args, &result);
 
-        // Assert
-        assert_eq!(args[0], "-global_quality");
+        // Assert — stream specifier `:v` is preserved
+        assert_eq!(args[0], "-global_quality:v");
         assert_eq!(args[1], "22");
     }
 
