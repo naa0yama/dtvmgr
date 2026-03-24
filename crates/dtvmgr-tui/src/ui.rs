@@ -259,6 +259,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_empty_groups() {
         // Arrange
         let state = ChannelSelectorState::new(vec![], BTreeSet::new());
@@ -276,6 +277,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_groups_with_channels_some_selected() {
         // Arrange
         let selected = BTreeSet::from([1]);
@@ -296,6 +298,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_groups_with_all_selected_in_group() {
         // Arrange: all channels in GR group selected
         let selected = BTreeSet::from([1, 2]);
@@ -313,6 +316,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_filter_mode() {
         // Arrange
         let mut state = ChannelSelectorState::new(make_groups(), BTreeSet::new());
@@ -332,6 +336,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_normal_mode_footer() {
         // Arrange
         let state = ChannelSelectorState::new(make_groups(), BTreeSet::new());
@@ -348,6 +353,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_channels_pane_active() {
         // Arrange
         let selected = BTreeSet::from([1]);
@@ -366,6 +372,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_with_no_selected_channels() {
         // Arrange
         let state = ChannelSelectorState::new(make_groups(), BTreeSet::new());
@@ -382,6 +389,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_cursor_on_second_group() {
         // Arrange
         let mut state = ChannelSelectorState::new(make_groups(), BTreeSet::new());
@@ -398,6 +406,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_channel_cursor_highlighting() {
         // Arrange
         let mut state = ChannelSelectorState::new(make_groups(), BTreeSet::new());
@@ -416,6 +425,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_selected_channel_in_channel_pane() {
         // Arrange: select ch_id=10 (BS11), move to BS group
         let selected = BTreeSet::from([10]);
@@ -435,6 +445,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_filter_text_shown_in_header() {
         // Arrange
         let mut state = ChannelSelectorState::new(make_groups(), BTreeSet::new());

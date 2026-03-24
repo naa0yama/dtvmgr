@@ -448,6 +448,7 @@ mod tests {
     // ── cleanup_samples ─────────────────────────────────────
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn cleanup_samples_no_panic_on_nonexistent_files() {
         // Arrange — paths that do not exist on disk
         let samples = vec![
@@ -730,6 +731,7 @@ mod tests {
     // ── cleanup_samples with real files ────────────────────────
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn cleanup_samples_deletes_actual_temp_files() {
         // Arrange — create actual temp files
         let dir = std::env::temp_dir().join("dtvmgr_vmaf_test_cleanup");

@@ -285,6 +285,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_empty_state_does_not_panic() {
         // Arrange
         let backend = TestBackend::new(120, 30);
@@ -306,6 +307,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_with_rows_shows_table_headers() {
         // Arrange
         let backend = TestBackend::new(120, 30);
@@ -335,6 +337,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_normal_mode_manual_regex_shows_footer() {
         // Arrange
         let backend = TestBackend::new(120, 30);
@@ -358,6 +361,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_normal_mode_config_regex_shows_regex_titles() {
         // Arrange
         let backend = TestBackend::new(120, 30);
@@ -383,6 +387,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_filter_mode_shows_filter_footer() {
         // Arrange
         let backend = TestBackend::new(120, 30);
@@ -405,6 +410,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_regex_mode_shows_regex_footer() {
         // Arrange
         let backend = TestBackend::new(120, 30);
