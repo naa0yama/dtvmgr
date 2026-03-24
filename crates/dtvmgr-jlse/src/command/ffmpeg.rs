@@ -386,7 +386,7 @@ pub(crate) fn prepare_hw_filter(filter: &str, pix_fmt: Option<&str>) -> String {
     if has_hwupload {
         injected
     } else {
-        format!("hwupload=extra_hw_frames=64,{injected}")
+        format!("format=nv12,hwupload=extra_hw_frames=64,{injected}")
     }
 }
 
@@ -1157,7 +1157,7 @@ mod tests {
         let vf_idx = args.iter().position(|a| a == "-vf").unwrap();
         assert_eq!(
             args[vf_idx + 1],
-            "hwupload=extra_hw_frames=64,vpp_qsv=framerate=30:format=p010le"
+            "format=nv12,hwupload=extra_hw_frames=64,vpp_qsv=framerate=30:format=p010le"
         );
     }
 
@@ -1339,10 +1339,10 @@ mod tests {
         // Act
         let result = prepare_hw_filter(filter, Some("p010le"));
 
-        // Assert — hwupload prepended, format injected
+        // Assert — format=nv12 + hwupload prepended, format injected
         assert_eq!(
             result,
-            "hwupload=extra_hw_frames=64,vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le,setfield=mode=prog"
+            "format=nv12,hwupload=extra_hw_frames=64,vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le,setfield=mode=prog"
         );
     }
 

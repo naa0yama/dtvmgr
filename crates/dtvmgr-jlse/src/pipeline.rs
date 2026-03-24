@@ -1997,10 +1997,10 @@ mod tests {
         // Act
         let filter = build_vmaf_video_filter(&enc);
 
-        // Assert — hwupload prepended, format=p010le injected
+        // Assert — format=nv12 + hwupload prepended, format=p010le injected
         assert_eq!(
             filter,
-            "hwupload=extra_hw_frames=64,vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le"
+            "format=nv12,hwupload=extra_hw_frames=64,vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le"
         );
     }
 
@@ -2060,7 +2060,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let video_filter = "hwupload=extra_hw_frames=64,vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le,setfield=mode=prog";
+        let video_filter = "format=nv12,hwupload=extra_hw_frames=64,vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le,setfield=mode=prog";
 
         // Act
         let ref_filter = build_vmaf_reference_filter(&enc, video_filter);
@@ -2069,7 +2069,7 @@ mod tests {
         assert_eq!(
             ref_filter.as_deref(),
             Some(
-                "hwupload=extra_hw_frames=64,vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le,setfield=mode=prog,hwdownload,format=p010le"
+                "format=nv12,hwupload=extra_hw_frames=64,vpp_qsv=deinterlace=advanced:height=720:width=1280:format=p010le,setfield=mode=prog,hwdownload,format=p010le"
             )
         );
     }
