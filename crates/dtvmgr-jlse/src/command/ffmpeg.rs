@@ -15,9 +15,12 @@ use tracing::{debug, instrument};
 use crate::progress::{self, ProgressEvent};
 use crate::types::JlseEncode;
 
-/// Options that should NOT receive automatic stream specifiers
-/// because they are muxer-level or global options.
-const GLOBAL_OPTIONS: &[&str] = &[
+/// Options exempt from automatic stream specifier addition.
+///
+/// Includes global/muxer options, stream selection, filter shorthands
+/// (already imply stream type), and stream-disable flags.
+const SPECIFIER_EXEMPT: &[&str] = &[
+    // Global / muxer
     "-movflags",
     "-max_muxing_queue_size",
     "-f",
@@ -28,16 +31,34 @@ const GLOBAL_OPTIONS: &[&str] = &[
     "-shortest",
     "-fflags",
     "-flags",
+    // Stream selection / mapping
+    "-map",
+    "-map_metadata",
+    "-map_chapters",
+    // Filter shorthands (-vf = -filter:v, -af = -filter:a)
+    "-vf",
+    "-af",
+    // Stream disable (no value follows)
+    "-an",
+    "-vn",
+    "-sn",
+    // Container-level
+    "-attach",
+    "-metadata",
 ];
 
-/// Append extra args, automatically adding a stream specifier (`:v` or `:a`)
-/// to option flags that lack one — unless the flag is a known global/muxer option.
-fn append_extra_with_specifier(args: &mut Vec<String>, extra: &[String], specifier: &str) {
-    for arg in extra {
-        if arg.starts_with('-') && !arg.contains(':') && !GLOBAL_OPTIONS.contains(&arg.as_str()) {
-            args.push(format!("{arg}:{specifier}"));
-        } else {
-            args.push(arg.clone());
+/// Add stream specifiers (`:v` or `:a`) to per-stream option flags.
+///
+/// Skips flags that already contain `:`, flags in [`SPECIFIER_EXEMPT`],
+/// and non-flag tokens (values not starting with `-`).
+///
+/// This function is idempotent: calling it twice produces the same
+/// result.
+pub(crate) fn add_stream_specifiers(args: &mut [String], specifier: &str) {
+    for arg in args.iter_mut() {
+        if arg.starts_with('-') && !arg.contains(':') && !SPECIFIER_EXEMPT.contains(&arg.as_str()) {
+            arg.push(':');
+            arg.push_str(specifier);
         }
     }
 }
@@ -230,6 +251,10 @@ impl JlseEncode {
 
     /// Build args placed **after** `-i` (output-side options).
     ///
+    /// Each section (video / audio) is built into a separate `Vec`,
+    /// then normalised with [`add_stream_specifiers`] so that every
+    /// per-stream flag carries an explicit `:v` or `:a` specifier.
+    ///
     /// Generated order:
     /// 1. Video mapping / codec / preset / profile / `pix_fmt` / filter / extra
     /// 2. Audio mapping / codec / `sample_rate` / bitrate / channels / extra
@@ -248,43 +273,53 @@ impl JlseEncode {
                 || video.filter.is_some()
                 || !video.extra.is_empty();
             if has_settings {
-                args.push("-map".to_owned());
-                args.push("0:v".to_owned());
-            }
-            if let Some(ref aspect) = video.aspect {
-                args.push("-aspect".to_owned());
-                args.push(aspect.clone());
-            }
-            if let Some(ref codec) = video.codec {
-                args.push("-c:v".to_owned());
-                args.push(codec.clone());
-            }
-            if let Some(ref preset) = video.preset {
-                args.push("-preset".to_owned());
-                args.push(preset.clone());
-            }
-            if let Some(ref profile) = video.profile {
-                args.push("-profile:v".to_owned());
-                args.push(profile.clone());
-            }
-            if let Some(ref pix_fmt) = video.pix_fmt {
-                args.push("-pix_fmt".to_owned());
-                args.push(pix_fmt.clone());
-            }
-            if let Some(ref filter) = video.filter {
-                args.push("-vf".to_owned());
-                let needs_hwupload = self
-                    .input
-                    .as_ref()
-                    .and_then(|i| i.filter_hw_device.as_ref())
-                    .is_some();
-                if needs_hwupload {
-                    args.push(prepare_hw_filter(filter, video.pix_fmt.as_deref()));
-                } else {
-                    args.push(filter.clone());
+                let mut vargs = Vec::new();
+                vargs.push("-map".to_owned());
+                vargs.push("0:v".to_owned());
+                if let Some(ref aspect) = video.aspect {
+                    vargs.push("-aspect".to_owned());
+                    vargs.push(aspect.clone());
                 }
+                if let Some(ref codec) = video.codec {
+                    vargs.push("-c".to_owned());
+                    vargs.push(codec.clone());
+                }
+                if let Some(ref preset) = video.preset {
+                    vargs.push("-preset".to_owned());
+                    vargs.push(preset.clone());
+                }
+                if let Some(ref profile) = video.profile {
+                    vargs.push("-profile".to_owned());
+                    vargs.push(profile.clone());
+                }
+                if let Some(ref pix_fmt) = video.pix_fmt {
+                    vargs.push("-pix_fmt".to_owned());
+                    vargs.push(pix_fmt.clone());
+                }
+                if let Some(ref filter) = video.filter {
+                    vargs.push("-vf".to_owned());
+                    let needs_hwupload = self
+                        .input
+                        .as_ref()
+                        .and_then(|i| i.filter_hw_device.as_ref())
+                        .is_some();
+                    if needs_hwupload {
+                        vargs.push(prepare_hw_filter(filter, video.pix_fmt.as_deref()));
+                    } else {
+                        vargs.push(filter.clone());
+                    }
+                }
+                // BT.709 color metadata for HD broadcast sources.
+                // Placed before extra so user-supplied extra can
+                // override individual values if needed.
+                for &(key, val) in dtvmgr_vmaf::BT709_COLOR_ARGS {
+                    vargs.push(key.to_owned());
+                    vargs.push(val.to_owned());
+                }
+                vargs.extend_from_slice(&video.extra);
+                add_stream_specifiers(&mut vargs, "v");
+                args.extend(vargs);
             }
-            append_extra_with_specifier(&mut args, &video.extra, "v");
         }
 
         // Audio
@@ -295,26 +330,29 @@ impl JlseEncode {
                 || audio.channels.is_some()
                 || !audio.extra.is_empty();
             if has_settings {
-                args.push("-map".to_owned());
-                args.push("0:a".to_owned());
+                let mut aargs = Vec::new();
+                aargs.push("-map".to_owned());
+                aargs.push("0:a".to_owned());
+                if let Some(ref codec) = audio.codec {
+                    aargs.push("-c".to_owned());
+                    aargs.push(codec.clone());
+                }
+                if let Some(rate) = audio.sample_rate {
+                    aargs.push("-ar".to_owned());
+                    aargs.push(rate.to_string());
+                }
+                if let Some(ref bitrate) = audio.bitrate {
+                    aargs.push("-b".to_owned());
+                    aargs.push(bitrate.clone());
+                }
+                if let Some(channels) = audio.channels {
+                    aargs.push("-ac".to_owned());
+                    aargs.push(channels.to_string());
+                }
+                aargs.extend_from_slice(&audio.extra);
+                add_stream_specifiers(&mut aargs, "a");
+                args.extend(aargs);
             }
-            if let Some(ref codec) = audio.codec {
-                args.push("-c:a".to_owned());
-                args.push(codec.clone());
-            }
-            if let Some(rate) = audio.sample_rate {
-                args.push("-ar".to_owned());
-                args.push(rate.to_string());
-            }
-            if let Some(ref bitrate) = audio.bitrate {
-                args.push("-b:a".to_owned());
-                args.push(bitrate.clone());
-            }
-            if let Some(channels) = audio.channels {
-                args.push("-ac".to_owned());
-                args.push(channels.to_string());
-            }
-            append_extra_with_specifier(&mut args, &audio.extra, "a");
         }
 
         args
@@ -952,34 +990,34 @@ mod tests {
         assert!(!args.contains(&"-hide_banner".to_owned()));
         assert!(!args.contains(&"-fflags".to_owned()));
 
-        // Assert — video mapping and codec
+        // Assert — video mapping and codec (all flags carry :v)
         assert!(args.contains(&"-map".to_owned()));
         assert!(args.contains(&"0:v".to_owned()));
         assert!(args.contains(&"-c:v".to_owned()));
         assert!(args.contains(&"libx264".to_owned()));
-        assert!(args.contains(&"-preset".to_owned()));
+        assert!(args.contains(&"-preset:v".to_owned()));
         assert!(args.contains(&"medium".to_owned()));
         assert!(args.contains(&"-profile:v".to_owned()));
         assert!(args.contains(&"main".to_owned()));
-        assert!(args.contains(&"-pix_fmt".to_owned()));
+        assert!(args.contains(&"-pix_fmt:v".to_owned()));
         assert!(args.contains(&"yuv420p".to_owned()));
-        assert!(args.contains(&"-aspect".to_owned()));
+        assert!(args.contains(&"-aspect:v".to_owned()));
         assert!(args.contains(&"16:9".to_owned()));
         assert!(args.contains(&"-vf".to_owned()));
         assert!(args.contains(&"-crf:v".to_owned()));
         assert!(args.contains(&"23".to_owned()));
-        // -movflags is a global option — must NOT get :v specifier
+        // -movflags is exempt — must NOT get :v specifier
         assert!(args.contains(&"-movflags".to_owned()));
 
-        // Assert — audio mapping and codec
+        // Assert — audio mapping and codec (all flags carry :a)
         assert!(args.contains(&"0:a".to_owned()));
         assert!(args.contains(&"-c:a".to_owned()));
         assert!(args.contains(&"aac".to_owned()));
-        assert!(args.contains(&"-ar".to_owned()));
+        assert!(args.contains(&"-ar:a".to_owned()));
         assert!(args.contains(&"48000".to_owned()));
         assert!(args.contains(&"-b:a".to_owned()));
         assert!(args.contains(&"256k".to_owned()));
-        assert!(args.contains(&"-ac".to_owned()));
+        assert!(args.contains(&"-ac:a".to_owned()));
         assert!(args.contains(&"2".to_owned()));
     }
 
@@ -1419,7 +1457,27 @@ mod tests {
 
     #[test]
     fn test_audio_extra_gets_stream_specifier() {
-        // Arrange
+        // Arrange — -application is a codec AVOption, should get :a
+        let encode = JlseEncode {
+            audio: Some(EncodeAudio {
+                codec: Some("libopus".to_owned()),
+                extra: vec!["-application".to_owned(), "audio".to_owned()],
+                ..EncodeAudio::default()
+            }),
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let args = encode.to_output_args();
+
+        // Assert — -application becomes -application:a
+        assert!(args.contains(&"-application:a".to_owned()));
+        assert!(!args.contains(&"-application".to_owned()));
+    }
+
+    #[test]
+    fn test_audio_extra_af_exempt_from_specifier() {
+        // Arrange — -af is a filter shorthand, must NOT get :a
         let encode = JlseEncode {
             audio: Some(EncodeAudio {
                 codec: Some("libopus".to_owned()),
@@ -1432,15 +1490,15 @@ mod tests {
         // Act
         let args = encode.to_output_args();
 
-        // Assert — -af becomes -af:a
-        assert!(args.contains(&"-af:a".to_owned()));
-        assert!(!args.contains(&"-af".to_owned()));
+        // Assert — -af stays as -af (exempt)
+        assert!(args.contains(&"-af".to_owned()));
+        assert!(!args.contains(&"-af:a".to_owned()));
     }
 
     #[test]
-    fn test_all_global_options_excluded_from_specifier() {
-        // Arrange — every GLOBAL_OPTIONS entry should pass through unchanged
-        let extras: Vec<String> = GLOBAL_OPTIONS.iter().map(|s| (*s).to_owned()).collect();
+    fn test_all_exempt_options_excluded_from_specifier() {
+        // Arrange — every SPECIFIER_EXEMPT entry should pass through unchanged
+        let extras: Vec<String> = SPECIFIER_EXEMPT.iter().map(|s| (*s).to_owned()).collect();
         let encode = JlseEncode {
             video: Some(EncodeVideo {
                 codec: Some("libx264".to_owned()),

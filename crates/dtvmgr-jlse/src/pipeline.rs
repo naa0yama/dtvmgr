@@ -866,11 +866,15 @@ fn run_quality_search(
         min_vmaf_tolerance: qs.min_vmaf_tolerance.unwrap_or(1.0),
         thorough: qs.thorough.unwrap_or(true),
         sample: sample_cfg,
-        extra_encode_args: encode_cfg
-            .video
-            .as_ref()
-            .map(|v| v.extra.clone())
-            .unwrap_or_default(),
+        extra_encode_args: {
+            let mut extra = encode_cfg
+                .video
+                .as_ref()
+                .map(|v| v.extra.clone())
+                .unwrap_or_default();
+            crate::command::ffmpeg::add_stream_specifiers(&mut extra, "v");
+            extra
+        },
         extra_input_args: hw_input_args,
         reference_filter,
         temp_dir: None,
@@ -886,9 +890,13 @@ fn run_quality_search(
         });
     }
 
+    let last_vmaf = std::cell::Cell::new(0.0_f64);
     let vmaf_progress_cb = |evt: dtvmgr_vmaf::SearchProgress| {
+        if let dtvmgr_vmaf::SearchProgress::IterationResult { vmaf, .. } = &evt {
+            last_vmaf.set(f64::from(*vmaf));
+        }
         if let Some(cb) = on_progress {
-            let (pct, msg) = vmaf_progress_to_stage(&evt);
+            let (pct, msg) = vmaf_progress_to_stage(&evt, last_vmaf.get());
             cb(ProgressEvent::StageProgress {
                 percent: pct,
                 log: msg.clone(),
@@ -1097,7 +1105,7 @@ fn round3(v: f32) -> f64 {
 /// Layout: sample extraction = 0–10%, iterations = 10–100%.
 /// Assumes ~6 iterations for the progress bar estimate.
 #[allow(clippy::arithmetic_side_effects)]
-fn vmaf_progress_to_stage(evt: &dtvmgr_vmaf::SearchProgress) -> (f64, String) {
+fn vmaf_progress_to_stage(evt: &dtvmgr_vmaf::SearchProgress, last_vmaf: f64) -> (f64, String) {
     const EST_ITERS: f64 = 6.0;
 
     match *evt {
@@ -1121,7 +1129,9 @@ fn vmaf_progress_to_stage(evt: &dtvmgr_vmaf::SearchProgress) -> (f64, String) {
                 .clamp(0.0, 1.0);
             (
                 pct,
-                format!("encoding  ({sample:>2}/{total}) iter {iteration} q={quality:.3}"),
+                format!(
+                    "encoding  ({sample:>2}/{total}) iter {iteration} q={quality:.3} vmaf={last_vmaf:06.3}"
+                ),
             )
         }
         dtvmgr_vmaf::SearchProgress::Scoring {
@@ -1138,7 +1148,9 @@ fn vmaf_progress_to_stage(evt: &dtvmgr_vmaf::SearchProgress) -> (f64, String) {
                 .clamp(0.0, 1.0);
             (
                 pct,
-                format!("scoring   ({sample:>2}/{total}) iter {iteration} q={quality:.3}"),
+                format!(
+                    "scoring   ({sample:>2}/{total}) iter {iteration} q={quality:.3} vmaf={last_vmaf:06.3}"
+                ),
             )
         }
         dtvmgr_vmaf::SearchProgress::IterationResult {
@@ -1164,33 +1176,30 @@ fn vmaf_progress_to_stage(evt: &dtvmgr_vmaf::SearchProgress) -> (f64, String) {
 /// value, or appends the quality parameter if not present.
 fn inject_quality_override(output_args: &mut Vec<String>, result: &dtvmgr_vmaf::SearchResult) {
     let value_str = format!("{}", result.quality_value);
+    let flag_with_spec = format!("{}:v", result.quality_param);
 
-    // Find and replace existing quality parameter
+    // After `add_stream_specifiers`, all video flags already carry `:v`.
+    // Search only for `flag:v` patterns.
     let replaced = output_args.iter().position(|arg| {
         dtvmgr_vmaf::QualityParam::ALL_FLAGS
             .iter()
-            .any(|&flag| arg == flag || *arg == format!("{flag}:v"))
+            .any(|&flag| *arg == format!("{flag}:v"))
     });
 
     #[allow(clippy::indexing_slicing)]
     if let Some(idx) = replaced {
-        // Preserve the existing stream specifier (e.g. `:v`) if present,
-        // so `-global_quality:v` is not downgraded to `-global_quality`.
-        let existing = &output_args[idx];
-        if existing.starts_with(&result.quality_param)
-            && existing.len() > result.quality_param.len()
-        {
-            // Already has a stream specifier — keep it as-is.
+        output_args[idx].clone_from(&flag_with_spec);
+        let val_idx = idx.saturating_add(1);
+        let next_is_value = output_args
+            .get(val_idx)
+            .is_some_and(|s| !s.starts_with('-'));
+        if next_is_value {
+            output_args[val_idx].clone_from(&value_str);
         } else {
-            output_args[idx].clone_from(&result.quality_param);
-        }
-        if let Some(next) = output_args.get_mut(idx.saturating_add(1)) {
-            next.clone_from(&value_str);
-        } else {
-            output_args.push(value_str);
+            output_args.insert(val_idx, value_str);
         }
     } else {
-        output_args.push(result.quality_param.clone());
+        output_args.push(flag_with_spec);
         output_args.push(value_str);
     }
 
@@ -1596,13 +1605,13 @@ mod tests {
 
     #[test]
     fn test_inject_quality_override_replace_crf() {
-        // Arrange
+        // Arrange — args are already normalised with :v
         let mut args = vec![
-            "-preset".to_owned(),
+            "-preset:v".to_owned(),
             "medium".to_owned(),
-            "-crf".to_owned(),
+            "-crf:v".to_owned(),
             "23".to_owned(),
-            "-color_range".to_owned(),
+            "-color_range:v".to_owned(),
             "tv".to_owned(),
         ];
         let result = make_search_result("-crf", 18.0);
@@ -1611,20 +1620,20 @@ mod tests {
         inject_quality_override(&mut args, &result);
 
         // Assert
-        assert_eq!(args[2], "-crf");
+        assert_eq!(args[2], "-crf:v");
         assert_eq!(args[3], "18");
     }
 
     #[test]
     fn test_inject_quality_override_replace_global_quality() {
-        // Arrange
+        // Arrange — normalised output from to_output_args
         let mut args = vec!["-global_quality:v".to_owned(), "27".to_owned()];
         let result = make_search_result("-global_quality", 22.0);
 
         // Act
         inject_quality_override(&mut args, &result);
 
-        // Assert — stream specifier `:v` is preserved
+        // Assert
         assert_eq!(args[0], "-global_quality:v");
         assert_eq!(args[1], "22");
     }
@@ -1638,10 +1647,25 @@ mod tests {
         // Act
         inject_quality_override(&mut args, &result);
 
-        // Assert
+        // Assert — appended with `:v` specifier
         assert_eq!(args.len(), 4);
-        assert_eq!(args[2], "-crf");
+        assert_eq!(args[2], "-crf:v");
         assert_eq!(args[3], "20");
+    }
+
+    #[test]
+    fn test_inject_quality_override_append_global_quality_when_missing() {
+        // Arrange — no quality param in args at all
+        let mut args = vec!["-preset".to_owned(), "slow".to_owned()];
+        let result = make_search_result("-global_quality", 30.0);
+
+        // Act
+        inject_quality_override(&mut args, &result);
+
+        // Assert — appended with `:v` to avoid libopus exit 234
+        assert_eq!(args.len(), 4);
+        assert_eq!(args[2], "-global_quality:v");
+        assert_eq!(args[3], "30");
     }
 
     #[test]
@@ -1653,8 +1677,8 @@ mod tests {
         // Act
         inject_quality_override(&mut args, &result);
 
-        // Assert
-        assert_eq!(args, vec!["-crf", "25"]);
+        // Assert — appended with `:v` specifier
+        assert_eq!(args, vec!["-crf:v", "25"]);
     }
 
     // ── vmaf_progress_to_stage ───────────────────────────────
@@ -1668,7 +1692,7 @@ mod tests {
         };
 
         // Act
-        let (pct, _msg) = vmaf_progress_to_stage(&evt);
+        let (pct, _msg) = vmaf_progress_to_stage(&evt, 0.0);
 
         // Assert — sample extraction maps to 0–10%
         assert!(pct >= 0.0, "pct={pct} should be >= 0.0");
@@ -1692,8 +1716,8 @@ mod tests {
         };
 
         // Act
-        let (pct1, _) = vmaf_progress_to_stage(&evt1);
-        let (pct2, _) = vmaf_progress_to_stage(&evt2);
+        let (pct1, _) = vmaf_progress_to_stage(&evt1, 0.0);
+        let (pct2, _) = vmaf_progress_to_stage(&evt2, 0.0);
 
         // Assert — later sample should have higher progress
         assert!(
@@ -1719,8 +1743,8 @@ mod tests {
         };
 
         // Act
-        let (pct_enc, _) = vmaf_progress_to_stage(&enc);
-        let (pct_score, _) = vmaf_progress_to_stage(&score);
+        let (pct_enc, _) = vmaf_progress_to_stage(&enc, 0.0);
+        let (pct_score, _) = vmaf_progress_to_stage(&score, 0.0);
 
         // Assert — scoring same sample should be higher
         assert!(
@@ -1740,7 +1764,7 @@ mod tests {
         };
 
         // Act
-        let (pct, msg) = vmaf_progress_to_stage(&evt);
+        let (pct, msg) = vmaf_progress_to_stage(&evt, 0.0);
 
         // Assert — percent based on iteration / EST_ITERS
         assert!(pct >= 0.1, "pct={pct} should be >= 0.1 (past extraction)");
@@ -2660,29 +2684,33 @@ echo "1440.0"
 
     #[test]
     fn test_inject_quality_override_flag_at_end_no_value() {
-        // Arrange — quality flag is the last element with no following value
-        let mut args = vec!["-preset".to_owned(), "slow".to_owned(), "-crf".to_owned()];
+        // Arrange — normalised quality flag at end with no following value
+        let mut args = vec![
+            "-preset:v".to_owned(),
+            "slow".to_owned(),
+            "-crf:v".to_owned(),
+        ];
         let result = make_search_result("-crf", 19.0);
 
         // Act
         inject_quality_override(&mut args, &result);
 
-        // Assert — flag replaced, value appended
-        assert_eq!(args[2], "-crf");
+        // Assert — value appended after existing flag
+        assert_eq!(args[2], "-crf:v");
         assert_eq!(args[3], "19");
     }
 
     #[test]
     fn test_inject_quality_override_replace_qp() {
-        // Arrange — test -qp flag replacement
-        let mut args = vec!["-qp".to_owned(), "30".to_owned()];
+        // Arrange — normalised -qp:v flag
+        let mut args = vec!["-qp:v".to_owned(), "30".to_owned()];
         let result = make_search_result("-qp", 25.0);
 
         // Act
         inject_quality_override(&mut args, &result);
 
         // Assert
-        assert_eq!(args[0], "-qp");
+        assert_eq!(args[0], "-qp:v");
         assert_eq!(args[1], "25");
     }
 
@@ -2811,7 +2839,7 @@ echo "1440.0"
         };
 
         // Act
-        let (pct, msg) = vmaf_progress_to_stage(&evt);
+        let (pct, msg) = vmaf_progress_to_stage(&evt, 0.0);
 
         // Assert
         assert!((0.0..=0.1).contains(&pct));
@@ -2827,7 +2855,7 @@ echo "1440.0"
         };
 
         // Act
-        let (pct, _msg) = vmaf_progress_to_stage(&evt);
+        let (pct, _msg) = vmaf_progress_to_stage(&evt, 0.0);
 
         // Assert — should not panic, pct = 0
         assert!((pct - 0.0).abs() < f64::EPSILON);
@@ -2850,8 +2878,8 @@ echo "1440.0"
         };
 
         // Act
-        let (pct1, _) = vmaf_progress_to_stage(&score_iter1);
-        let (pct2, _) = vmaf_progress_to_stage(&enc_iter2);
+        let (pct1, _) = vmaf_progress_to_stage(&score_iter1, 0.0);
+        let (pct2, _) = vmaf_progress_to_stage(&enc_iter2, 0.0);
 
         // Assert — iter 2 should have higher progress than iter 1
         assert!(pct2 > pct1, "iter 2 ({pct2}) should be > iter 1 ({pct1})");
@@ -2868,7 +2896,7 @@ echo "1440.0"
         };
 
         // Act
-        let (pct, msg) = vmaf_progress_to_stage(&evt);
+        let (pct, msg) = vmaf_progress_to_stage(&evt, 0.0);
 
         // Assert — clamped to 1.0
         assert!(pct <= 1.0, "pct should be clamped to 1.0, got {pct}");
@@ -3157,7 +3185,7 @@ echo "1440.0"
         };
 
         // Act
-        let (pct, msg) = vmaf_progress_to_stage(&evt);
+        let (pct, msg) = vmaf_progress_to_stage(&evt, 0.0);
 
         // Assert
         assert!((pct - 0.0).abs() < f64::EPSILON);
@@ -3175,7 +3203,7 @@ echo "1440.0"
         };
 
         // Act
-        let (pct, _msg) = vmaf_progress_to_stage(&evt);
+        let (pct, _msg) = vmaf_progress_to_stage(&evt, 0.0);
 
         // Assert: should not panic, progress clamped
         assert!(pct >= 0.0);

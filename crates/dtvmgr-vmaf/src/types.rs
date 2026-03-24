@@ -3,6 +3,17 @@
 use std::fmt;
 use std::path::PathBuf;
 
+/// BT.709 color metadata key-value pairs for HD broadcast sources.
+///
+/// Japanese terrestrial/BS HD broadcasts use BT.709 colour primaries,
+/// transfer characteristics, and matrix with limited (TV) range.
+pub const BT709_COLOR_ARGS: &[(&str, &str)] = &[
+    ("-color_range", "tv"),
+    ("-color_primaries", "bt709"),
+    ("-color_trc", "bt709"),
+    ("-colorspace", "bt709"),
+];
+
 /// Complete configuration for a quality parameter search.
 #[derive(Debug, Clone)]
 pub struct SearchConfig {

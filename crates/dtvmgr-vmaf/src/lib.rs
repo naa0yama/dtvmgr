@@ -20,8 +20,8 @@ pub mod types;
 pub mod vmaf;
 
 pub use types::{
-    ContentSegment, EncoderConfig, QualityParam, SampleConfig, SearchConfig, SearchProgress,
-    SearchResult,
+    BT709_COLOR_ARGS, ContentSegment, EncoderConfig, QualityParam, SampleConfig, SearchConfig,
+    SearchProgress, SearchResult,
 };
 
 use anyhow::Result;
