@@ -3,13 +3,78 @@
 //! All wrappers in this module use synchronous [`std::process::Command`].
 
 use std::ffi::OsStr;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use tempfile::NamedTempFile;
 use tracing::debug;
+
+// ── Stderr collection & `OTel` exception helpers ──────────────
+
+/// Accumulates stderr lines and emits each as a tracing event.
+///
+/// Every line pushed is recorded as a `tracing::debug!` event so that
+/// the `OTel` log bridge exports it with trace correlation. On command
+/// failure, [`emit_command_error`] uses the accumulated output to
+/// populate the `OTel` exception span event.
+#[derive(Debug)]
+pub struct StderrCollector {
+    lines: Vec<String>,
+    program: String,
+}
+
+impl StderrCollector {
+    /// Create a new collector for the given program path.
+    #[must_use]
+    pub fn new(program: &Path) -> Self {
+        Self {
+            lines: Vec::new(),
+            program: program.display().to_string(),
+        }
+    }
+
+    /// Record a single stderr line: emit via tracing and accumulate.
+    ///
+    /// Uses `trace!` level — full stdout/stderr is verbose output per
+    /// the `OTel` instrumentation guideline. On failure, the accumulated
+    /// content is included in the `error!`-level exception event.
+    pub fn push(&mut self, line: &str) {
+        tracing::trace!(cmd = %self.program, "{line}");
+        self.lines.push(line.to_owned());
+    }
+
+    /// Return all accumulated stderr joined by newlines.
+    #[must_use]
+    pub fn finish(&self) -> String {
+        self.lines.join("\n")
+    }
+}
+
+/// Emit an `OTel` exception span event and return a formatted error.
+///
+/// Records `exception.type`, `exception.message`, `exception.stacktrace`,
+/// `process.exit_code`, `process.command`, and `process.stderr` as span
+/// event attributes following the `OTel` semantic conventions.
+pub fn emit_command_error(program: &Path, exit_code: Option<i32>, stderr: &str) -> anyhow::Error {
+    let backtrace = std::backtrace::Backtrace::capture();
+    let code_str = exit_code.map_or_else(|| "signal".to_owned(), |c| c.to_string());
+    let message = format!("{} exited with {code_str}", program.display());
+
+    tracing::error!(
+        name: "exception",
+        { exception.type_ = "CommandError",
+          exception.message = %message,
+          exception.stacktrace = %backtrace,
+          process.exit_code = exit_code.unwrap_or(-1),
+          process.command = %program.display(),
+          process.stderr = stderr },
+        "command failed"
+    );
+
+    anyhow::anyhow!("{message}\n\n--- stderr ---\n{stderr}")
+}
 
 /// Set `PR_SET_PDEATHSIG` so the child receives `SIGTERM` when
 /// the parent process dies.
@@ -44,36 +109,62 @@ pub fn apply_pdeathsig(cmd: &mut Command) {
     let _ = cmd; // suppress unused warning on non-Linux
 }
 
-/// Spawn a command, inherit stdout/stderr, and check exit status.
+/// Spawn a command, inherit stdout, capture stderr for `OTel`, and check
+/// exit status.
+///
+/// Each stderr line is emitted as a `tracing::debug!` event (for `OTel`
+/// log correlation) and echoed to the parent's stderr (preserving the
+/// original terminal display behaviour). On failure, the full stderr
+/// content is included in the error and an `OTel` exception event is
+/// emitted.
 ///
 /// # Errors
 ///
 /// Returns an error if the command cannot be spawned or exits with a
 /// non-zero status code.
+#[allow(clippy::print_stderr)]
 fn run(program: &Path, args: &[&OsStr]) -> Result<()> {
     debug!(cmd = %program.display(), ?args, "running command");
 
     let mut cmd = Command::new(program);
-    cmd.args(args);
+    cmd.args(args).stderr(Stdio::piped());
     apply_pdeathsig(&mut cmd);
-    let status = cmd
-        .status()
+    let mut child = cmd
+        .spawn()
         .with_context(|| format!("failed to spawn {}", program.display()))?;
 
+    let mut collector = StderrCollector::new(program);
+    if let Some(stderr) = child.stderr.take() {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            let line =
+                line.with_context(|| format!("failed to read stderr from {}", program.display()))?;
+            eprintln!("{line}");
+            collector.push(&line);
+        }
+    }
+
+    let status = child
+        .wait()
+        .with_context(|| format!("failed to wait for {}", program.display()))?;
+
     if !status.success() {
-        bail!(
-            "{} exited with {}",
-            program.display(),
-            status
-                .code()
-                .map_or_else(|| "signal".to_owned(), |c| c.to_string()),
-        );
+        return Err(emit_command_error(
+            program,
+            status.code(),
+            &collector.finish(),
+        ));
     }
 
     Ok(())
 }
 
-/// Spawn a command, capture stdout as a [`String`], and inherit stderr.
+/// Spawn a command, capture stdout as a [`String`], and capture stderr
+/// for `OTel`.
+///
+/// Each stderr line is emitted as a `tracing::debug!` event after the
+/// command completes. On failure, the full stderr content is included
+/// in the error and an `OTel` exception event is emitted.
 ///
 /// # Errors
 ///
@@ -89,22 +180,25 @@ fn run_capture(program: &Path, args: &[&OsStr]) -> Result<String> {
         .output()
         .with_context(|| format!("failed to spawn {}", program.display()))?;
 
+    let stderr_text = String::from_utf8_lossy(&output.stderr);
+    let mut collector = StderrCollector::new(program);
+    for line in stderr_text.lines() {
+        collector.push(line);
+    }
+
     if !output.status.success() {
-        bail!(
-            "{} exited with {}",
-            program.display(),
-            output
-                .status
-                .code()
-                .map_or_else(|| "signal".to_owned(), |c| c.to_string()),
-        );
+        return Err(emit_command_error(
+            program,
+            output.status.code(),
+            &collector.finish(),
+        ));
     }
 
     let stdout = String::from_utf8(output.stdout)
         .with_context(|| format!("{} produced non-UTF-8 stdout", program.display()))?;
 
     if stdout.trim().is_empty() {
-        bail!(
+        anyhow::bail!(
             "{} produced no output (input may not be a valid TS file)",
             program.display(),
         );

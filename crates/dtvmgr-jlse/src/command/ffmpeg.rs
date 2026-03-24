@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 use dtvmgr_tsduck::command::apply_pdeathsig;
-use tracing::{info, instrument};
+use tracing::{debug, instrument};
 
 use crate::progress::{self, ProgressEvent};
 use crate::types::JlseEncode;
@@ -447,7 +447,7 @@ pub fn run_with_progress(
         input_options,
         extra_options,
     );
-    info!(cmd = %binary.display(), ?args, "running ffmpeg with progress");
+    debug!(cmd = %binary.display(), ?args, "running ffmpeg with progress");
 
     let mut cmd = Command::new(binary);
     cmd.args(&args).stdout(Stdio::null()).stderr(Stdio::piped());
@@ -455,6 +455,8 @@ pub fn run_with_progress(
     let mut child = cmd
         .spawn()
         .with_context(|| format!("failed to spawn {}", binary.display()))?;
+
+    let mut collector = dtvmgr_tsduck::command::StderrCollector::new(binary);
 
     // Read stderr for progress parsing.
     // FFmpeg uses bare `\r` (without `\n`) to overwrite progress lines,
@@ -488,6 +490,7 @@ pub fn run_with_progress(
                             let segment = String::from_utf8_lossy(&line_bytes);
                             let segment = segment.trim();
                             if !segment.is_empty() {
+                                collector.push(segment);
                                 emit_ffmpeg_line(segment, duration, on_progress);
                             }
                             line_bytes.clear();
@@ -507,6 +510,7 @@ pub fn run_with_progress(
             let segment = String::from_utf8_lossy(&line_bytes);
             let segment = segment.trim();
             if !segment.is_empty() {
+                collector.push(segment);
                 emit_ffmpeg_line(segment, duration, on_progress);
             }
         }
@@ -517,13 +521,11 @@ pub fn run_with_progress(
         .with_context(|| format!("failed to wait for {}", binary.display()))?;
 
     if !status.success() {
-        bail!(
-            "{} exited with {}",
-            binary.display(),
-            status
-                .code()
-                .map_or_else(|| "signal".to_owned(), |c| c.to_string()),
-        );
+        return Err(dtvmgr_tsduck::command::emit_command_error(
+            binary,
+            status.code(),
+            &collector.finish(),
+        ));
     }
 
     Ok(())
