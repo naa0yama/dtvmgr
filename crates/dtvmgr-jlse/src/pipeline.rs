@@ -1181,9 +1181,9 @@ fn inject_quality_override(output_args: &mut Vec<String>, result: &dtvmgr_vmaf::
     // After `add_stream_specifiers`, all video flags already carry `:v`.
     // Search only for `flag:v` patterns.
     let replaced = output_args.iter().position(|arg| {
-        dtvmgr_vmaf::QualityParam::ALL_FLAGS
+        dtvmgr_vmaf::QualityParam::ALL_FLAGS_V
             .iter()
-            .any(|&flag| *arg == format!("{flag}:v"))
+            .any(|&flag| arg == flag)
     });
 
     #[allow(clippy::indexing_slicing)]
@@ -1697,6 +1697,26 @@ mod tests {
         // Assert — sample extraction maps to 0–10%
         assert!(pct >= 0.0, "pct={pct} should be >= 0.0");
         assert!(pct <= 0.1, "pct={pct} should be <= 0.1");
+    }
+
+    #[test]
+    fn test_vmaf_progress_encoding_shows_last_vmaf() {
+        // Arrange — iter 2 encoding with previous VMAF of 93.5
+        let evt = dtvmgr_vmaf::SearchProgress::Encoding {
+            iteration: 2,
+            quality: 22.0,
+            sample: 1,
+            total: 5,
+        };
+
+        // Act
+        let (_pct, msg) = vmaf_progress_to_stage(&evt, 93.5);
+
+        // Assert — message includes the previous iteration's VMAF
+        assert!(
+            msg.contains("vmaf=93.500"),
+            "expected vmaf=93.500 in msg: {msg}"
+        );
     }
 
     #[test]

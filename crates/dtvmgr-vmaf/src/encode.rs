@@ -87,11 +87,7 @@ pub(crate) fn encode_sample(
     }
 
     // BT.709 color metadata for HD broadcast sources.
-    let color_args: Vec<String> = crate::types::BT709_COLOR_ARGS
-        .iter()
-        .flat_map(|&(k, v)| [format!("{k}:v"), v.to_owned()])
-        .collect();
-    for arg in &color_args {
+    for arg in crate::types::BT709_COLOR_ARGS_V {
         args.push(OsStr::new(arg));
     }
 

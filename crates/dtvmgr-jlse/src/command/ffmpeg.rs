@@ -42,6 +42,7 @@ const SPECIFIER_EXEMPT: &[&str] = &[
     "-an",
     "-vn",
     "-sn",
+    "-dn",
     // Container-level
     "-attach",
     "-metadata",

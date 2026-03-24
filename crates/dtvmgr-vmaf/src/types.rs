@@ -14,6 +14,21 @@ pub const BT709_COLOR_ARGS: &[(&str, &str)] = &[
     ("-colorspace", "bt709"),
 ];
 
+/// Pre-formatted BT.709 colour args with `:v` stream specifier.
+///
+/// Flat `&[&str]` ready to push into an `OsStr` arg list without
+/// any runtime allocation.
+pub const BT709_COLOR_ARGS_V: &[&str] = &[
+    "-color_range:v",
+    "tv",
+    "-color_primaries:v",
+    "bt709",
+    "-color_trc:v",
+    "bt709",
+    "-colorspace:v",
+    "bt709",
+];
+
 /// Complete configuration for a quality parameter search.
 #[derive(Debug, Clone)]
 pub struct SearchConfig {
@@ -168,6 +183,9 @@ pub enum QualityParam {
 impl QualityParam {
     /// All quality parameter flag strings.
     pub const ALL_FLAGS: &[&str] = &["-crf", "-global_quality", "-qp", "-q", "-cq"];
+
+    /// All quality parameter flags with `:v` stream specifier.
+    pub const ALL_FLAGS_V: &[&str] = &["-crf:v", "-global_quality:v", "-qp:v", "-q:v", "-cq:v"];
 
     /// Return the ffmpeg flag string for this parameter type.
     #[must_use]
