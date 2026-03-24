@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.3.3](https://github.com/naa0yama/dtvmgr/compare/v0.3.2...v0.3.3) - 2026-03-24
+
+### Development Environment 🔧
+
+- chore(deps): update taiki-e/install-action action to v2.68.35 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/154
+
+### Other Changes
+
+- fix(pipeline): preserve stream specifier in inject_quality_override by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/151
+- feat(command): capture stderr and emit OTel exception events by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/153
+
 ## [v0.3.2](https://github.com/naa0yama/dtvmgr/compare/v0.3.1...v0.3.2) - 2026-03-24
 
 ### Documentation 🗒️
