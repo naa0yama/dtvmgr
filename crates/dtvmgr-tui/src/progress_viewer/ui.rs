@@ -146,6 +146,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_initial_state_shows_starting() {
         // Arrange
         let backend = TestBackend::new(120, 30);
@@ -167,6 +168,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_active_stage_shows_progress() {
         // Arrange
         let backend = TestBackend::new(120, 30);
@@ -194,6 +196,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_finished_state_shows_completed() {
         // Arrange
         let backend = TestBackend::new(120, 30);
@@ -213,6 +216,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_empty_logs_shows_waiting() {
         // Arrange
         let backend = TestBackend::new(120, 30);

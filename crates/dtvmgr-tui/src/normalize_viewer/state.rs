@@ -771,6 +771,7 @@ mod tests {
     // -------------------------------------------------------------------
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_apply_regex_season_jp() {
         // Arrange
         let rows = vec![make_row(
@@ -796,6 +797,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_apply_regex_season_en() {
         // Arrange
         let rows = vec![make_row(6668, "SPY×FAMILY Season 2", Some(1), Some(2023))];
@@ -813,6 +815,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_apply_regex_no_match() {
         // Arrange
         let rows = vec![make_row(6750, "葬送のフリーレン", Some(1), Some(2023))];
@@ -830,6 +833,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_apply_regex_invalid_pattern() {
         // Arrange
         let mut state = make_state();
@@ -845,6 +849,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_apply_regex_empty_resets() {
         // Arrange
         let rows = vec![make_row(
@@ -872,6 +877,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_apply_regex_no_season_group_fallback() {
         // Arrange: regex without SeasonNum named group — fallback extracts from trimmed
         let rows = vec![make_row(
@@ -1343,6 +1349,7 @@ mod tests {
     // -------------------------------------------------------------------
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_season_num_fallback_config_regex_japanese() {
         // Arrange: config regex without named group — fallback extracts 2 from "(第2期)"
         let rows = vec![make_row(1, "ダンダダン(第2期)", Some(1), Some(2024))];
@@ -1359,6 +1366,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_season_num_fallback_config_regex_english() {
         // Arrange: config regex without named group — fallback extracts 3 from " Season 3"
         let rows = vec![make_row(1, "SPY×FAMILY Season 3", Some(1), Some(2023))];
@@ -1374,6 +1382,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_season_num_fallback_no_digits() {
         // Arrange: "FINAL SEASON" has no digits → season_num should be None
         let rows = vec![make_row(1, "進撃の巨人 FINAL SEASON", Some(1), Some(2023))];
@@ -1389,6 +1398,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_season_num_named_group_takes_precedence() {
         // Arrange: regex WITH named group — should use named group, not fallback
         let rows = vec![make_row(1, "タイトル 第5期", Some(1), Some(2024))];
@@ -1403,6 +1413,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_toggle_regex_source_applies_config() {
         // Arrange
         let rows = vec![
@@ -1431,6 +1442,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_toggle_regex_source_back_to_manual() {
         // Arrange
         let rows = vec![make_row(1, "SPY×FAMILY Season 3", Some(1), Some(2023))];
@@ -1521,6 +1533,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_toggle_regex_source_back_to_manual_preserves_input() {
         // Arrange
         let rows = vec![make_row(1, "タイトル 第2期", Some(1), None)];

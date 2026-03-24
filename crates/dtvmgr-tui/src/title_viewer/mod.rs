@@ -364,6 +364,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn extract_base_query_with_regex_removes_match() {
         // Arrange
         let re = Regex::new(r"Season\s+\d+").unwrap();
@@ -376,6 +377,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn extract_base_query_no_match_returns_normalized() {
         // Arrange
         let re = Regex::new(r"Season\s+\d+").unwrap();
@@ -388,6 +390,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn extract_base_query_full_match_returns_normalized() {
         // Arrange: regex matches entire string
         let re = Regex::new(r"^.*$").unwrap();
