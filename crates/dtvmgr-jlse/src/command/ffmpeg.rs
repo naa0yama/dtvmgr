@@ -456,6 +456,8 @@ pub fn run_with_progress(
         .spawn()
         .with_context(|| format!("failed to spawn {}", binary.display()))?;
 
+    let mut collector = dtvmgr_tsduck::command::StderrCollector::new(binary);
+
     // Read stderr for progress parsing.
     // FFmpeg uses bare `\r` (without `\n`) to overwrite progress lines,
     // so we treat both `\r` and `\n` as line terminators instead of
@@ -488,6 +490,7 @@ pub fn run_with_progress(
                             let segment = String::from_utf8_lossy(&line_bytes);
                             let segment = segment.trim();
                             if !segment.is_empty() {
+                                collector.push(segment);
                                 emit_ffmpeg_line(segment, duration, on_progress);
                             }
                             line_bytes.clear();
@@ -507,6 +510,7 @@ pub fn run_with_progress(
             let segment = String::from_utf8_lossy(&line_bytes);
             let segment = segment.trim();
             if !segment.is_empty() {
+                collector.push(segment);
                 emit_ffmpeg_line(segment, duration, on_progress);
             }
         }
@@ -517,13 +521,11 @@ pub fn run_with_progress(
         .with_context(|| format!("failed to wait for {}", binary.display()))?;
 
     if !status.success() {
-        bail!(
-            "{} exited with {}",
-            binary.display(),
-            status
-                .code()
-                .map_or_else(|| "signal".to_owned(), |c| c.to_string()),
-        );
+        return Err(dtvmgr_tsduck::command::emit_command_error(
+            binary,
+            status.code(),
+            &collector.finish(),
+        ));
     }
 
     Ok(())

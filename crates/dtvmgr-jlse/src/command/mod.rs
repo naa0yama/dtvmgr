@@ -14,35 +14,55 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use anyhow::{Context, Result, bail};
-use dtvmgr_tsduck::command::apply_pdeathsig;
+use anyhow::{Context, Result};
+use dtvmgr_tsduck::command::{StderrCollector, apply_pdeathsig, emit_command_error};
 use tracing::{info, instrument};
 
-/// Spawn a command, inherit stdout/stderr, and check exit status.
+/// Spawn a command, inherit stdout, capture stderr for `OTel`, and check
+/// exit status.
+///
+/// Each stderr line is emitted as a `tracing::debug!` event (for `OTel`
+/// log correlation) and echoed to the parent's stderr. On failure, the
+/// full stderr content is included in the error and an `OTel` exception
+/// event is emitted.
 ///
 /// # Errors
 ///
 /// Returns an error if the command cannot be spawned or exits with a
 /// non-zero status code.
 #[instrument(skip_all, err(level = "error"))]
+#[allow(clippy::print_stderr)]
 pub fn run(program: &Path, args: &[&OsStr]) -> Result<()> {
     info!(cmd = %program.display(), ?args, "running command");
 
     let mut cmd = Command::new(program);
-    cmd.args(args);
+    cmd.args(args).stderr(Stdio::piped());
     apply_pdeathsig(&mut cmd);
-    let status = cmd
-        .status()
+    let mut child = cmd
+        .spawn()
         .with_context(|| format!("failed to spawn {}", program.display()))?;
 
+    let mut collector = StderrCollector::new(program);
+    if let Some(stderr) = child.stderr.take() {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            let line =
+                line.with_context(|| format!("failed to read stderr from {}", program.display()))?;
+            eprintln!("{line}");
+            collector.push(&line);
+        }
+    }
+
+    let status = child
+        .wait()
+        .with_context(|| format!("failed to wait for {}", program.display()))?;
+
     if !status.success() {
-        bail!(
-            "{} exited with {}",
-            program.display(),
-            status
-                .code()
-                .map_or_else(|| "signal".to_owned(), |c| c.to_string()),
-        );
+        return Err(emit_command_error(
+            program,
+            status.code(),
+            &collector.finish(),
+        ));
     }
 
     Ok(())
@@ -51,9 +71,10 @@ pub fn run(program: &Path, args: &[&OsStr]) -> Result<()> {
 /// Spawn a command, capture stderr line-by-line via callback, and check
 /// exit status.
 ///
-/// Stdout is suppressed. Each stderr line is forwarded to `on_log`.
-/// Used by TUI mode to display command output without corrupting the
-/// alternate screen.
+/// Stdout is suppressed. Each stderr line is forwarded to `on_log` and
+/// emitted as a `tracing::debug!` event for `OTel` log correlation. On
+/// failure, the full stderr content is included in the error and an
+/// `OTel` exception event is emitted.
 ///
 /// # Errors
 ///
@@ -70,11 +91,13 @@ pub fn run_logged(program: &Path, args: &[&OsStr], on_log: &dyn Fn(&str)) -> Res
         .spawn()
         .with_context(|| format!("failed to spawn {}", program.display()))?;
 
+    let mut collector = StderrCollector::new(program);
     if let Some(stderr) = child.stderr.take() {
         let reader = BufReader::new(stderr);
         for line in reader.lines() {
             let line =
                 line.with_context(|| format!("failed to read stderr from {}", program.display()))?;
+            collector.push(&line);
             on_log(&line);
         }
     }
@@ -84,19 +107,22 @@ pub fn run_logged(program: &Path, args: &[&OsStr], on_log: &dyn Fn(&str)) -> Res
         .with_context(|| format!("failed to wait for {}", program.display()))?;
 
     if !status.success() {
-        bail!(
-            "{} exited with {}",
-            program.display(),
-            status
-                .code()
-                .map_or_else(|| "signal".to_owned(), |c| c.to_string()),
-        );
+        return Err(emit_command_error(
+            program,
+            status.code(),
+            &collector.finish(),
+        ));
     }
 
     Ok(())
 }
 
-/// Spawn a command, capture stdout as a [`String`], and inherit stderr.
+/// Spawn a command, capture stdout as a [`String`], and capture stderr
+/// for `OTel`.
+///
+/// Each stderr line is emitted as a `tracing::debug!` event after the
+/// command completes. On failure, the full stderr content is included
+/// in the error and an `OTel` exception event is emitted.
 ///
 /// # Errors
 ///
@@ -113,15 +139,18 @@ pub fn run_capture(program: &Path, args: &[&OsStr]) -> Result<String> {
         .output()
         .with_context(|| format!("failed to spawn {}", program.display()))?;
 
+    let stderr_text = String::from_utf8_lossy(&output.stderr);
+    let mut collector = StderrCollector::new(program);
+    for line in stderr_text.lines() {
+        collector.push(line);
+    }
+
     if !output.status.success() {
-        bail!(
-            "{} exited with {}",
-            program.display(),
-            output
-                .status
-                .code()
-                .map_or_else(|| "signal".to_owned(), |c| c.to_string()),
-        );
+        return Err(emit_command_error(
+            program,
+            output.status.code(),
+            &collector.finish(),
+        ));
     }
 
     String::from_utf8(output.stdout)
