@@ -931,6 +931,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_select_recordings_step() {
         // Arrange
         use ratatui::Terminal;
@@ -959,6 +960,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_configure_settings_step() {
         // Arrange
         use ratatui::Terminal;
@@ -982,6 +984,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_confirm_step() {
         // Arrange
         use ratatui::Terminal;
@@ -1005,6 +1008,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_loading_progress_zero_total() {
         // Arrange
         use ratatui::Terminal;
@@ -1025,6 +1029,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_loading_progress_with_counts() {
         // Arrange
         use ratatui::Terminal;

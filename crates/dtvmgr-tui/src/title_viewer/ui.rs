@@ -433,6 +433,7 @@ mod tests {
     // ── Buffer rendering tests ───────────────────────────────────
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_empty_state_does_not_panic() {
         // Arrange
         let backend = TestBackend::new(140, 30);
@@ -463,6 +464,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_with_titles_shows_table_headers() {
         // Arrange: wide enough to fit all columns including split pane
         let backend = TestBackend::new(200, 30);
@@ -487,6 +489,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_with_programs_pane_shows_split() {
         // Arrange
         let backend = TestBackend::new(180, 30);
@@ -511,6 +514,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_without_programs_pane_no_split() {
         // Arrange
         let backend = TestBackend::new(140, 30);
@@ -533,6 +537,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn draw_filter_mode_shows_filter_footer() {
         // Arrange
         let backend = TestBackend::new(140, 30);
