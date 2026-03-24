@@ -257,7 +257,7 @@ setsid bash -c ". ${_root}/.devcontainer/o2-env.sh && openobserve" >/dev/null 2>
 timeout 60 bash -c 'until curl -sf http://localhost:5080/healthz > /dev/null 2>&1; do sleep 0.5; done'
 _auth=$(printf '%s' "${ZO_ROOT_USER_EMAIL}:${ZO_ROOT_USER_PASSWORD}" | base64 -w0)
 cat > .mcp.json <<MCPEOF
-{"mcpServers":{"o2":{"type":"http","url":"http://localhost:${ZO_HTTP_PORT}/api/default/mcp","headers":{"Authorization":"Basic ${_auth}"}}}}
+{"mcpServers":{"o2-dev":{"type":"http","url":"http://localhost:${ZO_HTTP_PORT}/api/default/mcp","headers":{"Authorization":"Basic ${_auth}"}}}}
 MCPEOF
 bash .devcontainer/o2-import-dashboards.sh
 echo 'OpenObserve started (UI: http://localhost:5080, MCP: .mcp.json)'
