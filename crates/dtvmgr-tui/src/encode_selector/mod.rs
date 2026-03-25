@@ -4,6 +4,8 @@
 pub mod state;
 mod ui;
 
+pub use ui::draw_confirm;
+
 use std::io;
 use std::sync::mpsc;
 

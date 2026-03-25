@@ -192,6 +192,19 @@ pub enum StorageMessage {
     Update(Vec<(String, Option<StorageStatsSnapshot>)>),
 }
 
+/// Progress state for encode job submission.
+#[derive(Debug, Clone)]
+pub struct SubmissionProgress {
+    /// 1-based index of the current request.
+    pub current: usize,
+    /// Total number of requests to submit.
+    pub total: usize,
+    /// Recorded item ID being submitted.
+    pub recorded_id: u64,
+    /// Program name being submitted.
+    pub name: String,
+}
+
 /// Encode settings configured in step 2.
 #[derive(Debug, Clone)]
 pub struct EncodeSettings {
@@ -306,6 +319,8 @@ pub struct EncodeSelectorState {
     pub storage_dirs: Vec<StorageDirEntry>,
     /// Visible table rows (updated by the renderer each frame).
     pub visible_table_rows: usize,
+    /// Encode submission progress. `None` when not submitting.
+    pub submitting: Option<SubmissionProgress>,
 }
 
 impl EncodeSelectorState {
@@ -380,6 +395,7 @@ impl EncodeSelectorState {
                     stats: None,
                 })
                 .collect(),
+            submitting: None,
         }
     }
 

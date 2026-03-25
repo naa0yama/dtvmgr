@@ -125,7 +125,7 @@ use dtvmgr_jlse::types::{AvsTarget, JlseConfig};
 use dtvmgr_tui::encode_selector::state::{
     EncodeQueueInfo, EncodeRow, EncodeSelectorState, FileCheckMessage, FileCheckRequest,
     FileCheckWorkerProgress, PageInfo, QueueMessage, RunningEncodeItem, SelectorResult,
-    StorageMessage, StorageStatsSnapshot, SyncMessage,
+    StorageMessage, StorageStatsSnapshot, SubmissionProgress, SyncMessage,
 };
 use dtvmgr_tui::run_channel_selector;
 use dtvmgr_tui::state::{ChannelEntry, ChannelGroup};
@@ -3589,14 +3589,31 @@ async fn run_epgstation_encode(
 
         match result {
             SelectorResult::Confirmed => {
-                // Submit encode jobs, then return to the selection screen.
+                // Submit encode jobs with progress feedback, then return to
+                // the selection screen.
                 let confirmed_rows: Vec<_> = state
                     .rows
                     .iter()
                     .filter(|row| selected.contains(&row.recorded_id))
                     .collect();
+                let total = confirmed_rows.len();
 
-                for row in &confirmed_rows {
+                for (i, row) in confirmed_rows.iter().enumerate() {
+                    // Show submission progress on the confirm screen.
+                    #[allow(clippy::arithmetic_side_effects)]
+                    let current = i + 1;
+                    state.submitting = Some(SubmissionProgress {
+                        current,
+                        total,
+                        recorded_id: row.recorded_id,
+                        name: row.name.clone(),
+                    });
+                    terminal
+                        .draw(|frame| {
+                            dtvmgr_tui::encode_selector::draw_confirm(frame, &state);
+                        })
+                        .context("failed to draw submission progress")?;
+
                     let Some(source_id) = row.source_video_file_id else {
                         tracing::warn!(
                             recorded_id = row.recorded_id,
@@ -3645,7 +3662,8 @@ async fn run_epgstation_encode(
                     }
                 }
 
-                // Clear selections and continue to the recording list.
+                // Clear submission state and selections.
+                state.submitting = None;
                 selected.clear();
             }
             SelectorResult::Cancelled => {
