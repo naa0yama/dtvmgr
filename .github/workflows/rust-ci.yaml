@@ -51,7 +51,7 @@ jobs:
           sccache_disable_annotations: true
 
       - name: Cache mise tools
-        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: ~/.local/share/mise
           key: mise-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml') }}
@@ -59,7 +59,7 @@ jobs:
             mise-v1-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Cache dprint plugins
-        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: ~/.cache/dprint
           key: dprint-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('dprint.jsonc') }}
@@ -99,7 +99,7 @@ jobs:
           persist-credentials: false
 
       - name: Cache cross-compilation packages
-        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: ~/cross-apt-cache
           key: cross-apt-${{ runner.arch }}-${{ matrix.target }}-v1
@@ -154,7 +154,7 @@ jobs:
           sccache: ${{ needs.fmt.outputs.sccache }}
 
       - name: Cache mise tools
-        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: ~/.local/share/mise
           key: mise-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml') }}
