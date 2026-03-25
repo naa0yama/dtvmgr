@@ -1,9 +1,13 @@
 # Changelog
 
 ## [v0.3.4](https://github.com/naa0yama/dtvmgr/compare/v0.3.3...v0.3.4) - 2026-03-25
+
 ### Development Environment 🔧
+
 - ci(miri): add per-crate dynamic matrix and source-only trigger by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/155
+
 ### Other Changes
+
 - refactor(pipeline): centralise stream specifier normalisation by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/156
 
 ## [v0.3.3](https://github.com/naa0yama/dtvmgr/compare/v0.3.2...v0.3.3) - 2026-03-24
