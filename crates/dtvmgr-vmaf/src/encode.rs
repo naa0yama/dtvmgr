@@ -43,7 +43,7 @@ pub(crate) fn encode_sample(
     output: &Path,
 ) -> Result<EncodeResult> {
     let quality_str = format!("{quality}");
-    let quality_flag = encoder.quality_param.flag();
+    let quality_flag_with_spec = format!("{}:v", encoder.quality_param.flag());
 
     let mut args: Vec<&OsStr> = Vec::with_capacity(32);
 
@@ -66,7 +66,7 @@ pub(crate) fn encode_sample(
     args.push(OsStr::new("-c:v"));
     args.push(OsStr::new(&encoder.codec));
 
-    args.push(OsStr::new(quality_flag));
+    args.push(OsStr::new(&quality_flag_with_spec));
     args.push(OsStr::new(&quality_str));
 
     args.push(OsStr::new("-vf"));
@@ -74,16 +74,21 @@ pub(crate) fn encode_sample(
 
     let preset_val;
     if let Some(ref preset) = encoder.preset {
-        args.push(OsStr::new("-preset"));
+        args.push(OsStr::new("-preset:v"));
         preset_val = preset.clone();
         args.push(OsStr::new(&preset_val));
     }
 
     let pix_fmt_val;
     if let Some(ref pix_fmt) = encoder.pix_fmt {
-        args.push(OsStr::new("-pix_fmt"));
+        args.push(OsStr::new("-pix_fmt:v"));
         pix_fmt_val = pix_fmt.clone();
         args.push(OsStr::new(&pix_fmt_val));
+    }
+
+    // BT.709 color metadata for HD broadcast sources.
+    for arg in crate::types::BT709_COLOR_ARGS_V {
+        args.push(OsStr::new(arg));
     }
 
     for arg in &encoder.default_ffmpeg_args {

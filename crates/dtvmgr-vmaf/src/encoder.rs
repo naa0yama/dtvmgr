@@ -11,11 +11,11 @@ use crate::types::{EncoderConfig, QualityParam};
 /// Default QSV ffmpeg args (look-ahead + external bitrate control).
 fn qsv_default_args() -> Vec<String> {
     vec![
-        String::from("-look_ahead"),
+        String::from("-look_ahead:v"),
         String::from("1"),
-        String::from("-extbrc"),
+        String::from("-extbrc:v"),
         String::from("1"),
-        String::from("-look_ahead_depth"),
+        String::from("-look_ahead_depth:v"),
         String::from("40"),
     ]
 }
