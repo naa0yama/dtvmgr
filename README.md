@@ -234,6 +234,18 @@ cargo build -p dtvmgr-cli --no-default-features
 
 ### デバッグログ
 
+`RUST_LOG` 未設定時のデフォルトは `warn,dtvmgr=info` です(3rd-party crate は warn、dtvmgr crate は info)。
+
+`dtvmgr=<level>` を指定すると、全 workspace crate に一括でログレベルを設定できます
+(EnvFilter のプレフィックスマッチにより `dtvmgr_api`, `dtvmgr_cli`, `dtvmgr_db` 等すべてにマッチします)。
+
 ```bash
+# dtvmgr 全体を trace (3rd-party は warn に抑制)
+RUST_LOG=warn,dtvmgr=trace cargo run -- help
+
+# 特定の crate だけレベルを変更
+RUST_LOG=warn,dtvmgr=trace,dtvmgr_api=info cargo run -- help
+
+# 3rd-party crate も含めて確認したい場合
 RUST_LOG=trace RUST_BACKTRACE=1 cargo run -- help
 ```
