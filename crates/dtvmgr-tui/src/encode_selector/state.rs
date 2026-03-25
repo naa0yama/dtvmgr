@@ -124,6 +124,8 @@ pub enum SelectorResult {
     PagePrev,
     /// User requested a refresh of file existence checks.
     Refresh,
+    /// Background sync completed; reload page from DB.
+    SyncComplete,
 }
 
 /// A row representing a recorded program for display.
@@ -326,12 +328,14 @@ pub struct EncodeSelectorState {
 impl EncodeSelectorState {
     /// Creates a new state.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         rows: Vec<EncodeRow>,
         presets: Vec<String>,
         parent_dirs: Vec<String>,
         default_preset: Option<&str>,
         default_directory: Option<&str>,
+        default_parent_dir: Option<&str>,
         page: PageInfo,
         recorded_dirs: Vec<(String, String)>,
     ) -> Self {
@@ -348,8 +352,11 @@ impl EncodeSelectorState {
             .get(preset_index)
             .cloned()
             .unwrap_or_else(|| String::from("H.264"));
+        let parent_dir_index = default_parent_dir
+            .and_then(|p| parent_dirs.iter().position(|n| n == p))
+            .unwrap_or(0);
         let parent_dir = parent_dirs
-            .first()
+            .get(parent_dir_index)
             .cloned()
             .unwrap_or_else(|| String::from("recorded"));
 
@@ -372,7 +379,7 @@ impl EncodeSelectorState {
                 preset_index,
                 is_save_same_directory: false,
                 parent_dir,
-                parent_dir_index: 0,
+                parent_dir_index,
                 directory: default_directory.map(String::from).unwrap_or_default(),
                 remove_original: false,
             },
@@ -717,7 +724,7 @@ mod tests {
             size: 10,
             total: 100,
         };
-        EncodeSelectorState::new(rows, vec![], vec![], None, None, page, vec![])
+        EncodeSelectorState::new(rows, vec![], vec![], None, None, None, page, vec![])
     }
 
     #[test]
@@ -762,6 +769,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
             PageInfo {
                 offset: 0,
                 size: 10,
@@ -778,6 +786,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             None,
             PageInfo {
@@ -798,6 +807,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
             PageInfo {
                 offset: 0,
                 size: 10,
@@ -814,6 +824,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             None,
             PageInfo {
@@ -834,6 +845,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
             PageInfo {
                 offset: 0,
                 size: 10,
@@ -850,6 +862,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
             PageInfo {
                 offset: 10,
                 size: 10,
@@ -863,6 +876,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             None,
             PageInfo {
@@ -881,6 +895,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             None,
             PageInfo {
@@ -951,7 +966,7 @@ mod tests {
             size: 10,
             total: 3,
         };
-        EncodeSelectorState::new(rows, vec![], vec![], None, None, page, vec![])
+        EncodeSelectorState::new(rows, vec![], vec![], None, None, None, page, vec![])
     }
 
     #[test]
@@ -1139,6 +1154,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
             page,
             vec![],
         )
@@ -1183,7 +1199,8 @@ mod tests {
             size: 10,
             total: 0,
         };
-        let mut state = EncodeSelectorState::new(vec![], vec![], vec![], None, None, page, vec![]);
+        let mut state =
+            EncodeSelectorState::new(vec![], vec![], vec![], None, None, None, page, vec![]);
 
         // Act: should not panic
         state.next_preset();
@@ -1197,7 +1214,8 @@ mod tests {
             size: 10,
             total: 0,
         };
-        let mut state = EncodeSelectorState::new(vec![], vec![], vec![], None, None, page, vec![]);
+        let mut state =
+            EncodeSelectorState::new(vec![], vec![], vec![], None, None, None, page, vec![]);
 
         state.prev_preset();
         assert_eq!(state.settings.mode, "H.264"); // default
@@ -1219,6 +1237,7 @@ mod tests {
                 String::from("archive"),
                 String::from("tmp"),
             ],
+            None,
             None,
             None,
             page,
@@ -1265,7 +1284,8 @@ mod tests {
             size: 10,
             total: 0,
         };
-        let mut state = EncodeSelectorState::new(vec![], vec![], vec![], None, None, page, vec![]);
+        let mut state =
+            EncodeSelectorState::new(vec![], vec![], vec![], None, None, None, page, vec![]);
 
         state.next_parent_dir();
         assert_eq!(state.settings.parent_dir, "recorded"); // default
@@ -1278,7 +1298,8 @@ mod tests {
             size: 10,
             total: 0,
         };
-        let mut state = EncodeSelectorState::new(vec![], vec![], vec![], None, None, page, vec![]);
+        let mut state =
+            EncodeSelectorState::new(vec![], vec![], vec![], None, None, None, page, vec![]);
 
         state.prev_parent_dir();
         assert_eq!(state.settings.parent_dir, "recorded"); // default
@@ -1303,6 +1324,7 @@ mod tests {
             vec![],
             Some("H.265"),
             None,
+            None,
             page,
             vec![],
         );
@@ -1317,8 +1339,16 @@ mod tests {
             size: 10,
             total: 0,
         };
-        let state =
-            EncodeSelectorState::new(vec![], vec![], vec![], None, Some("subdir"), page, vec![]);
+        let state = EncodeSelectorState::new(
+            vec![],
+            vec![],
+            vec![],
+            None,
+            Some("subdir"),
+            None,
+            page,
+            vec![],
+        );
         assert_eq!(state.settings.directory, "subdir");
     }
 
@@ -1450,6 +1480,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
             page,
             vec![
                 (String::from("recorded"), String::from("/data/recorded")),
@@ -1475,6 +1506,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             None,
             page,
@@ -1590,6 +1622,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
             page,
             vec![
                 (String::from("recorded"), String::from("/data/recorded")),
@@ -1642,6 +1675,7 @@ mod tests {
             vec![String::from("H.264"), String::from("H.265")],
             vec![],
             Some("AV1"), // not in the list
+            None,
             None,
             page,
             vec![],

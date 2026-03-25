@@ -402,6 +402,7 @@ mod tests {
             vec![String::from("recorded"), String::from("archive")],
             None,
             None,
+            None,
             page,
             vec![],
         )

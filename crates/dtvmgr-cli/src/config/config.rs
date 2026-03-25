@@ -40,6 +40,9 @@ pub struct EpgStationConfig {
     /// Default encode preset name (e.g. "H.264").
     #[serde(default)]
     pub default_preset: Option<String>,
+    /// Default parent directory name for encoded files.
+    #[serde(default)]
+    pub default_parent_dir: Option<String>,
     /// Storage directory names hidden in the TUI widget.
     #[serde(default)]
     pub hidden_storage_dirs: Vec<String>,
@@ -336,6 +339,12 @@ impl AppConfig {
         out.push_str(&Self::format_optional_str(
             "default_preset",
             self.epgstation.default_preset.as_deref(),
+            "",
+        ));
+        out.push_str("# Default parent directory for encoded files.\n");
+        out.push_str(&Self::format_optional_str(
+            "default_parent_dir",
+            self.epgstation.default_parent_dir.as_deref(),
             "",
         ));
         out.push_str(&Self::format_list(

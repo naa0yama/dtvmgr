@@ -750,6 +750,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
             PageInfo {
                 offset: 0,
                 size: 10,
@@ -768,6 +769,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             None,
             PageInfo {
@@ -795,6 +797,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             None,
             PageInfo {
@@ -834,6 +837,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             None,
             PageInfo {
@@ -963,6 +967,7 @@ mod tests {
             rows,
             vec![String::from("H.264"), String::from("H.265")],
             vec![String::from("recorded")],
+            None,
             None,
             None,
             page,
@@ -1097,6 +1102,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
             PageInfo {
                 offset: 0,
                 size: 10,
@@ -1148,6 +1154,7 @@ mod tests {
             vec![],
             None,
             None,
+            None,
             PageInfo {
                 offset: 0,
                 size: 10,
@@ -1185,6 +1192,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             None,
             PageInfo {

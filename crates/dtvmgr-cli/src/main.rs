@@ -3505,6 +3505,7 @@ async fn run_epgstation_encode(
             parent_dirs.clone(),
             config.epgstation.default_preset.as_deref(),
             config.epgstation.default_directory.as_deref(),
+            config.epgstation.default_parent_dir.as_deref(),
             page,
             recorded_dirs.clone(),
         );
@@ -3665,6 +3666,15 @@ async fn run_epgstation_encode(
                 // Clear submission state and selections.
                 state.submitting = None;
                 selected.clear();
+
+                // Persist parent_dir as default for next cycle.
+                let new_parent_dir = Some(state.settings.parent_dir.clone());
+                if new_parent_dir != config.epgstation.default_parent_dir {
+                    config.epgstation.default_parent_dir = new_parent_dir;
+                    if let Err(e) = config.save(&config_path) {
+                        tracing::warn!(error = %e, "failed to save default_parent_dir");
+                    }
+                }
             }
             SelectorResult::Cancelled => {
                 dtvmgr_tui::encode_selector::teardown_terminal()
@@ -5969,6 +5979,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             None,
             PageInfo {
