@@ -1,6 +1,10 @@
 {
 	"title": "dtvmgr Storage",
 	"description": "Storage usage per recording/encode directory (dtvmgr.storage.* OTel metrics).",
+	"defaultDatetimeDuration": {
+		"type": "relative",
+		"relativeTimePeriod": "3h"
+	},
 	"tabs": [
 		{
 			"tabId": "1",
@@ -11,15 +15,15 @@
 					"type": "area-stacked",
 					"title": "Directory Used (GB)",
 					"description": "Per-directory used bytes (file size sum), stacked by path.",
-					"layout": { "x": 0, "y": 0, "w": 96, "h": 8, "i": 1 },
+					"layout": { "x": 0, "y": 0, "w": 96, "h": 23, "i": 1 },
 					"config": { "show_legends": true, "unit": "bytes" },
 					"queryType": "sql",
 					"queries": [
 						{
 							"customQuery": true,
-							"query": "SELECT histogram(_timestamp, '5 minutes') AS ts, AVG(gauge) AS used_bytes, path FROM \"dtvmgr_storage_used_bytes_gauge\" WHERE path IS NOT NULL GROUP BY ts, path ORDER BY ts",
+							"query": "SELECT histogram(_timestamp, '5 minutes') AS ts, AVG(value) AS used_bytes, path FROM \"dtvmgr_storage_used_bytes\" WHERE path IS NOT NULL GROUP BY ts, path ORDER BY ts",
 							"fields": {
-								"stream": "dtvmgr_storage_used_bytes_gauge",
+								"stream": "dtvmgr_storage_used_bytes",
 								"stream_type": "metrics",
 								"x": [{ "label": "ts", "alias": "ts", "column": "ts" }],
 								"y": [
@@ -29,7 +33,10 @@
 										"column": "used_bytes"
 									}
 								],
-								"z": [{ "label": "path", "alias": "path", "column": "path" }],
+								"z": [],
+								"breakdown": [
+									{ "label": "path", "alias": "path", "column": "path" }
+								],
 								"filter": {
 									"type": "list",
 									"values": [],
@@ -46,15 +53,15 @@
 					"type": "line",
 					"title": "Directory Usage %",
 					"description": "Per-directory usage ratio against total filesystem capacity.",
-					"layout": { "x": 96, "y": 0, "w": 96, "h": 8, "i": 2 },
+					"layout": { "x": 96, "y": 0, "w": 96, "h": 23, "i": 2 },
 					"config": { "show_legends": true, "unit": "percent-1" },
 					"queryType": "sql",
 					"queries": [
 						{
 							"customQuery": true,
-							"query": "SELECT histogram(_timestamp, '5 minutes') AS ts, AVG(gauge) AS usage_ratio, path FROM \"dtvmgr_storage_usage_ratio_gauge\" WHERE path IS NOT NULL GROUP BY ts, path ORDER BY ts",
+							"query": "SELECT histogram(_timestamp, '5 minutes') AS ts, AVG(value) AS usage_ratio, path FROM \"dtvmgr_storage_usage_ratio\" WHERE path IS NOT NULL GROUP BY ts, path ORDER BY ts",
 							"fields": {
-								"stream": "dtvmgr_storage_usage_ratio_gauge",
+								"stream": "dtvmgr_storage_usage_ratio",
 								"stream_type": "metrics",
 								"x": [{ "label": "ts", "alias": "ts", "column": "ts" }],
 								"y": [
@@ -64,7 +71,10 @@
 										"column": "usage_ratio"
 									}
 								],
-								"z": [{ "label": "path", "alias": "path", "column": "path" }],
+								"z": [],
+								"breakdown": [
+									{ "label": "path", "alias": "path", "column": "path" }
+								],
 								"filter": {
 									"type": "list",
 									"values": [],
@@ -81,15 +91,15 @@
 					"type": "line",
 					"title": "Filesystem Free (GB)",
 					"description": "Filesystem-level free space. Same value for dirs on the same mount.",
-					"layout": { "x": 0, "y": 8, "w": 96, "h": 8, "i": 3 },
+					"layout": { "x": 0, "y": 23, "w": 96, "h": 23, "i": 3 },
 					"config": { "show_legends": true, "unit": "bytes" },
 					"queryType": "sql",
 					"queries": [
 						{
 							"customQuery": true,
-							"query": "SELECT histogram(_timestamp, '5 minutes') AS ts, AVG(gauge) AS free_bytes, path FROM \"dtvmgr_storage_free_bytes_gauge\" WHERE path IS NOT NULL GROUP BY ts, path ORDER BY ts",
+							"query": "SELECT histogram(_timestamp, '5 minutes') AS ts, AVG(value) AS free_bytes, path FROM \"dtvmgr_storage_free_bytes\" WHERE path IS NOT NULL GROUP BY ts, path ORDER BY ts",
 							"fields": {
-								"stream": "dtvmgr_storage_free_bytes_gauge",
+								"stream": "dtvmgr_storage_free_bytes",
 								"stream_type": "metrics",
 								"x": [{ "label": "ts", "alias": "ts", "column": "ts" }],
 								"y": [
@@ -99,7 +109,10 @@
 										"column": "free_bytes"
 									}
 								],
-								"z": [{ "label": "path", "alias": "path", "column": "path" }],
+								"z": [],
+								"breakdown": [
+									{ "label": "path", "alias": "path", "column": "path" }
+								],
 								"filter": {
 									"type": "list",
 									"values": [],
@@ -116,15 +129,15 @@
 					"type": "line",
 					"title": "File Count",
 					"description": "Number of regular files per directory.",
-					"layout": { "x": 96, "y": 8, "w": 96, "h": 8, "i": 4 },
+					"layout": { "x": 96, "y": 23, "w": 96, "h": 23, "i": 4 },
 					"config": { "show_legends": true },
 					"queryType": "sql",
 					"queries": [
 						{
 							"customQuery": true,
-							"query": "SELECT histogram(_timestamp, '5 minutes') AS ts, AVG(gauge) AS file_count, path FROM \"dtvmgr_storage_file_count_gauge\" WHERE path IS NOT NULL GROUP BY ts, path ORDER BY ts",
+							"query": "SELECT histogram(_timestamp, '5 minutes') AS ts, AVG(value) AS file_count, path FROM \"dtvmgr_storage_file_count\" WHERE path IS NOT NULL GROUP BY ts, path ORDER BY ts",
 							"fields": {
-								"stream": "dtvmgr_storage_file_count_gauge",
+								"stream": "dtvmgr_storage_file_count",
 								"stream_type": "metrics",
 								"x": [{ "label": "ts", "alias": "ts", "column": "ts" }],
 								"y": [
@@ -134,7 +147,10 @@
 										"column": "file_count"
 									}
 								],
-								"z": [{ "label": "path", "alias": "path", "column": "path" }],
+								"z": [],
+								"breakdown": [
+									{ "label": "path", "alias": "path", "column": "path" }
+								],
 								"filter": {
 									"type": "list",
 									"values": [],

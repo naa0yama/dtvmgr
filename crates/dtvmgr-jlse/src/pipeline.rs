@@ -482,14 +482,11 @@ fn run_pipeline_inner(
             // Replace quality param with the actual value found by quality search.
             if let (Some(param), Some(val)) = (&summary.quality_param, summary.quality_value) {
                 let param_name = param.trim_start_matches('-');
-                let new_token = format!("{param_name}:{val}");
-                // Replace existing "param:*" token, or append if not present.
-                let replaced = replace_quality_token(&s, param_name, &new_token);
-                s = if replaced.is_empty() {
-                    new_token
-                } else {
-                    replaced
-                };
+                s = replace_quality_token(&s, param_name, val);
+            }
+            // Insert VMAF score right after the quality token.
+            if let Some(vmaf_score) = summary.vmaf {
+                s = insert_token_after_quality(&s, &format!("vmaf {vmaf_score:.3}"));
             }
             s
         });
@@ -1338,21 +1335,29 @@ fn vmaf_progress_to_stage(evt: &dtvmgr_vmaf::SearchProgress, last_vmaf: f64) -> 
 
 /// Replace a quality token in an `ENCODER_SETTINGS` summary string.
 ///
-/// Searches for a ` / `‐delimited token whose prefix matches `param_name`
-/// (e.g. `"crf"` matches `"crf:23"`), replaces it with `new_token`, and
-/// returns the modified string.  Returns the original string unchanged when
-/// no matching token is found.
-fn replace_quality_token(summary: &str, param_name: &str, new_token: &str) -> String {
+/// Searches for a ` / `‐delimited token whose bare flag matches `param_name`
+/// (e.g. `"crf"` matches `"crf:v 23"`), replaces the value portion with
+/// `new_value`, and returns the modified string.
+///
+/// Each token has the format `flag value` where flag may include a stream
+/// specifier (e.g. `crf:v`).  The flag portion is preserved so that stream
+/// specifiers are not lost.
+///
+/// Returns the original string unchanged when no matching token is found.
+fn replace_quality_token(summary: &str, param_name: &str, new_value: f32) -> String {
     let parts: Vec<&str> = summary.split(" / ").collect();
     let mut replaced = false;
-    let updated: Vec<&str> = parts
+    let updated: Vec<String> = parts
         .iter()
         .map(|p| {
-            if p.starts_with(param_name) && p[param_name.len()..].starts_with(':') {
+            // Token format: "flag value" — split on first space.
+            let flag_part = p.split(' ').next().unwrap_or(p);
+            let bare = flag_part.split(':').next().unwrap_or(flag_part);
+            if bare == param_name {
                 replaced = true;
-                new_token
+                format!("{flag_part} {new_value}")
             } else {
-                p
+                (*p).to_owned()
             }
         })
         .collect();
@@ -1361,6 +1366,37 @@ fn replace_quality_token(summary: &str, param_name: &str, new_token: &str) -> St
     } else {
         summary.to_owned()
     }
+}
+
+/// Insert `token` right after the first quality-param token in a ` / `‐delimited
+/// settings string.  Each token has the format `flag value` (e.g. `crf:v 23`).
+/// The bare flag name (before any `:` specifier) is checked against known
+/// quality flags (`crf`, `qp`, `global_quality`, `q`, `cq`).
+///
+/// If no quality token is found the token is inserted after the first element.
+fn insert_token_after_quality(settings: &str, token: &str) -> String {
+    let parts: Vec<&str> = settings.split(" / ").collect();
+    let mut result: Vec<&str> = Vec::with_capacity(parts.len().saturating_add(1));
+    let mut inserted = false;
+    for part in &parts {
+        result.push(part);
+        if !inserted {
+            // Extract the flag portion (before the space):
+            //   "crf:v 23"          → flag_part "crf:v" → bare "crf"
+            //   "global_quality 27"  → flag_part "global_quality" → bare "global_quality"
+            let flag_part = part.split(' ').next().unwrap_or(part);
+            let bare = flag_part.split(':').next().unwrap_or(flag_part);
+            let flag = format!("-{bare}");
+            if dtvmgr_vmaf::QualityParam::ALL_FLAGS.contains(&flag.as_str()) {
+                result.push(token);
+                inserted = true;
+            }
+        }
+    }
+    if !inserted && !result.is_empty() {
+        result.insert(1.min(result.len()), token);
+    }
+    result.join(" / ")
 }
 
 /// Inject the quality search result into the output encode args.

@@ -381,69 +381,62 @@ impl JlseEncode {
     /// Build a human-readable encoding parameter summary for the
     /// `ENCODER_SETTINGS` metadata tag.
     ///
-    /// Format: `"<vcodec> / <quality_param>:<value> / preset:<preset> /
-    /// profile:<profile> / <acodec> <bitrate> <sample_rate>Hz <channels>ch"`
+    /// Takes `to_output_args()` (which already carries `:v`/`:a` specifiers),
+    /// drops `-map`, metadata, BT.709 color, and muxing flags, then formats
+    /// each remaining flag-value pair as `key:value` joined by ` / `.
     ///
     /// Returns an empty string when no video or audio settings are configured.
     #[must_use]
     pub fn encoder_settings_summary(&self) -> String {
-        let mut parts: Vec<String> = Vec::new();
-
-        if let Some(ref video) = self.video {
-            if let Some(ref codec) = video.codec {
-                parts.push(codec.clone());
-            }
-            if let Some(val) = extract_quality_value(&video.extra) {
-                parts.push(val);
-            }
-            if let Some(ref preset) = video.preset {
-                parts.push(format!("preset:{preset}"));
-            }
-            if let Some(ref profile) = video.profile {
-                parts.push(format!("profile:{profile}"));
-            }
-        }
-
-        if let Some(ref audio) = self.audio {
-            let mut audio_parts: Vec<String> = Vec::new();
-            if let Some(ref codec) = audio.codec {
-                audio_parts.push(codec.clone());
-            }
-            if let Some(ref bitrate) = audio.bitrate {
-                audio_parts.push(bitrate.clone());
-            }
-            if let Some(rate) = audio.sample_rate {
-                audio_parts.push(format!("{rate}Hz"));
-            }
-            if let Some(ch) = audio.channels {
-                audio_parts.push(format!("{ch}ch"));
-            }
-            if !audio_parts.is_empty() {
-                parts.push(audio_parts.join(" "));
-            }
-        }
-
-        parts.join(" / ")
+        let args = self.to_output_args();
+        args_to_settings_summary(&args)
     }
 }
 
-/// Extract a quality parameter and its value from the extra args list.
+/// Convert output args to a ` / `-delimited summary string.
 ///
-/// Scans for known quality flags (`-crf`, `-qp`, `-global_quality`, `-q`, `-cq`)
-/// including variants with stream specifiers (e.g. `-crf:v`), and returns a
-/// `"param:value"` string if found.
-fn extract_quality_value(extra: &[String]) -> Option<String> {
-    for (i, arg) in extra.iter().enumerate() {
+/// Each flag-value pair is rendered as `flag value` (matching ffmpeg arg style,
+/// minus the leading `-`), joined by ` / `.
+///
+/// Skips `-map`, metadata, BT.709 color, and muxing-related flags that are
+/// not relevant for reproducing the encode.
+fn args_to_settings_summary(args: &[String]) -> String {
+    const SKIP: &[&str] = &[
+        "-map",
+        "-map_metadata",
+        "-metadata",
+        "-attach",
+        "-color_range",
+        "-color_primaries",
+        "-color_trc",
+        "-colorspace",
+        "-max_muxing_queue_size",
+        "-movflags",
+    ];
+
+    let mut parts = Vec::new();
+    let mut iter = args.iter().peekable();
+    while let Some(arg) = iter.next() {
+        // Match the bare flag (before any `:v`/`:a` specifier).
         let bare = arg.split(':').next().unwrap_or(arg);
-        #[allow(clippy::arithmetic_side_effects)]
-        if dtvmgr_vmaf::QualityParam::ALL_FLAGS.contains(&bare)
-            && let Some(val) = extra.get(i + 1)
-        {
-            let param_name = bare.trim_start_matches('-');
-            return Some(format!("{param_name}:{val}"));
+        if SKIP.contains(&bare) {
+            // Skip flag + its value.
+            let _ = iter.next();
+            continue;
+        }
+        if arg.starts_with('-') {
+            let key = arg.trim_start_matches('-');
+            if iter.peek().is_some_and(|v| !v.starts_with('-')) {
+                if let Some(val) = iter.next() {
+                    parts.push(format!("{key} {val}"));
+                }
+            } else {
+                // Standalone flag (e.g. -an) — emit without value.
+                parts.push(key.to_owned());
+            }
         }
     }
-    None
+    parts.join(" / ")
 }
 
 // ── VPP filter helpers ──────────────────────────────────────
@@ -1629,7 +1622,7 @@ mod tests {
         );
     }
 
-    // ── encoder_settings_summary ────────────────────────────
+    // ── encoder_settings_summary / args_to_settings_summary ─
 
     #[test]
     fn test_encoder_settings_summary_default() {
@@ -1639,11 +1632,22 @@ mod tests {
         // Act
         let s = encode.encoder_settings_summary();
 
-        // Assert
-        assert_eq!(
-            s,
-            "libx264 / crf:23 / preset:medium / profile:main / aac 256k 48000Hz 2ch"
-        );
+        // Assert — all output args except map, color, muxing flags
+        assert!(s.contains("c:v libx264"));
+        assert!(s.contains("crf:v 23"));
+        assert!(s.contains("preset:v medium"));
+        assert!(s.contains("profile:v main"));
+        assert!(s.contains("pix_fmt:v yuv420p"));
+        assert!(s.contains("aspect:v 16:9"));
+        assert!(s.contains("c:a aac"));
+        assert!(s.contains("ar:a 48000"));
+        assert!(s.contains("b:a 256k"));
+        assert!(s.contains("ac:a 2"));
+        // Skipped flags should NOT appear
+        assert!(!s.contains("map"));
+        assert!(!s.contains("color_range"));
+        assert!(!s.contains("max_muxing_queue_size"));
+        assert!(!s.contains("movflags"));
     }
 
     #[test]
@@ -1670,8 +1674,10 @@ mod tests {
                 codec: Some("libx265".to_owned()),
                 preset: Some("slow".to_owned()),
                 profile: Some("main10".to_owned()),
+                pix_fmt: None,
+                aspect: None,
+                filter: None,
                 extra: vec!["-max_muxing_queue_size".to_owned(), "4000".to_owned()],
-                ..EncodeVideo::default()
             }),
             audio: None,
             ..JlseEncode::default()
@@ -1680,62 +1686,36 @@ mod tests {
         // Act
         let s = encode.encoder_settings_summary();
 
-        // Assert — no quality token between codec and preset
-        assert_eq!(s, "libx265 / preset:slow / profile:main10");
-    }
-
-    // ── extract_quality_value ───────────────────────────────
-
-    #[test]
-    fn test_extract_quality_value_crf() {
-        // Arrange
-        let extra = vec!["-crf".to_owned(), "23".to_owned()];
-
-        // Act / Assert
-        assert_eq!(extract_quality_value(&extra), Some("crf:23".to_owned()));
+        // Assert — codec, preset, profile present; muxing flag skipped
+        assert!(s.contains("c:v libx265"));
+        assert!(s.contains("preset:v slow"));
+        assert!(s.contains("profile:v main10"));
+        assert!(!s.contains("max_muxing_queue_size"));
     }
 
     #[test]
-    fn test_extract_quality_value_with_specifier() {
-        // Arrange — stream specifier already added by add_stream_specifiers
-        let extra = vec!["-crf:v".to_owned(), "18".to_owned()];
-
-        // Act / Assert
-        assert_eq!(extract_quality_value(&extra), Some("crf:18".to_owned()));
-    }
-
-    #[test]
-    fn test_extract_quality_value_global_quality() {
-        // Arrange
-        let extra = vec!["-global_quality".to_owned(), "27".to_owned()];
-
-        // Act / Assert
-        assert_eq!(
-            extract_quality_value(&extra),
-            Some("global_quality:27".to_owned())
-        );
-    }
-
-    #[test]
-    fn test_extract_quality_value_none() {
-        // Arrange — no quality param
-        let extra = vec![
-            "-max_muxing_queue_size".to_owned(),
-            "4000".to_owned(),
-            "-movflags".to_owned(),
-            "faststart".to_owned(),
+    fn test_args_to_settings_summary_skips_metadata() {
+        // Arrange — raw args with metadata and map
+        let args = vec![
+            "-map".to_owned(),
+            "0:v".to_owned(),
+            "-c:v".to_owned(),
+            "av1_qsv".to_owned(),
+            "-metadata".to_owned(),
+            "TITLE=test".to_owned(),
+            "-crf:v".to_owned(),
+            "23".to_owned(),
         ];
 
-        // Act / Assert
-        assert_eq!(extract_quality_value(&extra), None);
+        // Act
+        let s = args_to_settings_summary(&args);
+
+        // Assert
+        assert_eq!(s, "c:v av1_qsv / crf:v 23");
     }
 
     #[test]
-    fn test_extract_quality_value_empty() {
-        // Arrange
-        let extra: Vec<String> = Vec::new();
-
-        // Act / Assert
-        assert_eq!(extract_quality_value(&extra), None);
+    fn test_args_to_settings_summary_empty() {
+        assert_eq!(args_to_settings_summary(&[]), "");
     }
 }
