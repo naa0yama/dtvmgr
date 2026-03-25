@@ -2940,7 +2940,7 @@ async fn fetch_recorded_page(
     keyword: Option<&str>,
 ) -> Result<RecordedResponse> {
     let params = RecordedParams {
-        has_original_file: Some(true),
+        has_original_file: None,
         limit: Some(limit),
         offset: Some(api_offset),
         is_reverse: None,
