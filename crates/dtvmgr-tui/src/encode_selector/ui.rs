@@ -6,7 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Table};
 
 use super::state::{EncodeSelectorState, InputMode, SettingsField, WizardStep};
 use crate::fmt::with_commas;
@@ -541,13 +541,14 @@ fn draw_settings(frame: &mut Frame, state: &EncodeSelectorState) {
 
 /// Step 3: Confirmation screen.
 #[allow(clippy::indexing_slicing)]
-fn draw_confirm(frame: &mut Frame, state: &EncodeSelectorState) {
+pub fn draw_confirm(frame: &mut Frame, state: &EncodeSelectorState) {
+    let footer_height = if state.submitting.is_some() { 4 } else { 3 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // header
-            Constraint::Min(10),   // summary
-            Constraint::Length(3), // footer
+            Constraint::Length(3),             // header
+            Constraint::Min(10),               // summary
+            Constraint::Length(footer_height), // footer or progress
         ])
         .split(frame.area());
 
@@ -624,18 +625,57 @@ fn draw_confirm(frame: &mut Frame, state: &EncodeSelectorState) {
         Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" Summary "));
     frame.render_widget(summary, chunks[1]);
 
-    // Footer
-    let footer_text = Line::from(vec![
-        Span::styled("Enter", Style::default().fg(Color::Cyan)),
-        Span::raw(":submit "),
-        Span::styled("Esc", Style::default().fg(Color::Cyan)),
-        Span::raw(":back "),
-        Span::styled("q", Style::default().fg(Color::Cyan)),
-        Span::raw(":quit"),
-    ]);
-    let footer =
-        Paragraph::new(footer_text).block(Block::default().borders(Borders::ALL).title(" Keys "));
-    frame.render_widget(footer, chunks[2]);
+    draw_confirm_footer(frame, chunks[2], state);
+}
+
+/// Draws the confirm screen footer: submission progress gauge or key hints.
+#[allow(clippy::indexing_slicing)]
+fn draw_confirm_footer(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    state: &EncodeSelectorState,
+) {
+    if let Some(ref progress) = state.submitting {
+        let footer_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // gauge
+                Constraint::Length(1), // current item label
+            ])
+            .split(area);
+
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::as_conversions,
+            clippy::arithmetic_side_effects
+        )]
+        let pct = if progress.total == 0 {
+            0
+        } else {
+            ((progress.current * 100) / progress.total).min(100) as u16
+        };
+        let gauge = Gauge::default()
+            .block(Block::default().borders(Borders::ALL).title(" Submitting "))
+            .gauge_style(Style::default().fg(Color::Green).bg(Color::DarkGray))
+            .percent(pct)
+            .label(format!("{}/{}", progress.current, progress.total));
+        frame.render_widget(gauge, footer_chunks[0]);
+
+        let item_label = Line::from(format!("  ID: {} {}", progress.recorded_id, progress.name));
+        frame.render_widget(Paragraph::new(item_label), footer_chunks[1]);
+    } else {
+        let footer_text = Line::from(vec![
+            Span::styled("Enter", Style::default().fg(Color::Cyan)),
+            Span::raw(":submit "),
+            Span::styled("Esc", Style::default().fg(Color::Cyan)),
+            Span::raw(":back "),
+            Span::styled("q", Style::default().fg(Color::Cyan)),
+            Span::raw(":quit"),
+        ]);
+        let footer = Paragraph::new(footer_text)
+            .block(Block::default().borders(Borders::ALL).title(" Keys "));
+        frame.render_widget(footer, area);
+    }
 }
 
 /// Draws a loading screen with file check progress.
@@ -1180,5 +1220,40 @@ mod tests {
     fn fmt_size_large_value() {
         // 1 TB = 1_099_511_627_776 bytes = 1,048,576 MB
         assert_eq!(fmt_size(1_099_511_627_776), "1,048,576 MB");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn draw_confirm_submitting_shows_gauge() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        use super::super::state::SubmissionProgress;
+
+        // Arrange
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = make_draw_state(3);
+        state.selected.insert(0);
+        state.selected.insert(1);
+        state.step = WizardStep::Confirm;
+        state.submitting = Some(SubmissionProgress {
+            current: 2,
+            total: 3,
+            recorded_id: 1,
+            name: String::from("Program 1"),
+        });
+
+        // Act
+        terminal.draw(|frame| draw_confirm(frame, &state)).unwrap();
+
+        // Assert
+        let buf = terminal.backend().buffer();
+        let content = buffer_to_string(buf);
+        assert!(content.contains("Submitting"));
+        assert!(content.contains("2/3"));
+        assert!(content.contains("ID: 1 Program 1"));
+        // Key hints should NOT be shown while submitting.
+        assert!(!content.contains(":submit"));
     }
 }
