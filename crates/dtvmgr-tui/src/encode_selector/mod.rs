@@ -125,6 +125,7 @@ async fn run_event_loop(
                     }
                     SyncMessage::Complete => {
                         state.sync_progress = None;
+                        return Ok(SelectorResult::SyncComplete);
                     }
                 }
             }

@@ -3324,7 +3324,7 @@ async fn run_epgstation_encode(
 
     // Sync receiver for background updates
     let (sync_tx, sync_rx) = std::sync::mpsc::channel();
-    let sync_rx_opt = if has_cache {
+    let mut sync_rx_opt = if has_cache {
         // Has cache: spawn background re-sync
         let bg_client = client.clone();
         let bg_data_dir = data_dir.clone();
@@ -3567,6 +3567,9 @@ async fn run_epgstation_encode(
                 is_force = true;
                 continue;
             }
+            if r == SelectorResult::SyncComplete {
+                break r;
+            }
             break r;
         };
 
@@ -3689,6 +3692,10 @@ async fn run_epgstation_encode(
             }
             // Refresh is fully handled by the inner loop above.
             SelectorResult::Refresh => {}
+            SelectorResult::SyncComplete => {
+                // Sync done — drop the receiver so we don't re-trigger.
+                sync_rx_opt = None;
+            }
         }
     }
 }
