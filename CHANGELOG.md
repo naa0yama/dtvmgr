@@ -1,7 +1,9 @@
 # Changelog
 
 ## [v0.3.6](https://github.com/naa0yama/dtvmgr/compare/v0.3.5...v0.3.6) - 2026-03-25
+
 ### Documentation 🗒️
+
 - refactor(cli): suppress noisy 3rd-party logs in default EnvFilter by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/160
 
 ## [v0.3.5](https://github.com/naa0yama/dtvmgr/compare/v0.3.4...v0.3.5) - 2026-03-25
