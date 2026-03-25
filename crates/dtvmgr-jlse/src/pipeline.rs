@@ -87,6 +87,45 @@ struct PipelineSummary {
     post_audio_secs: Option<f64>,
 }
 
+/// Configuration snapshot stored in the quality search cache.
+///
+/// Used to detect stale cache entries when settings change between runs.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+struct QualitySearchCacheConfig {
+    codec: String,
+    quality_param: String,
+    min_quality: f32,
+    max_quality: f32,
+    quality_increment: f32,
+    quality_hint: f32,
+    preset: Option<String>,
+    pix_fmt: Option<String>,
+    video_filter: String,
+    reference_filter: Option<String>,
+    target_vmaf: f32,
+    max_encoded_percent: f32,
+    min_vmaf_tolerance: f32,
+    thorough: bool,
+    sample_duration_secs: f64,
+    skip_secs: f64,
+    sample_every_secs: f64,
+    min_samples: u32,
+    max_samples: u32,
+    vmaf_subsample: u32,
+    extra_encode_args: Vec<String>,
+    extra_input_args: Vec<String>,
+    /// Raw content of `obs_cut.avs` — encodes both segment positions and
+    /// filter state, so any CM detection change invalidates the cache.
+    avs_content: String,
+}
+
+/// On-disk format for `obs_quality_search.json`.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct QualitySearchCache {
+    config: QualitySearchCacheConfig,
+    result: dtvmgr_vmaf::SearchResult,
+}
+
 // ── Pipeline ─────────────────────────────────────────────────
 
 /// Run the full CM detection pipeline.
@@ -381,6 +420,8 @@ fn run_pipeline_inner(
         &input,
         &paths.output_avs_cut,
         &bins.ffmpeg,
+        &paths.quality_search_cache,
+        ctx.force,
         total_stages,
         on_progress,
     )? {
@@ -432,8 +473,26 @@ fn run_pipeline_inner(
         }
 
         // Step 12a: EIT extraction for MKV metadata
-        let mkv_metadata = extract_eit_for_mkv(&bins.tstables, &input, &paths.save_dir)
+        let mut mkv_metadata = extract_eit_for_mkv(&bins.tstables, &input, &paths.save_dir)
             .context("EIT extraction is required for MKV encoding")?;
+
+        // Set ENCODER_SETTINGS from encode config, reflecting any quality search override.
+        mkv_metadata.encoder_settings = ctx.config.encode.as_ref().map(|e| {
+            let mut s = e.encoder_settings_summary();
+            // Replace quality param with the actual value found by quality search.
+            if let (Some(param), Some(val)) = (&summary.quality_param, summary.quality_value) {
+                let param_name = param.trim_start_matches('-');
+                let new_token = format!("{param_name}:{val}");
+                // Replace existing "param:*" token, or append if not present.
+                let replaced = replace_quality_token(&s, param_name, &new_token);
+                s = if replaced.is_empty() {
+                    new_token
+                } else {
+                    replaced
+                };
+            }
+            s
+        });
 
         let avs_file = select_avs_file(&paths, ctx.target);
 
@@ -604,6 +663,7 @@ fn extract_eit_for_mkv(tstables_bin: &Path, input: &Path, save_dir: &Path) -> Re
             .and_then(dtvmgr_tsduck::eit::decode_genre)
             .map(ToOwned::to_owned),
         date_recorded: Some(program.start_time.clone()),
+        encoder_settings: None,
         eit_xml_path: Some(eit_xml_path),
     })
 }
@@ -789,6 +849,97 @@ fn validate_encode_config(encode: Option<&JlseEncode>) -> Result<()> {
     Ok(())
 }
 
+// ── VMAF quality search cache helpers ────────────────────────
+
+/// Build a [`QualitySearchCacheConfig`] from a resolved [`SearchConfig`] and
+/// the raw `obs_cut.avs` content.
+fn build_cache_config(
+    config: &dtvmgr_vmaf::SearchConfig,
+    avs_content: &str,
+) -> QualitySearchCacheConfig {
+    QualitySearchCacheConfig {
+        codec: config.encoder.codec.clone(),
+        quality_param: String::from(config.encoder.quality_param.flag()),
+        min_quality: config.encoder.min_quality,
+        max_quality: config.encoder.max_quality,
+        quality_increment: config.encoder.quality_increment,
+        quality_hint: config.encoder.quality_hint,
+        preset: config.encoder.preset.clone(),
+        pix_fmt: config.encoder.pix_fmt.clone(),
+        video_filter: config.video_filter.clone(),
+        reference_filter: config.reference_filter.clone(),
+        target_vmaf: config.target_vmaf,
+        max_encoded_percent: config.max_encoded_percent,
+        min_vmaf_tolerance: config.min_vmaf_tolerance,
+        thorough: config.thorough,
+        sample_duration_secs: config.sample.duration_secs,
+        skip_secs: config.sample.skip_secs,
+        sample_every_secs: config.sample.sample_every_secs,
+        min_samples: config.sample.min_samples,
+        max_samples: config.sample.max_samples,
+        vmaf_subsample: config.sample.vmaf_subsample,
+        extra_encode_args: config.extra_encode_args.clone(),
+        extra_input_args: config.extra_input_args.clone(),
+        avs_content: avs_content.to_owned(),
+    }
+}
+
+/// Try to load a cached quality search result from `path`.
+///
+/// Returns `None` if the file does not exist, is malformed, or the stored
+/// config does not match `expected` (stale entry).
+fn load_quality_cache(
+    path: &Path,
+    expected: &QualitySearchCacheConfig,
+) -> Option<dtvmgr_vmaf::SearchResult> {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return None;
+    };
+    let cache: QualitySearchCache = match serde_json::from_str(&content) {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(path = %path.display(), error = %e, "failed to parse quality cache");
+            return None;
+        }
+    };
+    if &cache.config != expected {
+        info!(path = %path.display(), "quality search cache invalidated (config changed)");
+        return None;
+    }
+    info!(
+        quality_param = %cache.result.quality_param,
+        quality_value = cache.result.quality_value,
+        vmaf = cache.result.mean_vmaf,
+        "loaded quality search result from cache"
+    );
+    Some(cache.result)
+}
+
+/// Write a quality search result to `path` as JSON.
+///
+/// Failures are logged as warnings and silently swallowed — a missing cache
+/// file is not a fatal error.
+fn save_quality_cache(
+    path: &Path,
+    config: &QualitySearchCacheConfig,
+    result: &dtvmgr_vmaf::SearchResult,
+) {
+    let cache = QualitySearchCache {
+        config: config.clone(),
+        result: result.clone(),
+    };
+    match serde_json::to_string_pretty(&cache) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(path, json) {
+                warn!(path = %path.display(), error = %e, "failed to write quality cache");
+            } else {
+                debug!(path = %path.display(), "quality search result cached");
+            }
+        }
+        Err(e) => warn!(error = %e, "failed to serialize quality cache"),
+    }
+}
+
 // ── VMAF quality search integration ──────────────────────────
 
 /// Run VMAF-based quality search if enabled in the encode config.
@@ -803,6 +954,8 @@ fn run_quality_search(
     input: &Path,
     obs_cut_avs: &Path,
     ffmpeg_bin: &Path,
+    cache_path: &Path,
+    force: bool,
     total_stages: u8,
     on_progress: Option<&dyn Fn(ProgressEvent)>,
 ) -> Result<Option<dtvmgr_vmaf::SearchResult>> {
@@ -880,6 +1033,16 @@ fn run_quality_search(
         temp_dir: None,
     };
 
+    // Build cache config snapshot and try to load from cache
+    let cache_cfg = build_cache_config(&search_config, &avs_content);
+    if !force && let Some(cached) = load_quality_cache(cache_path, &cache_cfg) {
+        info!(
+            path = %cache_path.display(),
+            "skipping quality search (use --force to re-run)"
+        );
+        return Ok(Some(cached));
+    }
+
     // Emit stage start and bridge VMAF progress → pipeline progress
     let quality_stage: u8 = 4; // quality search is always stage 4
     if let Some(cb) = on_progress {
@@ -916,6 +1079,9 @@ fn run_quality_search(
         iterations = result.iterations,
         "quality search completed"
     );
+
+    // Cache the result for future runs
+    save_quality_cache(cache_path, &cache_cfg, &result);
 
     Ok(Some(result))
 }
@@ -1167,6 +1333,33 @@ fn vmaf_progress_to_stage(evt: &dtvmgr_vmaf::SearchProgress, last_vmaf: f64) -> 
                 format!("iter {iteration}: q={quality:.3} vmaf={vmaf:.3} size={size_percent:.1}%"),
             )
         }
+    }
+}
+
+/// Replace a quality token in an `ENCODER_SETTINGS` summary string.
+///
+/// Searches for a ` / `‐delimited token whose prefix matches `param_name`
+/// (e.g. `"crf"` matches `"crf:23"`), replaces it with `new_token`, and
+/// returns the modified string.  Returns the original string unchanged when
+/// no matching token is found.
+fn replace_quality_token(summary: &str, param_name: &str, new_token: &str) -> String {
+    let parts: Vec<&str> = summary.split(" / ").collect();
+    let mut replaced = false;
+    let updated: Vec<&str> = parts
+        .iter()
+        .map(|p| {
+            if p.starts_with(param_name) && p[param_name.len()..].starts_with(':') {
+                replaced = true;
+                new_token
+            } else {
+                p
+            }
+        })
+        .collect();
+    if replaced {
+        updated.join(" / ")
+    } else {
+        summary.to_owned()
     }
 }
 
@@ -3245,5 +3438,129 @@ echo "1440.0"
     #[test]
     fn test_round3_tiny_value() {
         assert!((round3(0.001) - 0.001).abs() < 1e-12);
+    }
+
+    // ── quality search cache helpers ─────────────────────────
+
+    /// Build a minimal `SearchConfig` for cache-related unit tests.
+    fn make_search_config() -> dtvmgr_vmaf::SearchConfig {
+        dtvmgr_vmaf::SearchConfig {
+            ffmpeg_bin: PathBuf::from("ffmpeg"),
+            input_file: PathBuf::from("input.ts"),
+            content_segments: vec![dtvmgr_vmaf::ContentSegment {
+                start_secs: 0.0,
+                end_secs: 1440.0,
+            }],
+            encoder: dtvmgr_vmaf::EncoderConfig::libx264(),
+            video_filter: String::from("yadif,scale=1280:720"),
+            target_vmaf: 93.0,
+            max_encoded_percent: 80.0,
+            min_vmaf_tolerance: 1.0,
+            thorough: true,
+            sample: dtvmgr_vmaf::SampleConfig::default(),
+            extra_encode_args: Vec::new(),
+            extra_input_args: Vec::new(),
+            reference_filter: None,
+            temp_dir: None,
+        }
+    }
+
+    #[test]
+    fn build_cache_config_reflects_search_config() {
+        // Arrange
+        let sc = make_search_config();
+        let avs = "Trim(0,1000)++Trim(2000,5000)";
+
+        // Act
+        let cc = build_cache_config(&sc, avs);
+
+        // Assert — spot-check key fields
+        assert_eq!(cc.codec, "libx264");
+        assert_eq!(cc.video_filter, "yadif,scale=1280:720");
+        assert!((cc.target_vmaf - 93.0).abs() < f32::EPSILON);
+        assert!((cc.max_encoded_percent - 80.0).abs() < f32::EPSILON);
+        assert_eq!(cc.avs_content, avs);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn quality_cache_roundtrip() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let cache_path = dir.path().join("obs_quality_search.json");
+        let sc = make_search_config();
+        let cc = build_cache_config(&sc, "Trim(0,1000)");
+        let result = dtvmgr_vmaf::SearchResult {
+            quality_value: 25.0,
+            quality_param: String::from("-crf"),
+            mean_vmaf: 94.5,
+            predicted_size_percent: 65.0,
+            iterations: 7,
+        };
+
+        // Act — save then load
+        save_quality_cache(&cache_path, &cc, &result);
+        let loaded = load_quality_cache(&cache_path, &cc).unwrap();
+
+        // Assert
+        assert!((loaded.quality_value - 25.0).abs() < f32::EPSILON);
+        assert_eq!(loaded.quality_param, "-crf");
+        assert!((loaded.mean_vmaf - 94.5).abs() < f32::EPSILON);
+        assert!((loaded.predicted_size_percent - 65.0).abs() < f64::EPSILON);
+        assert_eq!(loaded.iterations, 7);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn quality_cache_invalidated_on_config_change() {
+        // Arrange
+        let dir = tempfile::tempdir().unwrap();
+        let cache_path = dir.path().join("obs_quality_search.json");
+        let sc = make_search_config();
+        let cc = build_cache_config(&sc, "Trim(0,1000)");
+        let result = dtvmgr_vmaf::SearchResult {
+            quality_value: 25.0,
+            quality_param: String::from("-crf"),
+            mean_vmaf: 94.5,
+            predicted_size_percent: 65.0,
+            iterations: 7,
+        };
+        save_quality_cache(&cache_path, &cc, &result);
+
+        // Different avs_content → different cache config
+        let cc_changed = build_cache_config(&sc, "Trim(0,2000)");
+
+        // Act
+        let loaded = load_quality_cache(&cache_path, &cc_changed);
+
+        // Assert — stale cache is discarded
+        assert!(loaded.is_none());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn quality_cache_missing_file_returns_none() {
+        // Arrange — path that does not exist
+        let path = Path::new("/tmp/nonexistent_obs_quality_search.json");
+
+        // Act / Assert
+        let sc = make_search_config();
+        let cc = build_cache_config(&sc, "Trim(0,1000)");
+        assert!(load_quality_cache(path, &cc).is_none());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn quality_cache_malformed_json_returns_none() {
+        // Arrange — write garbage JSON to cache file
+        let dir = tempfile::tempdir().unwrap();
+        let cache_path = dir.path().join("obs_quality_search.json");
+        std::fs::write(&cache_path, b"not valid json {{{").unwrap();
+
+        let sc = make_search_config();
+        let cc = build_cache_config(&sc, "Trim(0,1000)");
+
+        // Act / Assert — parse failure returns None gracefully
+        assert!(load_quality_cache(&cache_path, &cc).is_none());
     }
 }

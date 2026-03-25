@@ -207,7 +207,7 @@ impl fmt::Display for QualityParam {
 }
 
 /// Result of a quality parameter search.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SearchResult {
     /// Optimal quality value found.
     pub quality_value: f32,

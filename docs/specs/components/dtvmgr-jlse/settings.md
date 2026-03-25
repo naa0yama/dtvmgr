@@ -34,7 +34,7 @@
 
 ### `OutputPaths` 構造体定義
 
-`init(filename)` 関数で初期化される出力パス。全 15 ファイルを管理する:
+`init(filename)` 関数で初期化される出力パス。全 16 ファイルを管理する:
 
 ```rust
 /// All output file paths for a single processing run.
@@ -67,6 +67,8 @@ pub struct OutputPaths {
     pub file_txt_cpt_cut: PathBuf,
     /// Chapter TVTPlay format: `obs_chapter_tvtplay.chapter`
     pub file_txt_cpt_tvt: PathBuf,
+    /// VMAF quality search result cache: `obs_quality_search.json`
+    pub quality_search_cache: PathBuf,
 }
 ```
 
