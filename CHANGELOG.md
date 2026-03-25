@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.3.5](https://github.com/naa0yama/dtvmgr/compare/v0.3.4...v0.3.5) - 2026-03-25
+### Documentation 🗒️
+- feat(pipeline): cache VMAF quality search result by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/158
+
 ## [v0.3.4](https://github.com/naa0yama/dtvmgr/compare/v0.3.3...v0.3.4) - 2026-03-25
 
 ### Development Environment 🔧
