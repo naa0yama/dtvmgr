@@ -79,6 +79,8 @@ pub struct MkvMetadata {
     pub genre: Option<String>,
     /// `DATE_RECORDED` tag (event `start_time`).
     pub date_recorded: Option<String>,
+    /// `ENCODER_SETTINGS` tag — encoding parameter summary.
+    pub encoder_settings: Option<String>,
     /// Path to EIT XML file for attachment.
     pub eit_xml_path: Option<PathBuf>,
 }
@@ -162,6 +164,11 @@ pub fn build_args(
         &mut args,
         "DATE_RECORDED",
         metadata.date_recorded.as_deref(),
+    );
+    push_metadata_tag(
+        &mut args,
+        "ENCODER_SETTINGS",
+        metadata.encoder_settings.as_deref(),
     );
 
     // EIT XML attachment
@@ -370,6 +377,73 @@ impl JlseEncode {
             |e| (e.to_input_args(), e.to_output_args()),
         )
     }
+
+    /// Build a human-readable encoding parameter summary for the
+    /// `ENCODER_SETTINGS` metadata tag.
+    ///
+    /// Format: `"<vcodec> / <quality_param>:<value> / preset:<preset> /
+    /// profile:<profile> / <acodec> <bitrate> <sample_rate>Hz <channels>ch"`
+    ///
+    /// Returns an empty string when no video or audio settings are configured.
+    #[must_use]
+    pub fn encoder_settings_summary(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+
+        if let Some(ref video) = self.video {
+            if let Some(ref codec) = video.codec {
+                parts.push(codec.clone());
+            }
+            if let Some(val) = extract_quality_value(&video.extra) {
+                parts.push(val);
+            }
+            if let Some(ref preset) = video.preset {
+                parts.push(format!("preset:{preset}"));
+            }
+            if let Some(ref profile) = video.profile {
+                parts.push(format!("profile:{profile}"));
+            }
+        }
+
+        if let Some(ref audio) = self.audio {
+            let mut audio_parts: Vec<String> = Vec::new();
+            if let Some(ref codec) = audio.codec {
+                audio_parts.push(codec.clone());
+            }
+            if let Some(ref bitrate) = audio.bitrate {
+                audio_parts.push(bitrate.clone());
+            }
+            if let Some(rate) = audio.sample_rate {
+                audio_parts.push(format!("{rate}Hz"));
+            }
+            if let Some(ch) = audio.channels {
+                audio_parts.push(format!("{ch}ch"));
+            }
+            if !audio_parts.is_empty() {
+                parts.push(audio_parts.join(" "));
+            }
+        }
+
+        parts.join(" / ")
+    }
+}
+
+/// Extract a quality parameter and its value from the extra args list.
+///
+/// Scans for known quality flags (`-crf`, `-qp`, `-global_quality`, `-q`, `-cq`)
+/// including variants with stream specifiers (e.g. `-crf:v`), and returns a
+/// `"param:value"` string if found.
+fn extract_quality_value(extra: &[String]) -> Option<String> {
+    for (i, arg) in extra.iter().enumerate() {
+        let bare = arg.split(':').next().unwrap_or(arg);
+        #[allow(clippy::arithmetic_side_effects)]
+        if dtvmgr_vmaf::QualityParam::ALL_FLAGS.contains(&bare)
+            && let Some(val) = extra.get(i + 1)
+        {
+            let param_name = bare.trim_start_matches('-');
+            return Some(format!("{param_name}:{val}"));
+        }
+    }
+    None
 }
 
 // ── VPP filter helpers ──────────────────────────────────────
@@ -631,6 +705,7 @@ mod tests {
             description: Some("A test description".to_owned()),
             genre: Some("Animation/Special Effects".to_owned()),
             date_recorded: Some("2024-12-31 15:00:00".to_owned()),
+            encoder_settings: None,
             eit_xml_path: None,
         };
 
@@ -1521,5 +1596,146 @@ mod tests {
                 "{opt} should NOT become {with_specifier}"
             );
         }
+    }
+
+    // ── build_args with ENCODER_SETTINGS ───────────────────
+
+    #[test]
+    fn test_build_args_encoder_settings() {
+        // Arrange
+        let metadata = MkvMetadata {
+            encoder_settings: Some("libx264 / crf:23 / preset:medium".to_owned()),
+            ..MkvMetadata::default()
+        };
+
+        // Act
+        let args = build_args(
+            Path::new("/out/in.avs"),
+            Path::new("/out.mkv"),
+            None,
+            &metadata,
+            "",
+            "",
+        );
+
+        // Assert
+        let pos = args
+            .iter()
+            .position(|a| a == "-metadata")
+            .expect("-metadata flag should be present");
+        assert_eq!(
+            args[pos + 1],
+            "ENCODER_SETTINGS=libx264 / crf:23 / preset:medium"
+        );
+    }
+
+    // ── encoder_settings_summary ────────────────────────────
+
+    #[test]
+    fn test_encoder_settings_summary_default() {
+        // Arrange
+        let encode = JlseEncode::default();
+
+        // Act
+        let s = encode.encoder_settings_summary();
+
+        // Assert
+        assert_eq!(
+            s,
+            "libx264 / crf:23 / preset:medium / profile:main / aac 256k 48000Hz 2ch"
+        );
+    }
+
+    #[test]
+    fn test_encoder_settings_summary_minimal() {
+        // Arrange
+        let encode = JlseEncode {
+            video: None,
+            audio: None,
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let s = encode.encoder_settings_summary();
+
+        // Assert
+        assert_eq!(s, "");
+    }
+
+    #[test]
+    fn test_encoder_settings_summary_no_quality_param() {
+        // Arrange — video with no quality flag in extra
+        let encode = JlseEncode {
+            video: Some(EncodeVideo {
+                codec: Some("libx265".to_owned()),
+                preset: Some("slow".to_owned()),
+                profile: Some("main10".to_owned()),
+                extra: vec!["-max_muxing_queue_size".to_owned(), "4000".to_owned()],
+                ..EncodeVideo::default()
+            }),
+            audio: None,
+            ..JlseEncode::default()
+        };
+
+        // Act
+        let s = encode.encoder_settings_summary();
+
+        // Assert — no quality token between codec and preset
+        assert_eq!(s, "libx265 / preset:slow / profile:main10");
+    }
+
+    // ── extract_quality_value ───────────────────────────────
+
+    #[test]
+    fn test_extract_quality_value_crf() {
+        // Arrange
+        let extra = vec!["-crf".to_owned(), "23".to_owned()];
+
+        // Act / Assert
+        assert_eq!(extract_quality_value(&extra), Some("crf:23".to_owned()));
+    }
+
+    #[test]
+    fn test_extract_quality_value_with_specifier() {
+        // Arrange — stream specifier already added by add_stream_specifiers
+        let extra = vec!["-crf:v".to_owned(), "18".to_owned()];
+
+        // Act / Assert
+        assert_eq!(extract_quality_value(&extra), Some("crf:18".to_owned()));
+    }
+
+    #[test]
+    fn test_extract_quality_value_global_quality() {
+        // Arrange
+        let extra = vec!["-global_quality".to_owned(), "27".to_owned()];
+
+        // Act / Assert
+        assert_eq!(
+            extract_quality_value(&extra),
+            Some("global_quality:27".to_owned())
+        );
+    }
+
+    #[test]
+    fn test_extract_quality_value_none() {
+        // Arrange — no quality param
+        let extra = vec![
+            "-max_muxing_queue_size".to_owned(),
+            "4000".to_owned(),
+            "-movflags".to_owned(),
+            "faststart".to_owned(),
+        ];
+
+        // Act / Assert
+        assert_eq!(extract_quality_value(&extra), None);
+    }
+
+    #[test]
+    fn test_extract_quality_value_empty() {
+        // Arrange
+        let extra: Vec<String> = Vec::new();
+
+        // Act / Assert
+        assert_eq!(extract_quality_value(&extra), None);
     }
 }

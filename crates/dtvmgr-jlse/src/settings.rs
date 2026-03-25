@@ -40,6 +40,8 @@ pub struct OutputPaths {
     pub file_txt_cpt_cut: PathBuf,
     /// Chapter `TVTPlay` format: `obs_chapter_tvtplay.chapter`
     pub file_txt_cpt_tvt: PathBuf,
+    /// VMAF quality search result cache: `obs_quality_search.json`
+    pub quality_search_cache: PathBuf,
 }
 
 /// Paths to external binary commands.
@@ -98,6 +100,7 @@ pub fn init_output_paths(result_dir: &Path, filename: &str) -> Result<OutputPath
         file_txt_cpt_org: save_dir.join("obs_chapter_org.chapter.txt"),
         file_txt_cpt_cut: save_dir.join("obs_chapter_cut.chapter.txt"),
         file_txt_cpt_tvt: save_dir.join("obs_chapter_tvtplay.chapter"),
+        quality_search_cache: save_dir.join("obs_quality_search.json"),
         save_dir,
     })
 }
