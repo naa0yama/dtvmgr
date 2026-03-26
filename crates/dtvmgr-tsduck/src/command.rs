@@ -55,8 +55,8 @@ impl StderrCollector {
 /// Emit an `OTel` exception span event and return a formatted error.
 ///
 /// Records `exception.type`, `exception.message`, `exception.stacktrace`,
-/// `process.exit_code`, `process.command`, and `process.stderr` as span
-/// event attributes following the `OTel` semantic conventions.
+/// `process.exit.code`, `process.executable.path`, and `process.stderr` as
+/// span event attributes following the `OTel` semantic conventions.
 pub fn emit_command_error(program: &Path, exit_code: Option<i32>, stderr: &str) -> anyhow::Error {
     let backtrace = std::backtrace::Backtrace::capture();
     let code_str = exit_code.map_or_else(|| "signal".to_owned(), |c| c.to_string());
@@ -67,8 +67,8 @@ pub fn emit_command_error(program: &Path, exit_code: Option<i32>, stderr: &str) 
         { exception.type_ = "CommandError",
           exception.message = %message,
           exception.stacktrace = %backtrace,
-          process.exit_code = exit_code.unwrap_or(-1),
-          process.command = %program.display(),
+          process.exit.code = exit_code.unwrap_or(-1),
+          process.executable.path = %program.display(),
           process.stderr = stderr },
         "command failed"
     );

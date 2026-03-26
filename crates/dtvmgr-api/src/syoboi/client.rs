@@ -224,10 +224,10 @@ impl SyoboiClient {
     #[instrument(skip_all, fields(
         otel.kind = "Client",
         http.request.method = "GET",
-        http.command = command,
+        syoboi.command = command,
         url.full = tracing::field::Empty,
         http.response.status_code = tracing::field::Empty,
-        http.response.body = tracing::field::Empty,
+        http.response.body.size = tracing::field::Empty,
     ), err(level = "warn"))]
     async fn request_with_retry<T, F>(
         &self,
