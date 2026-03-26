@@ -97,8 +97,22 @@ pub fn run_logged(program: &Path, args: &[&OsStr], on_log: &dyn Fn(&str)) -> Res
         for line in reader.lines() {
             let line =
                 line.with_context(|| format!("failed to read stderr from {}", program.display()))?;
-            collector.push(&line);
-            on_log(&line);
+            // Split on \r to handle carriage-return progress lines
+            // (e.g. "Creating lwi index file 0%\rCreating lwi index file 1%\r...").
+            // Feed each sub-line to the callback for TUI progress display,
+            // but only accumulate the last segment in the collector to avoid
+            // storing hundreds of overwritten progress lines.
+            let mut last_sub = None;
+            for sub in line.split('\r') {
+                let sub = sub.trim();
+                if !sub.is_empty() {
+                    on_log(sub);
+                    last_sub = Some(sub);
+                }
+            }
+            if let Some(sub) = last_sub {
+                collector.push(sub);
+            }
         }
     }
 

@@ -127,10 +127,22 @@ pub fn stream_exists(binary: &Path, input_file: &Path, stream: &str) -> Result<b
 ///
 /// Returns an error if `ffprobe` fails or the JSON output cannot be parsed.
 #[instrument(skip_all, err(level = "error"))]
-pub fn audio_streams(binary: &Path, input_file: &Path) -> Result<Vec<AudioStreamInfo>> {
-    let args = vec![
-        "-v".to_owned(),
-        "error".to_owned(),
+pub fn audio_streams(
+    binary: &Path,
+    input_file: &Path,
+    analyzeduration: Option<&str>,
+    probesize: Option<&str>,
+) -> Result<Vec<AudioStreamInfo>> {
+    let mut args = vec!["-v".to_owned(), "error".to_owned()];
+    if let Some(dur) = analyzeduration {
+        args.push("-analyzeduration".to_owned());
+        args.push(dur.to_owned());
+    }
+    if let Some(size) = probesize {
+        args.push("-probesize".to_owned());
+        args.push(size.to_owned());
+    }
+    args.extend([
         "-select_streams".to_owned(),
         "a".to_owned(),
         "-show_entries".to_owned(),
@@ -138,7 +150,7 @@ pub fn audio_streams(binary: &Path, input_file: &Path) -> Result<Vec<AudioStream
         "-of".to_owned(),
         "json".to_owned(),
         input_file.display().to_string(),
-    ];
+    ]);
     let os_args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
     let stdout = super::run_capture(binary, &os_args)
         .with_context(|| "failed to get audio streams via ffprobe")?;
@@ -179,6 +191,7 @@ fn parse_audio_streams(json_str: &str) -> Result<Vec<AudioStreamInfo>> {
     Ok(output
         .streams
         .into_iter()
+        .filter(|s| s.channels > 0)
         .map(|s| AudioStreamInfo {
             index: s.index,
             channels: s.channels,
@@ -724,6 +737,24 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_audio_streams_filters_zero_channels() {
+        // Arrange: second stream has channels=0 (ffprobe couldn't detect)
+        let json = r#"{
+            "streams": [
+                {"index": 1, "codec_name": "aac", "channels": 2, "channel_layout": "stereo"},
+                {"index": 2, "codec_name": "aac", "channels": 0, "channel_layout": ""}
+            ]
+        }"#;
+
+        // Act
+        let streams = parse_audio_streams(json).unwrap();
+
+        // Assert — zero-channel stream is filtered out
+        assert_eq!(streams.len(), 1);
+        assert_eq!(streams[0].index, 1);
+    }
+
+    #[test]
     #[cfg_attr(miri, ignore)]
     fn test_audio_streams_via_script() {
         // Arrange: script outputs ffprobe JSON
@@ -738,7 +769,7 @@ mod tests {
         std::fs::write(&input, "dummy").unwrap();
 
         // Act
-        let streams = audio_streams(&script, &input).unwrap();
+        let streams = audio_streams(&script, &input, Some("30M"), Some("100M")).unwrap();
 
         // Assert
         assert_eq!(streams.len(), 2);

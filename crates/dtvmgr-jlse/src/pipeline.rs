@@ -236,19 +236,24 @@ fn run_pipeline_inner(
     write_obs_param(&paths.obs_param_path, detected_channel.as_ref(), &det_param)?;
 
     // Step 5: detect audio streams and generate AVS
-    let audio_infos = command::ffprobe::audio_streams(&bins.ffprobe, &input)?;
-    let stream_indices: Vec<u32> = if audio_infos.is_empty() {
-        vec![avs::STREAM_INDEX_NORMAL]
-    } else {
-        audio_infos.iter().map(|a| a.index).collect()
-    };
+    let input_cfg = ctx.config.encode.as_ref().and_then(|e| e.input.as_ref());
+    let audio_infos = command::ffprobe::audio_streams(
+        &bins.ffprobe,
+        &input,
+        input_cfg.and_then(|i| i.analyzeduration.as_deref()),
+        input_cfg.and_then(|i| i.probesize.as_deref()),
+    )?;
+    let stream_index = audio_infos
+        .first()
+        .map_or(avs::STREAM_INDEX_NORMAL, |a| a.index);
     info!(
         audio.stream_count = audio_infos.len(),
+        audio.primary_index = stream_index,
         audio.channels = ?audio_infos.iter().map(|a| a.channels).collect::<Vec<_>>(),
         audio.layouts = ?audio_infos.iter().map(|a| a.channel_layout.as_str()).collect::<Vec<_>>(),
         "detected audio streams"
     );
-    avs::create(&paths.input_avs, &input, &stream_indices)?;
+    avs::create(&paths.input_avs, &input, stream_index)?;
     debug!(path = %paths.input_avs.display(), "created input AVS");
 
     // Determine total stage count (quality search adds one stage)
@@ -2486,12 +2491,14 @@ printf '  600 900 10 -1 1 0.00:Ncut\n' >> "$OSCP"
     /// on its arguments.
     fn write_mock_ffprobe(dir: &Path) -> PathBuf {
         let script = r#"#!/bin/bash
+# Check all args to determine query type.
+all_args="$*"
+if [[ "$all_args" == *"-of json"* ]]; then
+    echo '{"streams":[{"index":1,"codec_name":"aac","channels":2,"channel_layout":"stereo"}]}'
+    exit 0
+fi
 for arg in "$@"; do
-    if [[ "$arg" == "json" ]]; then
-        echo '{"streams":[{"index":1,"codec_name":"aac","channels":2,"channel_layout":"stereo"}]}'
-        exit 0
-    fi
-    if [[ "$arg" == *"duration"* ]]; then
+    if [[ "$arg" == *"=duration"* ]]; then
         echo "1440.0"
         exit 0
     fi

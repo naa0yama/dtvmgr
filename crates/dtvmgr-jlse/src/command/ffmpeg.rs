@@ -38,11 +38,14 @@ const SPECIFIER_EXEMPT: &[&str] = &[
     // Filter shorthands (-vf = -filter:v, -af = -filter:a)
     "-vf",
     "-af",
-    // Stream disable (no value follows)
+    // Stream disable / global flags (no value follows)
     "-an",
     "-vn",
     "-sn",
     "-dn",
+    "-ignore_unknown",
+    // Bitstream filters (already carry stream specifier)
+    "-bsf",
     // Container-level
     "-attach",
     "-metadata",
@@ -271,6 +274,9 @@ impl JlseEncode {
     pub fn to_output_args(&self) -> Vec<String> {
         let mut args = Vec::new();
 
+        // Ignore unknown stream types (data/subtitle streams in TS).
+        args.push("-ignore_unknown".to_owned());
+
         // Video
         if let Some(ref video) = self.video {
             let has_settings = video.codec.is_some()
@@ -358,6 +364,12 @@ impl JlseEncode {
                     aargs.push(channels.to_string());
                 }
                 aargs.extend_from_slice(&audio.extra);
+                // Convert ADTS to ASC for MKV/MP4 container compatibility
+                // (only needed for AAC codec from MPEG-TS sources).
+                if audio.codec.as_deref() == Some("aac") {
+                    aargs.push("-bsf:a".to_owned());
+                    aargs.push("aac_adtstoasc".to_owned());
+                }
                 add_stream_specifiers(&mut aargs, "a");
                 args.extend(aargs);
             }
@@ -406,12 +418,14 @@ fn args_to_settings_summary(args: &[String]) -> String {
         "-map_metadata",
         "-metadata",
         "-attach",
+        "-ignore_unknown",
         "-color_range",
         "-color_primaries",
         "-color_trc",
         "-colorspace",
         "-max_muxing_queue_size",
         "-movflags",
+        "-bsf",
     ];
 
     let mut parts = Vec::new();
@@ -911,8 +925,8 @@ mod tests {
         // Act
         let args = encode.to_output_args();
 
-        // Assert — no output args
-        assert!(args.is_empty());
+        // Assert — only the global -ignore_unknown flag
+        assert_eq!(args, vec!["-ignore_unknown"]);
     }
 
     #[test]
@@ -1213,7 +1227,7 @@ mod tests {
 
         // Assert — no -map 0:v because has_settings is false
         assert!(!args.contains(&"-map".to_owned()));
-        assert!(args.is_empty());
+        assert_eq!(args, vec!["-ignore_unknown"]);
     }
 
     #[test]
@@ -1236,7 +1250,7 @@ mod tests {
 
         // Assert — no -map 0:a because has_settings is false
         assert!(!args.contains(&"-map".to_owned()));
-        assert!(args.is_empty());
+        assert_eq!(args, vec!["-ignore_unknown"]);
     }
 
     // ── hwupload auto-prepend ──────────────────────────────
