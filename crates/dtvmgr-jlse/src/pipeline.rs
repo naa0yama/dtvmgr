@@ -235,8 +235,20 @@ fn run_pipeline_inner(
     // Step 4: Write obs_param.txt
     write_obs_param(&paths.obs_param_path, detected_channel.as_ref(), &det_param)?;
 
-    // Step 5: AVS generation
-    avs::create(&paths.input_avs, &input, avs::STREAM_INDEX_NORMAL)?;
+    // Step 5: detect audio streams and generate AVS
+    let audio_infos = command::ffprobe::audio_streams(&bins.ffprobe, &input)?;
+    let stream_indices: Vec<u32> = if audio_infos.is_empty() {
+        vec![avs::STREAM_INDEX_NORMAL]
+    } else {
+        audio_infos.iter().map(|a| a.index).collect()
+    };
+    info!(
+        audio.stream_count = audio_infos.len(),
+        audio.channels = ?audio_infos.iter().map(|a| a.channels).collect::<Vec<_>>(),
+        audio.layouts = ?audio_infos.iter().map(|a| a.channel_layout.as_str()).collect::<Vec<_>>(),
+        "detected audio streams"
+    );
+    avs::create(&paths.input_avs, &input, &stream_indices)?;
     debug!(path = %paths.input_avs.display(), "created input AVS");
 
     // Determine total stage count (quality search adds one stage)
@@ -2475,6 +2487,10 @@ printf '  600 900 10 -1 1 0.00:Ncut\n' >> "$OSCP"
     fn write_mock_ffprobe(dir: &Path) -> PathBuf {
         let script = r#"#!/bin/bash
 for arg in "$@"; do
+    if [[ "$arg" == "json" ]]; then
+        echo '{"streams":[{"index":1,"codec_name":"aac","channels":2,"channel_layout":"stereo"}]}'
+        exit 0
+    fi
     if [[ "$arg" == *"duration"* ]]; then
         echo "1440.0"
         exit 0

@@ -1,12 +1,27 @@
 //! Wrapper for the `ffprobe` external command.
 //!
-//! Extracts frame rate, sample rate, and stream durations from media files.
+//! Extracts frame rate, sample rate, stream durations, and audio stream
+//! metadata from media files.
 
 use std::ffi::OsStr;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
+use serde::Deserialize;
 use tracing::instrument;
+
+/// Audio stream metadata from ffprobe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AudioStreamInfo {
+    /// Stream index in the container (0-based, across all stream types).
+    pub index: u32,
+    /// Number of channels (1=mono, 2=stereo, 6=5.1).
+    pub channels: u32,
+    /// Channel layout string (e.g. `"stereo"`, `"mono"`, `"5.1"`).
+    pub channel_layout: String,
+    /// Codec name (e.g. `"aac"`).
+    pub codec: String,
+}
 
 /// Video frame rate as a numerator/denominator pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +117,75 @@ pub fn stream_exists(binary: &Path, input_file: &Path, stream: &str) -> Result<b
     let stdout = super::run_capture(binary, &os_args)
         .with_context(|| format!("failed to check stream existence for {stream}"))?;
     Ok(!stdout.trim().is_empty())
+}
+
+/// Query all audio streams from `input_file` using ffprobe JSON output.
+///
+/// Returns an empty `Vec` if no audio streams exist.
+///
+/// # Errors
+///
+/// Returns an error if `ffprobe` fails or the JSON output cannot be parsed.
+#[instrument(skip_all, err(level = "error"))]
+pub fn audio_streams(binary: &Path, input_file: &Path) -> Result<Vec<AudioStreamInfo>> {
+    let args = vec![
+        "-v".to_owned(),
+        "error".to_owned(),
+        "-select_streams".to_owned(),
+        "a".to_owned(),
+        "-show_entries".to_owned(),
+        "stream=index,channels,channel_layout,codec_name".to_owned(),
+        "-of".to_owned(),
+        "json".to_owned(),
+        input_file.display().to_string(),
+    ];
+    let os_args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    let stdout = super::run_capture(binary, &os_args)
+        .with_context(|| "failed to get audio streams via ffprobe")?;
+
+    parse_audio_streams(&stdout)
+}
+
+/// JSON structure returned by ffprobe for stream queries.
+#[derive(Deserialize)]
+struct FfprobeOutput {
+    #[serde(default)]
+    streams: Vec<FfprobeStream>,
+}
+
+/// A single stream entry in ffprobe JSON output.
+#[derive(Deserialize)]
+struct FfprobeStream {
+    #[serde(default)]
+    index: u32,
+    #[serde(default)]
+    channels: u32,
+    #[serde(default)]
+    channel_layout: String,
+    #[serde(default)]
+    codec_name: String,
+}
+
+/// Parse ffprobe JSON output into a list of [`AudioStreamInfo`].
+fn parse_audio_streams(json_str: &str) -> Result<Vec<AudioStreamInfo>> {
+    let trimmed = json_str.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let output: FfprobeOutput =
+        serde_json::from_str(trimmed).with_context(|| "failed to parse ffprobe JSON output")?;
+
+    Ok(output
+        .streams
+        .into_iter()
+        .map(|s| AudioStreamInfo {
+            index: s.index,
+            channels: s.channels,
+            channel_layout: s.channel_layout,
+            codec: s.codec_name,
+        })
+        .collect())
 }
 
 /// Query the duration of a specific stream in `input_file` using `ffprobe`.
@@ -558,5 +642,106 @@ mod tests {
         assert_eq!(args[4], "-of");
         assert_eq!(args[5], "default=noprint_wrappers=1:nokey=1");
         assert_eq!(args[6], "/rec/video.ts");
+    }
+
+    // ── parse_audio_streams ─────────────────────────────
+
+    #[test]
+    fn test_parse_audio_streams_stereo_and_secondary() {
+        // Arrange: typical Japanese broadcast — main stereo + secondary stereo
+        let json = r#"{
+            "streams": [
+                {"index": 1, "codec_name": "aac", "channels": 2, "channel_layout": "stereo"},
+                {"index": 2, "codec_name": "aac", "channels": 2, "channel_layout": "stereo"}
+            ]
+        }"#;
+
+        // Act
+        let streams = parse_audio_streams(json).unwrap();
+
+        // Assert
+        assert_eq!(streams.len(), 2);
+        assert_eq!(streams[0].index, 1);
+        assert_eq!(streams[0].channels, 2);
+        assert_eq!(streams[0].channel_layout, "stereo");
+        assert_eq!(streams[1].index, 2);
+    }
+
+    #[test]
+    fn test_parse_audio_streams_dual_mono() {
+        // Arrange: dual mono — two separate mono streams
+        let json = r#"{
+            "streams": [
+                {"index": 1, "codec_name": "aac", "channels": 1, "channel_layout": "mono"},
+                {"index": 2, "codec_name": "aac", "channels": 1, "channel_layout": "mono"}
+            ]
+        }"#;
+
+        // Act
+        let streams = parse_audio_streams(json).unwrap();
+
+        // Assert
+        assert_eq!(streams.len(), 2);
+        assert_eq!(streams[0].channels, 1);
+        assert_eq!(streams[1].channels, 1);
+    }
+
+    #[test]
+    fn test_parse_audio_streams_single() {
+        // Arrange: single audio stream
+        let json = r#"{
+            "streams": [
+                {"index": 1, "codec_name": "aac", "channels": 2, "channel_layout": "stereo"}
+            ]
+        }"#;
+
+        // Act
+        let streams = parse_audio_streams(json).unwrap();
+
+        // Assert
+        assert_eq!(streams.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_audio_streams_empty() {
+        // Arrange: no audio streams
+        let json = r#"{"streams": []}"#;
+
+        // Act
+        let streams = parse_audio_streams(json).unwrap();
+
+        // Assert
+        assert!(streams.is_empty());
+    }
+
+    #[test]
+    fn test_parse_audio_streams_empty_string() {
+        // Arrange
+        let streams = parse_audio_streams("").unwrap();
+
+        // Assert
+        assert!(streams.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_audio_streams_via_script() {
+        // Arrange: script outputs ffprobe JSON
+        let dir = tempfile::tempdir().unwrap();
+        let json_output = r#"{"streams":[{"index":1,"codec_name":"aac","channels":2,"channel_layout":"stereo"},{"index":2,"codec_name":"aac","channels":2,"channel_layout":"stereo"}]}"#;
+        let script = super::super::test_utils::write_script(
+            dir.path(),
+            "ffprobe.sh",
+            &format!("#!/bin/sh\necho '{json_output}'"),
+        );
+        let input = dir.path().join("video.ts");
+        std::fs::write(&input, "dummy").unwrap();
+
+        // Act
+        let streams = audio_streams(&script, &input).unwrap();
+
+        // Assert
+        assert_eq!(streams.len(), 2);
+        assert_eq!(streams[0].codec, "aac");
     }
 }
