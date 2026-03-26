@@ -204,7 +204,11 @@ pub fn check_post_encode_duration(ffprobe_bin: &Path, output_file: &Path) -> Res
 ///
 /// Separated from I/O for unit testing.
 fn validate_post_encode_durations(video_dur: Option<f64>, audio_dur: Option<f64>) -> Result<()> {
-    info!(video = ?video_dur, audio = ?audio_dur, "post-encode duration check");
+    info!(
+        video = video_dur.unwrap_or(-1.0),
+        audio = audio_dur.unwrap_or(-1.0),
+        "post-encode duration check"
+    );
 
     match (video_dur, audio_dur) {
         // Happy path: both streams have positive duration.
