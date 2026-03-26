@@ -1,9 +1,13 @@
 # Changelog
 
 ## [v0.4.0](https://github.com/naa0yama/dtvmgr/compare/v0.3.6...v0.4.0) - 2026-03-26
+
 ### Documentation 🗒️
+
 - feat(tui): EPGStation encode selector improvements by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/162
+
 ### Development Environment 🔧
+
 - chore(deps): update actions/cache action to v5.0.4 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/163
 - chore(deps): update taiki-e/install-action action to v2.68.36 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/165
 - chore(deps): update taiki-e/install-action action to v2.69.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/166
