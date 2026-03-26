@@ -241,7 +241,8 @@ impl TmdbClient {
                     tracing::warn!(error.kind = kind, "failed to read error response body");
                     format!("<failed to read body: {kind}>")
                 });
-                span.record("http.response.body", &body);
+                span.record("http.response.body.size", body.len());
+                tracing::debug!(http.response.body = %body, "HTTP response body");
                 if let Ok(error_response) = serde_json::from_str::<TmdbErrorResponse>(&body) {
                     bail!(
                         "TMDB API error (HTTP {}): code={}, message={}",
@@ -257,7 +258,8 @@ impl TmdbClient {
                 .text()
                 .await
                 .with_context(|| format!("failed to read response body: {path}"))?;
-            span.record("http.response.body", body.as_str());
+            span.record("http.response.body.size", body.len());
+            tracing::debug!(http.response.body = %body, "HTTP response body");
             let parsed: T = serde_json::from_str(&body).with_context(|| {
                 format!(
                     "failed to decode JSON response: {path} (body_len={} bytes)",
@@ -279,7 +281,7 @@ impl TmdbClient {
         url.path = path,
         url.full = tracing::field::Empty,
         http.response.status_code = tracing::field::Empty,
-        http.response.body = tracing::field::Empty,
+        http.response.body.size = tracing::field::Empty,
     ), err(level = "warn"))]
     async fn get_json<T: serde::de::DeserializeOwned>(
         &self,

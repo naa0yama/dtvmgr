@@ -324,8 +324,8 @@ impl SyoboiClient {
                 .await
                 .with_context(|| format!("failed to read {command} response body"))?;
 
-            span.record("http.response.body", xml.as_str());
-            tracing::debug!(%command, body_len = xml.len(), "Response body received");
+            span.record("http.response.body.size", xml.len());
+            tracing::debug!(http.response.body = %xml, "HTTP response body");
 
             let result =
                 parse(&xml).with_context(|| format!("failed to parse {command} response"))?;
