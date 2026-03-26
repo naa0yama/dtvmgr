@@ -1,7 +1,9 @@
 # Changelog
 
 ## [v0.4.1](https://github.com/naa0yama/dtvmgr/compare/v0.4.0...v0.4.1) - 2026-03-26
+
 ### Other Changes
+
 - fix(tui): delete stale video files on EPGStation encode refresh by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/168
 
 ## [v0.4.0](https://github.com/naa0yama/dtvmgr/compare/v0.3.6...v0.4.0) - 2026-03-26
