@@ -3471,6 +3471,7 @@ async fn run_epgstation_encode(
         });
     }
 
+    let mut force_file_check = false;
     loop {
         terminal.clear().context("failed to clear terminal")?;
 
@@ -3524,54 +3525,48 @@ async fn run_epgstation_encode(
         state.selected = mem::take(&mut selected);
         state.encode_queue = last_encode_queue.take();
 
-        // Inner loop: on Refresh, keep state and enqueue a new file check request.
+        // On Refresh the outer loop re-iterates to reload cached_page from DB.
         // Old page's result_tx.send() returns Err (rx dropped) and is ignored; DB writes
         // still complete so no work is wasted.
-        let mut is_force = false;
-        let result = loop {
-            let files_to_check = collect_files_to_check(&cached_page, is_force);
-            let total_checks = files_to_check.len();
-            let file_check_rx = if total_checks > 0 {
-                let (file_check_tx, rx) = std::sync::mpsc::channel::<FileCheckMessage>();
-                pending.fetch_add(1, Ordering::Relaxed);
-                let _ = check_req_tx
-                    .send(FileCheckRequest {
-                        files: files_to_check,
-                        result_tx: file_check_tx,
-                    })
-                    .await;
-                Some(rx)
-            } else {
-                None
-            };
-
-            let r = match dtvmgr_tui::encode_selector::run_encode_selector(
-                &mut terminal,
-                &mut state,
-                sync_rx_opt.as_ref(),
-                file_check_rx.as_ref(),
-                Some(&queue_rx),
-                &progress_rx,
-                Some(&storage_rx),
-            )
-            .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    let _ = dtvmgr_tui::encode_selector::teardown_terminal();
-                    return Err(e).context("encode selector TUI failed");
-                }
-            };
-
-            if r == SelectorResult::Refresh {
-                is_force = true;
-                continue;
-            }
-            if r == SelectorResult::SyncComplete {
-                break r;
-            }
-            break r;
+        let is_force = force_file_check;
+        force_file_check = false;
+        let files_to_check = collect_files_to_check(&cached_page, is_force);
+        let total_checks = files_to_check.len();
+        let file_check_rx = if total_checks > 0 {
+            let (file_check_tx, rx) = std::sync::mpsc::channel::<FileCheckMessage>();
+            pending.fetch_add(1, Ordering::Relaxed);
+            let _ = check_req_tx
+                .send(FileCheckRequest {
+                    files: files_to_check,
+                    result_tx: file_check_tx,
+                })
+                .await;
+            Some(rx)
+        } else {
+            None
         };
+
+        let result = match dtvmgr_tui::encode_selector::run_encode_selector(
+            &mut terminal,
+            &mut state,
+            sync_rx_opt.as_ref(),
+            file_check_rx.as_ref(),
+            Some(&queue_rx),
+            &progress_rx,
+            Some(&storage_rx),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = dtvmgr_tui::encode_selector::teardown_terminal();
+                return Err(e).context("encode selector TUI failed");
+            }
+        };
+
+        if result == SelectorResult::Refresh {
+            force_file_check = true;
+        }
 
         // Persist storage dir visibility to config if changed.
         let new_hidden: Vec<String> = state
@@ -3690,7 +3685,7 @@ async fn run_epgstation_encode(
             SelectorResult::PagePrev => {
                 offset = offset.saturating_sub(limit);
             }
-            // Refresh is fully handled by the inner loop above.
+            // Refresh: force_file_check is set above; outer loop re-iterates.
             SelectorResult::Refresh => {}
             SelectorResult::SyncComplete => {
                 // Sync done — drop the receiver so we don't re-trigger.
