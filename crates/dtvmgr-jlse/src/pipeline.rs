@@ -235,8 +235,25 @@ fn run_pipeline_inner(
     // Step 4: Write obs_param.txt
     write_obs_param(&paths.obs_param_path, detected_channel.as_ref(), &det_param)?;
 
-    // Step 5: AVS generation
-    avs::create(&paths.input_avs, &input, avs::STREAM_INDEX_NORMAL)?;
+    // Step 5: detect audio streams and generate AVS
+    let input_cfg = ctx.config.encode.as_ref().and_then(|e| e.input.as_ref());
+    let audio_infos = command::ffprobe::audio_streams(
+        &bins.ffprobe,
+        &input,
+        input_cfg.and_then(|i| i.analyzeduration.as_deref()),
+        input_cfg.and_then(|i| i.probesize.as_deref()),
+    )?;
+    let stream_index = audio_infos
+        .first()
+        .map_or(avs::STREAM_INDEX_NORMAL, |a| a.index);
+    info!(
+        audio.stream_count = audio_infos.len(),
+        audio.primary_index = stream_index,
+        audio.channels = ?audio_infos.iter().map(|a| a.channels).collect::<Vec<_>>(),
+        audio.layouts = ?audio_infos.iter().map(|a| a.channel_layout.as_str()).collect::<Vec<_>>(),
+        "detected audio streams"
+    );
+    avs::create(&paths.input_avs, &input, stream_index)?;
     debug!(path = %paths.input_avs.display(), "created input AVS");
 
     // Determine total stage count (quality search adds one stage)
@@ -482,14 +499,11 @@ fn run_pipeline_inner(
             // Replace quality param with the actual value found by quality search.
             if let (Some(param), Some(val)) = (&summary.quality_param, summary.quality_value) {
                 let param_name = param.trim_start_matches('-');
-                let new_token = format!("{param_name}:{val}");
-                // Replace existing "param:*" token, or append if not present.
-                let replaced = replace_quality_token(&s, param_name, &new_token);
-                s = if replaced.is_empty() {
-                    new_token
-                } else {
-                    replaced
-                };
+                s = replace_quality_token(&s, param_name, val);
+            }
+            // Insert VMAF score right after the quality token.
+            if let Some(vmaf_score) = summary.vmaf {
+                s = insert_token_after_quality(&s, &format!("vmaf {vmaf_score:.3}"));
             }
             s
         });
@@ -1218,39 +1232,54 @@ fn emit_pipeline_summary(
 
     let ts_min = summary.ts_duration_secs.map(|s| s / 60.0);
 
-    let input_json = serde_json::json!({
-        "file": input_path.display().to_string(),
-        "size_mb": input_size_mb.map(round1),
-        "ts_secs": summary.ts_duration_secs.map(round1),
-        "ts_min": ts_min.map(round1),
-    });
-
     let output_size_mb = summary.output_size.map(|s| s as f64 / 1_048_576.0);
     let output_size_pct = match (summary.output_size, input_size_mb) {
         (Some(out), Some(in_mb)) if in_mb > 0.0 => Some(out as f64 / 1_048_576.0 / in_mb * 100.0),
         _ => None,
     };
 
-    let output_json = serde_json::json!({
-        "file": summary.output.as_deref().map(|p| p.display().to_string()),
-        "codec": summary.codec.as_deref().unwrap_or("unknown"),
-        "ffmpeg_args": output_encode_args.join(" "),
-        "quality_param": summary.quality_param.as_deref(),
-        "quality_value": summary.quality_value.map(round3),
-        "vmaf": summary.vmaf.map(round3),
-        "vmaf_subsample": summary.vmaf_subsample,
-        "output_size_mb": output_size_mb.map(round1),
-        "output_size_pct": output_size_pct.map(round1),
-        "avs_secs": summary.avs_duration_secs.map(round1),
-        "output_ratio_percent": summary.ratio_percent.map(round1),
-        "post_video_secs": summary.post_video_secs.map(round1),
-        "post_audio_secs": summary.post_audio_secs.map(round1),
-    });
+    let output_file = summary
+        .output
+        .as_deref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    let encode_args_str = output_encode_args.join(" ");
+
+    // Unwrap Option values so they are emitted as native types (f64/u32)
+    // rather than Debug-formatted "Some(…)" strings.
+    let input_size_mb = input_size_mb.map_or(-1.0, round1);
+    let input_ts_secs = summary.ts_duration_secs.map_or(-1.0, round1);
+    let input_ts_min = ts_min.map_or(-1.0, round1);
+    let quality_param = summary.quality_param.as_deref().unwrap_or("");
+    let quality_value = summary.quality_value.map_or(-1.0, round3);
+    let vmaf = summary.vmaf.map_or(-1.0, round3);
+    let vmaf_subsample = summary.vmaf_subsample.unwrap_or(0);
+    let output_size_mb = output_size_mb.map_or(-1.0, round1);
+    let output_size_pct = output_size_pct.map_or(-1.0, round1);
+    let avs_secs = summary.avs_duration_secs.map_or(-1.0, round1);
+    let ratio_pct = summary.ratio_percent.map_or(-1.0, round1);
+    let post_video_secs = summary.post_video_secs.map_or(-1.0, round1);
+    let post_audio_secs = summary.post_audio_secs.map_or(-1.0, round1);
 
     info!(
         status,
-        input = %input_json,
-        output = %output_json,
+        input.file = %input_path.display(),
+        input.size_mb = input_size_mb,
+        input.ts_secs = input_ts_secs,
+        input.ts_min = input_ts_min,
+        output.file = %output_file,
+        output.codec = summary.codec.as_deref().unwrap_or("unknown"),
+        output.ffmpeg_args = %encode_args_str,
+        output.quality_param = quality_param,
+        output.quality_value = quality_value,
+        output.vmaf = vmaf,
+        output.vmaf_subsample = vmaf_subsample,
+        output.size_mb = output_size_mb,
+        output.size_pct = output_size_pct,
+        output.avs_secs = avs_secs,
+        output.ratio_pct = ratio_pct,
+        output.post_video_secs = post_video_secs,
+        output.post_audio_secs = post_audio_secs,
         "pipeline summary"
     );
 }
@@ -1338,21 +1367,29 @@ fn vmaf_progress_to_stage(evt: &dtvmgr_vmaf::SearchProgress, last_vmaf: f64) -> 
 
 /// Replace a quality token in an `ENCODER_SETTINGS` summary string.
 ///
-/// Searches for a ` / `‐delimited token whose prefix matches `param_name`
-/// (e.g. `"crf"` matches `"crf:23"`), replaces it with `new_token`, and
-/// returns the modified string.  Returns the original string unchanged when
-/// no matching token is found.
-fn replace_quality_token(summary: &str, param_name: &str, new_token: &str) -> String {
+/// Searches for a ` / `‐delimited token whose bare flag matches `param_name`
+/// (e.g. `"crf"` matches `"crf:v 23"`), replaces the value portion with
+/// `new_value`, and returns the modified string.
+///
+/// Each token has the format `flag value` where flag may include a stream
+/// specifier (e.g. `crf:v`).  The flag portion is preserved so that stream
+/// specifiers are not lost.
+///
+/// Returns the original string unchanged when no matching token is found.
+fn replace_quality_token(summary: &str, param_name: &str, new_value: f32) -> String {
     let parts: Vec<&str> = summary.split(" / ").collect();
     let mut replaced = false;
-    let updated: Vec<&str> = parts
+    let updated: Vec<String> = parts
         .iter()
         .map(|p| {
-            if p.starts_with(param_name) && p[param_name.len()..].starts_with(':') {
+            // Token format: "flag value" — split on first space.
+            let flag_part = p.split(' ').next().unwrap_or(p);
+            let bare = flag_part.split(':').next().unwrap_or(flag_part);
+            if bare == param_name {
                 replaced = true;
-                new_token
+                format!("{flag_part} {new_value}")
             } else {
-                p
+                (*p).to_owned()
             }
         })
         .collect();
@@ -1361,6 +1398,37 @@ fn replace_quality_token(summary: &str, param_name: &str, new_token: &str) -> St
     } else {
         summary.to_owned()
     }
+}
+
+/// Insert `token` right after the first quality-param token in a ` / `‐delimited
+/// settings string.  Each token has the format `flag value` (e.g. `crf:v 23`).
+/// The bare flag name (before any `:` specifier) is checked against known
+/// quality flags (`crf`, `qp`, `global_quality`, `q`, `cq`).
+///
+/// If no quality token is found the token is inserted after the first element.
+fn insert_token_after_quality(settings: &str, token: &str) -> String {
+    let parts: Vec<&str> = settings.split(" / ").collect();
+    let mut result: Vec<&str> = Vec::with_capacity(parts.len().saturating_add(1));
+    let mut inserted = false;
+    for part in &parts {
+        result.push(part);
+        if !inserted {
+            // Extract the flag portion (before the space):
+            //   "crf:v 23"          → flag_part "crf:v" → bare "crf"
+            //   "global_quality 27"  → flag_part "global_quality" → bare "global_quality"
+            let flag_part = part.split(' ').next().unwrap_or(part);
+            let bare = flag_part.split(':').next().unwrap_or(flag_part);
+            let flag = format!("-{bare}");
+            if dtvmgr_vmaf::QualityParam::ALL_FLAGS.contains(&flag.as_str()) {
+                result.push(token);
+                inserted = true;
+            }
+        }
+    }
+    if !inserted && !result.is_empty() {
+        result.insert(1.min(result.len()), token);
+    }
+    result.join(" / ")
 }
 
 /// Inject the quality search result into the output encode args.
@@ -2443,8 +2511,14 @@ printf '  600 900 10 -1 1 0.00:Ncut\n' >> "$OSCP"
     /// on its arguments.
     fn write_mock_ffprobe(dir: &Path) -> PathBuf {
         let script = r#"#!/bin/bash
+# Check all args to determine query type.
+all_args="$*"
+if [[ "$all_args" == *"-of json"* ]]; then
+    echo '{"streams":[{"index":1,"codec_name":"aac","channels":2,"channel_layout":"stereo"}]}'
+    exit 0
+fi
 for arg in "$@"; do
-    if [[ "$arg" == *"duration"* ]]; then
+    if [[ "$arg" == *"=duration"* ]]; then
         echo "1440.0"
         exit 0
     fi

@@ -2940,7 +2940,7 @@ async fn fetch_recorded_page(
     keyword: Option<&str>,
 ) -> Result<RecordedResponse> {
     let params = RecordedParams {
-        has_original_file: Some(true),
+        has_original_file: None,
         limit: Some(limit),
         offset: Some(api_offset),
         is_reverse: None,
@@ -3324,7 +3324,7 @@ async fn run_epgstation_encode(
 
     // Sync receiver for background updates
     let (sync_tx, sync_rx) = std::sync::mpsc::channel();
-    let sync_rx_opt = if has_cache {
+    let mut sync_rx_opt = if has_cache {
         // Has cache: spawn background re-sync
         let bg_client = client.clone();
         let bg_data_dir = data_dir.clone();
@@ -3505,6 +3505,7 @@ async fn run_epgstation_encode(
             parent_dirs.clone(),
             config.epgstation.default_preset.as_deref(),
             config.epgstation.default_directory.as_deref(),
+            config.epgstation.default_parent_dir.as_deref(),
             page,
             recorded_dirs.clone(),
         );
@@ -3565,6 +3566,9 @@ async fn run_epgstation_encode(
             if r == SelectorResult::Refresh {
                 is_force = true;
                 continue;
+            }
+            if r == SelectorResult::SyncComplete {
+                break r;
             }
             break r;
         };
@@ -3665,6 +3669,15 @@ async fn run_epgstation_encode(
                 // Clear submission state and selections.
                 state.submitting = None;
                 selected.clear();
+
+                // Persist parent_dir as default for next cycle.
+                let new_parent_dir = Some(state.settings.parent_dir.clone());
+                if new_parent_dir != config.epgstation.default_parent_dir {
+                    config.epgstation.default_parent_dir = new_parent_dir;
+                    if let Err(e) = config.save(&config_path) {
+                        tracing::warn!(error = %e, "failed to save default_parent_dir");
+                    }
+                }
             }
             SelectorResult::Cancelled => {
                 dtvmgr_tui::encode_selector::teardown_terminal()
@@ -3679,6 +3692,10 @@ async fn run_epgstation_encode(
             }
             // Refresh is fully handled by the inner loop above.
             SelectorResult::Refresh => {}
+            SelectorResult::SyncComplete => {
+                // Sync done — drop the receiver so we don't re-trigger.
+                sync_rx_opt = None;
+            }
         }
     }
 }
@@ -5969,6 +5986,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             None,
             PageInfo {

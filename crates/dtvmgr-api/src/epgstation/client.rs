@@ -196,7 +196,8 @@ impl EpgStationClient {
                     tracing::warn!(error.kind = kind, "failed to read error response body");
                     format!("<failed to read body: {kind}>")
                 });
-                span.record("http.response.body", &body);
+                span.record("http.response.body.size", body.len());
+                tracing::debug!(http.response.body = %body, "HTTP response body");
                 bail!("EPGStation API error (HTTP {status}): {body}");
             }
 
@@ -204,7 +205,8 @@ impl EpgStationClient {
                 .text()
                 .await
                 .with_context(|| format!("failed to read response body: {path}"))?;
-            span.record("http.response.body", body.as_str());
+            span.record("http.response.body.size", body.len());
+            tracing::debug!(http.response.body = %body, "HTTP response body");
             // SECURITY: do not include response body in error context — it is
             // already recorded in the tracing span and may contain sensitive data.
             let parsed: T = serde_json::from_str(&body).with_context(|| {
@@ -228,7 +230,7 @@ impl EpgStationClient {
         url.path = path,
         url.full = tracing::field::Empty,
         http.response.status_code = tracing::field::Empty,
-        http.response.body = tracing::field::Empty,
+        http.response.body.size = tracing::field::Empty,
     ), err(level = "warn"))]
     async fn get_json<T: serde::de::DeserializeOwned>(
         &self,
@@ -253,8 +255,8 @@ impl EpgStationClient {
         url.path = path,
         url.full = tracing::field::Empty,
         http.response.status_code = tracing::field::Empty,
-        http.request.body = tracing::field::Empty,
-        http.response.body = tracing::field::Empty,
+        http.request.body.size = tracing::field::Empty,
+        http.response.body.size = tracing::field::Empty,
     ), err(level = "error"))]
     async fn post_json<T: serde::de::DeserializeOwned>(
         &self,
@@ -263,7 +265,8 @@ impl EpgStationClient {
     ) -> Result<T> {
         let span = tracing::Span::current();
         if let Ok(request_json) = serde_json::to_string(body) {
-            span.record("http.request.body", &request_json);
+            span.record("http.request.body.size", request_json.len());
+            tracing::debug!(http.request.body = %request_json, "HTTP request body");
         }
 
         let url = self

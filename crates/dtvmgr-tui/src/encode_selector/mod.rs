@@ -125,6 +125,7 @@ async fn run_event_loop(
                     }
                     SyncMessage::Complete => {
                         state.sync_progress = None;
+                        return Ok(SelectorResult::SyncComplete);
                     }
                 }
             }
@@ -400,6 +401,7 @@ mod tests {
             vec![],
             vec![String::from("H.264"), String::from("H.265")],
             vec![String::from("recorded"), String::from("archive")],
+            None,
             None,
             None,
             page,
