@@ -1215,39 +1215,34 @@ fn emit_pipeline_summary(
 
     let ts_min = summary.ts_duration_secs.map(|s| s / 60.0);
 
-    let input_json = serde_json::json!({
-        "file": input_path.display().to_string(),
-        "size_mb": input_size_mb.map(round1),
-        "ts_secs": summary.ts_duration_secs.map(round1),
-        "ts_min": ts_min.map(round1),
-    });
-
     let output_size_mb = summary.output_size.map(|s| s as f64 / 1_048_576.0);
     let output_size_pct = match (summary.output_size, input_size_mb) {
         (Some(out), Some(in_mb)) if in_mb > 0.0 => Some(out as f64 / 1_048_576.0 / in_mb * 100.0),
         _ => None,
     };
 
-    let output_json = serde_json::json!({
-        "file": summary.output.as_deref().map(|p| p.display().to_string()),
-        "codec": summary.codec.as_deref().unwrap_or("unknown"),
-        "ffmpeg_args": output_encode_args.join(" "),
-        "quality_param": summary.quality_param.as_deref(),
-        "quality_value": summary.quality_value.map(round3),
-        "vmaf": summary.vmaf.map(round3),
-        "vmaf_subsample": summary.vmaf_subsample,
-        "output_size_mb": output_size_mb.map(round1),
-        "output_size_pct": output_size_pct.map(round1),
-        "avs_secs": summary.avs_duration_secs.map(round1),
-        "output_ratio_percent": summary.ratio_percent.map(round1),
-        "post_video_secs": summary.post_video_secs.map(round1),
-        "post_audio_secs": summary.post_audio_secs.map(round1),
-    });
+    let output_file = summary.output.as_deref().map(|p| p.display().to_string());
+    let encode_args_str = output_encode_args.join(" ");
 
     info!(
         status,
-        input = %input_json,
-        output = %output_json,
+        input.file = %input_path.display(),
+        input.size_mb = ?input_size_mb.map(round1),
+        input.ts_secs = ?summary.ts_duration_secs.map(round1),
+        input.ts_min = ?ts_min.map(round1),
+        output.file = ?output_file,
+        output.codec = summary.codec.as_deref().unwrap_or("unknown"),
+        output.ffmpeg_args = %encode_args_str,
+        output.quality_param = ?summary.quality_param,
+        output.quality_value = ?summary.quality_value.map(round3),
+        output.vmaf = ?summary.vmaf.map(round3),
+        output.vmaf_subsample = ?summary.vmaf_subsample,
+        output.size_mb = ?output_size_mb.map(round1),
+        output.size_pct = ?output_size_pct.map(round1),
+        output.avs_secs = ?summary.avs_duration_secs.map(round1),
+        output.ratio_pct = ?summary.ratio_percent.map(round1),
+        output.post_video_secs = ?summary.post_video_secs.map(round1),
+        output.post_audio_secs = ?summary.post_audio_secs.map(round1),
         "pipeline summary"
     );
 }
