@@ -156,6 +156,11 @@ pub fn upsert_recorded_items(
                 ])
                 .with_context(|| format!("failed to upsert video file {}", vf.id))?;
         }
+
+        // Delete stale video files that are no longer in the API response.
+        delete_stale_video_files(&tx, *recorded_id, files).with_context(|| {
+            format!("failed to delete stale video files for recorded item {recorded_id}")
+        })?;
     }
 
     drop(item_stmt);
@@ -163,6 +168,37 @@ pub fn upsert_recorded_items(
     tx.commit()
         .context("failed to commit recorded items upsert")?;
     Ok(changed)
+}
+
+/// Deletes video files belonging to `recorded_id` that are not in `keep`.
+fn delete_stale_video_files(
+    conn: &Connection,
+    recorded_id: i64,
+    keep: &[CachedVideoFile],
+) -> Result<()> {
+    if keep.is_empty() {
+        conn.execute(
+            "DELETE FROM epg_video_files WHERE recorded_id = ?1",
+            rusqlite::params![recorded_id],
+        )
+        .context("failed to delete all video files")?;
+        return Ok(());
+    }
+
+    let placeholders: Vec<&str> = keep.iter().map(|_| "?").collect();
+    let sql = format!(
+        "DELETE FROM epg_video_files WHERE recorded_id = ?1 AND id NOT IN ({})",
+        placeholders.join(", ")
+    );
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    params.push(Box::new(recorded_id));
+    for vf in keep {
+        params.push(Box::new(vf.id));
+    }
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(AsRef::as_ref).collect();
+    conn.execute(&sql, param_refs.as_slice())
+        .context("failed to delete stale video files")?;
+    Ok(())
 }
 
 /// Loads a page of cached recorded items (newest first) with their video files.
@@ -773,5 +809,121 @@ mod tests {
 
         // Act — should not error even when no video files exist
         invalidate_file_exists(&conn, 1).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_upsert_removes_stale_video_files() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let items = vec![make_item(1, 1_000_000)];
+        let vf = vec![(
+            1,
+            vec![
+                make_video_file(10, 1, "ts"),
+                make_video_file(11, 1, "encoded"),
+            ],
+        )];
+        upsert_recorded_items(&conn, &items, &vf).unwrap();
+
+        // Act — re-upsert with only the TS file (encoded removed on EPGStation)
+        let vf2 = vec![(1, vec![make_video_file(10, 1, "ts")])];
+        upsert_recorded_items(&conn, &items, &vf2).unwrap();
+        let loaded = load_recorded_items(&conn).unwrap();
+
+        // Assert — stale encoded file should be gone
+        assert_eq!(loaded[0].1.len(), 1);
+        assert_eq!(loaded[0].1[0].id, 10);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_upsert_removes_all_video_files_when_empty() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let items = vec![make_item(1, 1_000_000)];
+        let vf = vec![(
+            1,
+            vec![
+                make_video_file(10, 1, "ts"),
+                make_video_file(11, 1, "encoded"),
+            ],
+        )];
+        upsert_recorded_items(&conn, &items, &vf).unwrap();
+
+        // Act — re-upsert with empty video files
+        let vf2: Vec<(i64, Vec<CachedVideoFile>)> = vec![(1, vec![])];
+        upsert_recorded_items(&conn, &items, &vf2).unwrap();
+        let loaded = load_recorded_items(&conn).unwrap();
+
+        // Assert — all video files should be gone
+        assert!(loaded[0].1.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_upsert_stale_cleanup_scoped_to_recorded_id() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let items = vec![make_item(1, 1_000_000), make_item(2, 2_000_000)];
+        let vf = vec![
+            (
+                1,
+                vec![
+                    make_video_file(10, 1, "ts"),
+                    make_video_file(11, 1, "encoded"),
+                ],
+            ),
+            (
+                2,
+                vec![
+                    make_video_file(20, 2, "ts"),
+                    make_video_file(21, 2, "encoded"),
+                ],
+            ),
+        ];
+        upsert_recorded_items(&conn, &items, &vf).unwrap();
+
+        // Act — re-upsert only item 1 with one fewer file
+        let vf2 = vec![(1, vec![make_video_file(10, 1, "ts")])];
+        upsert_recorded_items(&conn, &[make_item(1, 1_000_000)], &vf2).unwrap();
+        let loaded = load_recorded_items(&conn).unwrap();
+
+        // Assert — item 2's files are untouched
+        let item1_files = &loaded.iter().find(|(i, _)| i.id == 1).unwrap().1;
+        let item2_files = &loaded.iter().find(|(i, _)| i.id == 2).unwrap().1;
+        assert_eq!(item1_files.len(), 1);
+        assert_eq!(item1_files[0].id, 10);
+        assert_eq!(item2_files.len(), 2);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_upsert_preserves_file_exists_on_cleanup() {
+        // Arrange
+        let (conn, _dir) = setup_db();
+        let items = vec![make_item(1, 1_000_000)];
+        let vf = vec![(
+            1,
+            vec![
+                make_video_file(10, 1, "ts"),
+                make_video_file(11, 1, "encoded"),
+            ],
+        )];
+        upsert_recorded_items(&conn, &items, &vf).unwrap();
+        update_file_exists(&conn, 10, true, "2024-01-01T12:00:00Z").unwrap();
+
+        // Act — re-upsert removing file 11; file 10's checked state should survive
+        let vf2 = vec![(1, vec![make_video_file(10, 1, "ts")])];
+        upsert_recorded_items(&conn, &items, &vf2).unwrap();
+        let loaded = load_recorded_items(&conn).unwrap();
+
+        // Assert
+        assert_eq!(loaded[0].1.len(), 1);
+        assert_eq!(loaded[0].1[0].file_exists, Some(true));
+        assert_eq!(
+            loaded[0].1[0].file_checked_at.as_deref(),
+            Some("2024-01-01T12:00:00Z")
+        );
     }
 }
