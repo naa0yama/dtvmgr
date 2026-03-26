@@ -216,7 +216,12 @@ fn draw_recording_list(frame: &mut Frame, state: &mut EncodeSelectorState) {
                 Cell::from(Line::from(fmt_size(row.file_size)).alignment(Alignment::Right)),
                 Cell::from(Line::from(row.drop_cnt.to_string()).alignment(Alignment::Right)),
                 Cell::from(Line::from(row.error_cnt.to_string()).alignment(Alignment::Right)),
-                Cell::from(String::from(status)),
+                Cell::from(String::from(status)).style(match status {
+                    "rec" => Style::default().fg(Color::Red),
+                    "run" | "enc" => Style::default().fg(Color::Yellow),
+                    "wait" => Style::default().fg(Color::Cyan),
+                    _ => Style::default(),
+                }),
             ])
             .style(style)
         })
