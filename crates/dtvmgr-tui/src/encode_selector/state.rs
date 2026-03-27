@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 
 use ratatui::widgets::TableState;
+use tracing::debug;
 
 /// Wizard step in the encode selector flow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,6 +324,10 @@ pub struct EncodeSelectorState {
     pub visible_table_rows: usize,
     /// Encode submission progress. `None` when not submitting.
     pub submitting: Option<SubmissionProgress>,
+    /// Filtered index of the last Space-toggled row.
+    last_toggled: Option<usize>,
+    /// Filtered index anchoring the range preview (set on first Shift+move).
+    range_anchor: Option<usize>,
 }
 
 impl EncodeSelectorState {
@@ -403,6 +408,8 @@ impl EncodeSelectorState {
                 })
                 .collect(),
             submitting: None,
+            last_toggled: None,
+            range_anchor: None,
         }
     }
 
@@ -555,11 +562,19 @@ impl EncodeSelectorState {
             && row.source_video_file_id.is_some()
         {
             let id = row.recorded_id;
-            if self.selected.contains(&id) {
+            let was_selected = self.selected.contains(&id);
+            if was_selected {
                 self.selected.remove(&id);
             } else {
                 self.selected.insert(id);
             }
+            self.last_toggled = Some(cursor);
+            debug!(
+                cursor,
+                recorded_id = id,
+                action = if was_selected { "deselect" } else { "select" },
+                "toggle_current"
+            );
         }
     }
 
@@ -644,6 +659,96 @@ impl EncodeSelectorState {
     #[must_use]
     pub const fn required_confirms(&self) -> u8 {
         if self.settings.remove_original { 2 } else { 1 }
+    }
+
+    /// Sets the range anchor on the first Shift+move.
+    ///
+    /// The anchor is the current cursor position — i.e. where the user
+    /// started holding Shift.  Subsequent Shift+moves keep the anchor
+    /// fixed while only the cursor advances.
+    pub const fn start_or_continue_range(&mut self) {
+        if self.range_anchor.is_none() {
+            self.range_anchor = self.table_state.selected();
+        }
+    }
+
+    /// Returns whether a range preview is currently active.
+    #[must_use]
+    pub const fn has_range_anchor(&self) -> bool {
+        self.range_anchor.is_some()
+    }
+
+    /// Selects or deselects all rows between `range_anchor` and the cursor.
+    ///
+    /// The action is determined by the anchor row: if the anchor is already
+    /// selected the range is deselected, otherwise it is selected.
+    /// Falls back to `toggle_current()` when no anchor is set.
+    pub fn confirm_range_selection(&mut self) {
+        let Some(anchor) = self.range_anchor else {
+            debug!("confirm_range_selection: no anchor, fallback to toggle_current");
+            self.toggle_current();
+            return;
+        };
+        let Some(cursor) = self.table_state.selected() else {
+            debug!("confirm_range_selection: no cursor selected");
+            return;
+        };
+        let lo = anchor.min(cursor);
+        let hi = anchor.max(cursor);
+
+        // Determine action from the anchor row's selection state.
+        let deselect = self
+            .filtered_indices
+            .get(anchor)
+            .and_then(|&idx| self.rows.get(idx))
+            .is_some_and(|row| self.selected.contains(&row.recorded_id));
+
+        debug!(
+            anchor,
+            cursor,
+            lo,
+            hi,
+            deselect,
+            action = if deselect { "deselect" } else { "select" },
+            "confirm_range_selection"
+        );
+
+        for fi in lo..=hi {
+            if let Some(&row_idx) = self.filtered_indices.get(fi)
+                && let Some(row) = self.rows.get(row_idx)
+                && row.file_exists
+                && row.source_video_file_id.is_some()
+            {
+                if deselect {
+                    self.selected.remove(&row.recorded_id);
+                } else {
+                    self.selected.insert(row.recorded_id);
+                }
+            }
+        }
+        self.last_toggled = Some(cursor);
+        debug!(
+            range_anchor = ?self.range_anchor,
+            selected = ?self.selected,
+            "confirm_range_selection: done"
+        );
+        // Keep anchor so the same range can be toggled again with Shift+Space.
+        // The caller clears it when appropriate (e.g. plain Space without Shift).
+    }
+
+    /// Clears the range preview anchor.
+    pub const fn clear_range_anchor(&mut self) {
+        self.range_anchor = None;
+    }
+
+    /// Returns the `(min, max)` filtered-index span for the range preview.
+    ///
+    /// `None` when no range preview is active.
+    #[must_use]
+    pub fn range_preview(&self) -> Option<(usize, usize)> {
+        let anchor = self.range_anchor?;
+        let cursor = self.table_state.selected()?;
+        Some((anchor.min(cursor), anchor.max(cursor)))
     }
 
     /// Toggles visibility of a storage directory by index.
@@ -1683,5 +1788,205 @@ mod tests {
         // Falls back to index 0
         assert_eq!(state.settings.preset_index, 0);
         assert_eq!(state.settings.mode, "H.264");
+    }
+
+    // ── range selection (state-level) ───────────────────────────
+
+    #[test]
+    fn start_or_continue_range_sets_anchor_once() {
+        let mut state = make_state(5);
+        state.move_down(); // cursor=1
+        state.start_or_continue_range();
+        assert_eq!(state.range_preview(), Some((1, 1)));
+
+        // Move cursor, call again — anchor should stay at 1
+        state.move_down(); // cursor=2
+        state.start_or_continue_range();
+        assert_eq!(state.range_preview(), Some((1, 2)));
+    }
+
+    #[test]
+    fn start_or_continue_range_on_empty_state() {
+        let mut state = make_state(0);
+        state.start_or_continue_range();
+        // No cursor selected → anchor stays None
+        assert!(!state.has_range_anchor());
+        assert_eq!(state.range_preview(), None);
+    }
+
+    #[test]
+    fn clear_range_anchor_clears() {
+        let mut state = make_state(3);
+        state.start_or_continue_range();
+        assert!(state.has_range_anchor());
+
+        state.clear_range_anchor();
+        assert!(!state.has_range_anchor());
+        assert_eq!(state.range_preview(), None);
+    }
+
+    #[test]
+    fn confirm_range_no_anchor_falls_back_to_toggle() {
+        let mut state = make_state(3);
+        // No anchor set
+        assert!(!state.has_range_anchor());
+
+        state.confirm_range_selection();
+
+        // Falls back to toggle_current → selects row 0
+        assert!(state.selected.contains(&0));
+    }
+
+    #[test]
+    fn confirm_range_selects_when_anchor_unselected() {
+        let mut state = make_state(5);
+        // Set anchor at 1, move cursor to 3
+        state.move_down(); // cursor=1
+        state.start_or_continue_range();
+        state.move_down();
+        state.move_down(); // cursor=3
+
+        state.confirm_range_selection();
+
+        // Rows 1..=3 selected
+        assert!(!state.selected.contains(&0));
+        assert!(state.selected.contains(&1));
+        assert!(state.selected.contains(&2));
+        assert!(state.selected.contains(&3));
+        assert!(!state.selected.contains(&4));
+    }
+
+    #[test]
+    fn confirm_range_deselects_when_anchor_selected() {
+        let mut state = make_state(5);
+        state.select_all(); // all selected
+        // Set anchor at 1, move cursor to 3
+        state.move_down(); // cursor=1
+        state.start_or_continue_range();
+        state.move_down();
+        state.move_down(); // cursor=3
+
+        state.confirm_range_selection();
+
+        // Anchor row 1 was selected → deselect 1..=3
+        assert!(state.selected.contains(&0));
+        assert!(!state.selected.contains(&1));
+        assert!(!state.selected.contains(&2));
+        assert!(!state.selected.contains(&3));
+        assert!(state.selected.contains(&4));
+    }
+
+    #[test]
+    fn confirm_range_skips_unavailable_rows() {
+        let mut state = make_state(5);
+        state.rows[2].file_exists = false;
+        // Anchor at 0, cursor at 4
+        state.start_or_continue_range();
+        for _ in 0..4 {
+            state.move_down();
+        }
+
+        state.confirm_range_selection();
+
+        assert!(state.selected.contains(&0));
+        assert!(state.selected.contains(&1));
+        assert!(!state.selected.contains(&2)); // unavailable, skipped
+        assert!(state.selected.contains(&3));
+        assert!(state.selected.contains(&4));
+    }
+
+    #[test]
+    fn confirm_range_skips_no_source_video() {
+        let mut state = make_state(3);
+        state.rows[1].source_video_file_id = None;
+        state.start_or_continue_range();
+        state.move_down();
+        state.move_down(); // cursor=2
+
+        state.confirm_range_selection();
+
+        assert!(state.selected.contains(&0));
+        assert!(!state.selected.contains(&1)); // no source, skipped
+        assert!(state.selected.contains(&2));
+    }
+
+    #[test]
+    fn confirm_range_keeps_anchor() {
+        let mut state = make_state(3);
+        state.start_or_continue_range(); // anchor=0
+        state.move_down();
+        state.move_down(); // cursor=2
+
+        state.confirm_range_selection();
+
+        // Anchor is kept for re-toggle
+        assert!(state.has_range_anchor());
+        assert_eq!(state.range_preview(), Some((0, 2)));
+    }
+
+    #[test]
+    fn confirm_range_toggle_select_then_deselect() {
+        let mut state = make_state(4);
+        state.start_or_continue_range(); // anchor=0
+        state.move_down();
+        state.move_down(); // cursor=2
+
+        // First confirm: select 0..=2
+        state.confirm_range_selection();
+        assert!(state.selected.contains(&0));
+        assert!(state.selected.contains(&1));
+        assert!(state.selected.contains(&2));
+
+        // Second confirm: anchor=0 is now selected → deselect 0..=2
+        state.confirm_range_selection();
+        assert!(!state.selected.contains(&0));
+        assert!(!state.selected.contains(&1));
+        assert!(!state.selected.contains(&2));
+    }
+
+    #[test]
+    fn confirm_range_no_cursor_is_noop() {
+        let mut state = make_state(0);
+        state.range_anchor = Some(0);
+        // No cursor selected (empty state)
+        let selected_before = state.selected.clone();
+
+        state.confirm_range_selection();
+
+        assert_eq!(state.selected, selected_before);
+    }
+
+    #[test]
+    fn range_preview_returns_min_max_order() {
+        let mut state = make_state(5);
+        // Anchor at 3, cursor at 1 (reverse direction)
+        state.move_down();
+        state.move_down();
+        state.move_down(); // cursor=3
+        state.start_or_continue_range(); // anchor=3
+        state.move_up();
+        state.move_up(); // cursor=1
+
+        // Should return (1, 3) regardless of direction
+        assert_eq!(state.range_preview(), Some((1, 3)));
+    }
+
+    #[test]
+    fn toggle_current_sets_last_toggled() {
+        let mut state = make_state(3);
+        state.move_down(); // cursor=1
+
+        state.toggle_current();
+
+        assert!(state.selected.contains(&1));
+        assert_eq!(state.last_toggled, Some(1));
+    }
+
+    #[test]
+    fn new_initializes_range_fields_to_none() {
+        let state = make_state(3);
+        assert!(!state.has_range_anchor());
+        assert_eq!(state.range_preview(), None);
+        assert_eq!(state.last_toggled, None);
     }
 }

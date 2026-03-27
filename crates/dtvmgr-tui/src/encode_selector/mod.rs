@@ -16,6 +16,7 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use tracing::debug;
 
 use self::state::{
     EncodeSelectorState, FileCheckWorkerProgress, InputMode, SelectorResult, SettingsField,
@@ -63,6 +64,7 @@ pub fn teardown_terminal() -> Result<()> {
 ///
 /// Returns an error if event handling fails.
 #[allow(clippy::module_name_repetitions, clippy::future_not_send)]
+#[tracing::instrument(skip_all, err(level = "error"))]
 pub async fn run_encode_selector(
     terminal: &mut TuiTerminal,
     state: &mut EncodeSelectorState,
@@ -209,6 +211,12 @@ fn handle_input(
     key: KeyCode,
     modifiers: KeyModifiers,
 ) -> Option<SelectorResult> {
+    debug!(
+        step = ?state.step,
+        key = ?key,
+        modifiers = ?modifiers,
+        "handle_input"
+    );
     match state.step {
         WizardStep::SelectRecordings => handle_recording_normal(state, key, modifiers),
         WizardStep::ConfigureSettings => match state.input_mode {
@@ -220,6 +228,7 @@ fn handle_input(
 }
 
 /// Step 1: Normal navigation mode.
+#[allow(clippy::too_many_lines)]
 fn handle_recording_normal(
     state: &mut EncodeSelectorState,
     key: KeyCode,
@@ -230,34 +239,127 @@ fn handle_recording_normal(
         KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
             return Some(SelectorResult::Cancelled);
         }
-        KeyCode::Up | KeyCode::Char('k') => state.move_up(),
-        KeyCode::Down | KeyCode::Char('j') => state.move_down(),
-        KeyCode::Char(' ') => state.toggle_current(),
-        KeyCode::Char('a') => state.select_all(),
-        KeyCode::Char('A') => state.deselect_all(),
+        // Shift+move: start/continue range preview then move cursor.
+        KeyCode::Up | KeyCode::Char('k' | 'K') if modifiers.contains(KeyModifiers::SHIFT) => {
+            debug!(
+                key = ?key,
+                cursor = ?state.table_state.selected(),
+                anchor = ?state.range_preview(),
+                "shift+up: start/continue range"
+            );
+            state.start_or_continue_range();
+            state.move_up();
+            debug!(
+                cursor = ?state.table_state.selected(),
+                preview = ?state.range_preview(),
+                "shift+up: after move"
+            );
+        }
+        KeyCode::Down | KeyCode::Char('j' | 'J') if modifiers.contains(KeyModifiers::SHIFT) => {
+            debug!(
+                key = ?key,
+                cursor = ?state.table_state.selected(),
+                anchor = ?state.range_preview(),
+                "shift+down: start/continue range"
+            );
+            state.start_or_continue_range();
+            state.move_down();
+            debug!(
+                cursor = ?state.table_state.selected(),
+                preview = ?state.range_preview(),
+                "shift+down: after move"
+            );
+        }
+        // Space during range preview: confirm and keep anchor for re-toggle.
+        // NOTE: Many terminals report Shift+Space as plain Space (modifiers=0x0),
+        // so we always keep anchor when a range preview is active.
+        KeyCode::Char(' ')
+            if modifiers.contains(KeyModifiers::SHIFT) || state.has_range_anchor() =>
+        {
+            debug!(
+                cursor = ?state.table_state.selected(),
+                preview = ?state.range_preview(),
+                modifiers = ?modifiers,
+                selected_count = state.selected.len(),
+                "space (range): confirm range (keep anchor)"
+            );
+            state.confirm_range_selection();
+            debug!(
+                preview = ?state.range_preview(),
+                selected_count = state.selected.len(),
+                "space (range): after confirm"
+            );
+        }
+        // Normal navigation clears range preview.
+        KeyCode::Up | KeyCode::Char('k') => {
+            if state.has_range_anchor() {
+                debug!(key = ?key, "normal up: clearing range anchor");
+            }
+            state.clear_range_anchor();
+            state.move_up();
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if state.has_range_anchor() {
+                debug!(key = ?key, "normal down: clearing range anchor");
+            }
+            state.clear_range_anchor();
+            state.move_down();
+        }
+        KeyCode::Char(' ') => {
+            debug!(
+                cursor = ?state.table_state.selected(),
+                has_anchor = state.has_range_anchor(),
+                modifiers = ?modifiers,
+                "plain space: toggle_current"
+            );
+            state.toggle_current();
+        }
+        KeyCode::Char('a') => {
+            state.clear_range_anchor();
+            state.select_all();
+        }
+        KeyCode::Char('A') => {
+            state.clear_range_anchor();
+            state.deselect_all();
+        }
         KeyCode::PageDown => {
+            state.clear_range_anchor();
             let n = state.visible_table_rows;
             state.page_down(n);
         }
         KeyCode::PageUp => {
+            state.clear_range_anchor();
             let n = state.visible_table_rows;
             state.page_up(n);
         }
         KeyCode::Char('l') | KeyCode::Right if state.has_next_page() => {
+            state.clear_range_anchor();
             return Some(SelectorResult::PageNext);
         }
         KeyCode::Char('h') | KeyCode::Left if state.has_prev_page() => {
+            state.clear_range_anchor();
             return Some(SelectorResult::PagePrev);
         }
-        KeyCode::Char('f') => state.toggle_hide_unavailable(),
-        KeyCode::Char('e') => state.toggle_hide_queued(),
-        KeyCode::Char('R') => return Some(SelectorResult::Refresh),
+        KeyCode::Char('f') => {
+            state.clear_range_anchor();
+            state.toggle_hide_unavailable();
+        }
+        KeyCode::Char('e') => {
+            state.clear_range_anchor();
+            state.toggle_hide_queued();
+        }
+        KeyCode::Char('R') => {
+            state.clear_range_anchor();
+            return Some(SelectorResult::Refresh);
+        }
         KeyCode::Char(c @ '1'..='9') => {
+            state.clear_range_anchor();
             #[allow(clippy::as_conversions)]
             let idx = (c as usize).saturating_sub('1' as usize);
             state.toggle_storage_dir(idx);
         }
         KeyCode::Enter => {
+            state.clear_range_anchor();
             if !state.selected.is_empty() {
                 state.step = WizardStep::ConfigureSettings;
             }
@@ -382,7 +484,7 @@ const fn handle_confirm(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
     use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -937,5 +1039,329 @@ mod tests {
 
         // Assert
         assert!(result.is_none());
+    }
+
+    // ── range selection ────────────────────────────────────────
+
+    use crate::encode_selector::state::EncodeRow;
+
+    fn make_state_with_rows(n: usize) -> EncodeSelectorState {
+        let rows: Vec<EncodeRow> = (0..n)
+            .map(|i| {
+                #[allow(clippy::as_conversions)]
+                let id = i as u64;
+                EncodeRow {
+                    recorded_id: id,
+                    channel_name: String::from("ch"),
+                    name: format!("row{i}"),
+                    start_at: 0,
+                    end_at: 0,
+                    video_resolution: String::new(),
+                    file_types: String::new(),
+                    source_video_file_id: Some(id),
+                    file_size: 0,
+                    drop_cnt: 0,
+                    error_cnt: 0,
+                    is_recording: false,
+                    is_encoding: false,
+                    file_exists: true,
+                }
+            })
+            .collect();
+        let page = PageInfo {
+            offset: 0,
+            size: 10,
+            total: 100,
+        };
+        EncodeSelectorState::new(rows, vec![], vec![], None, None, None, page, vec![])
+    }
+
+    #[test]
+    fn shift_down_sets_anchor_at_current_cursor_and_moves() {
+        // Arrange: cursor at row 1
+        let mut state = make_state_with_rows(5);
+        state.move_down(); // cursor=1
+
+        // Act: Shift+Down (anchor = 1, cursor moves to 2)
+        handle_recording_normal(&mut state, KeyCode::Down, KeyModifiers::SHIFT);
+
+        // Assert
+        assert_eq!(state.table_state.selected(), Some(2));
+        assert_eq!(state.range_preview(), Some((1, 2)));
+    }
+
+    #[test]
+    fn shift_space_selects_range_and_keeps_anchor() {
+        // Arrange: cursor at 1, Shift+Down x3 → preview 1..=4
+        let mut state = make_state_with_rows(6);
+        state.move_down(); // cursor=1
+        for _ in 0..3 {
+            handle_recording_normal(&mut state, KeyCode::Down, KeyModifiers::SHIFT);
+        }
+        assert_eq!(state.range_preview(), Some((1, 4)));
+
+        // Act: Shift+Space
+        handle_recording_normal(&mut state, KeyCode::Char(' '), KeyModifiers::SHIFT);
+
+        // Assert: rows 1..=4 selected, anchor kept (preview still visible)
+        assert!(state.selected.contains(&1));
+        assert!(state.selected.contains(&2));
+        assert!(state.selected.contains(&3));
+        assert!(state.selected.contains(&4));
+        assert!(state.range_preview().is_some());
+    }
+
+    #[test]
+    fn shift_space_toggles_same_range() {
+        // Arrange: Shift+Down 0→3, Shift+Space to select
+        let mut state = make_state_with_rows(5);
+        for _ in 0..3 {
+            handle_recording_normal(&mut state, KeyCode::Down, KeyModifiers::SHIFT);
+        }
+        handle_recording_normal(&mut state, KeyCode::Char(' '), KeyModifiers::SHIFT);
+        assert!(state.selected.contains(&0));
+        assert!(state.selected.contains(&3));
+
+        // Act: Shift+Space again → deselects same range (anchor row 0 is selected)
+        handle_recording_normal(&mut state, KeyCode::Char(' '), KeyModifiers::SHIFT);
+
+        // Assert: all deselected
+        assert!(!state.selected.contains(&0));
+        assert!(!state.selected.contains(&1));
+        assert!(!state.selected.contains(&2));
+        assert!(!state.selected.contains(&3));
+    }
+
+    #[test]
+    fn plain_space_during_range_confirms_and_keeps_anchor() {
+        // Arrange: Shift+Down 0→2
+        let mut state = make_state_with_rows(5);
+        for _ in 0..2 {
+            handle_recording_normal(&mut state, KeyCode::Down, KeyModifiers::SHIFT);
+        }
+        assert!(state.range_preview().is_some());
+
+        // Act: plain Space confirms (many terminals can't distinguish Shift+Space)
+        handle_recording_normal(&mut state, KeyCode::Char(' '), KeyModifiers::NONE);
+
+        // Assert: selected, anchor kept for re-toggle
+        assert!(state.selected.contains(&0));
+        assert!(state.selected.contains(&1));
+        assert!(state.selected.contains(&2));
+        assert!(state.range_preview().is_some());
+    }
+
+    #[test]
+    fn range_deselects_when_anchor_is_selected() {
+        // Arrange: select rows 0..=3, then Shift+Down from row 1 to deselect
+        let mut state = make_state_with_rows(5);
+        state.select_all();
+        state.move_down(); // cursor=1
+        for _ in 0..2 {
+            handle_recording_normal(&mut state, KeyCode::Down, KeyModifiers::SHIFT);
+        }
+
+        // Act: plain Space → deselects 1..=3, anchor kept
+        handle_recording_normal(&mut state, KeyCode::Char(' '), KeyModifiers::NONE);
+
+        // Assert
+        assert!(state.selected.contains(&0));
+        assert!(!state.selected.contains(&1));
+        assert!(!state.selected.contains(&2));
+        assert!(!state.selected.contains(&3));
+        assert!(state.selected.contains(&4));
+    }
+
+    #[test]
+    fn continued_shift_move_after_confirm_extends_from_anchor() {
+        // Arrange: Shift+Down 0→2, Shift+Space to select (anchor=0 kept)
+        let mut state = make_state_with_rows(6);
+        for _ in 0..2 {
+            handle_recording_normal(&mut state, KeyCode::Down, KeyModifiers::SHIFT);
+        }
+        handle_recording_normal(&mut state, KeyCode::Char(' '), KeyModifiers::SHIFT);
+
+        // Act: continue Shift+Down x2 → anchor stays at 0, cursor=4
+        for _ in 0..2 {
+            handle_recording_normal(&mut state, KeyCode::Down, KeyModifiers::SHIFT);
+        }
+
+        // Assert: range extends from original anchor 0 to cursor 4
+        assert_eq!(state.range_preview(), Some((0, 4)));
+    }
+
+    #[test]
+    fn shift_uppercase_k_moves_up_with_range() {
+        // Arrange: crossterm reports Shift+k as Char('K')
+        let mut state = make_state_with_rows(5);
+        state.move_down();
+        state.move_down(); // cursor=2
+
+        // Act: Shift+K (uppercase)
+        handle_recording_normal(&mut state, KeyCode::Char('K'), KeyModifiers::SHIFT);
+
+        // Assert: anchor=2, cursor=1
+        assert_eq!(state.table_state.selected(), Some(1));
+        assert_eq!(state.range_preview(), Some((1, 2)));
+    }
+
+    #[test]
+    fn normal_move_clears_anchor() {
+        // Arrange
+        let mut state = make_state_with_rows(5);
+        handle_recording_normal(&mut state, KeyCode::Down, KeyModifiers::SHIFT);
+        assert!(state.range_preview().is_some());
+
+        // Act: normal Down
+        handle_recording_normal(&mut state, KeyCode::Down, KeyModifiers::NONE);
+
+        // Assert
+        assert_eq!(state.range_preview(), None);
+    }
+
+    #[test]
+    fn shift_space_without_anchor_falls_back_to_toggle() {
+        // Arrange
+        let mut state = make_state_with_rows(3);
+        assert!(state.selected.is_empty());
+
+        // Act: Shift+Space with no anchor
+        handle_recording_normal(&mut state, KeyCode::Char(' '), KeyModifiers::SHIFT);
+
+        // Assert: toggles current row (row 0)
+        assert!(state.selected.contains(&0));
+    }
+
+    #[test]
+    fn range_selection_skips_unavailable_rows() {
+        // Arrange: cursor at 0, Shift+Down x4 → preview 0..=4
+        let mut state = make_state_with_rows(5);
+        state.rows[2].file_exists = false;
+        for _ in 0..4 {
+            handle_recording_normal(&mut state, KeyCode::Down, KeyModifiers::SHIFT);
+        }
+
+        // Act: Shift+Space
+        handle_recording_normal(&mut state, KeyCode::Char(' '), KeyModifiers::SHIFT);
+
+        // Assert: row 2 not selected, others are
+        assert!(state.selected.contains(&0));
+        assert!(state.selected.contains(&1));
+        assert!(!state.selected.contains(&2));
+        assert!(state.selected.contains(&3));
+        assert!(state.selected.contains(&4));
+    }
+
+    #[test]
+    fn shift_up_sets_anchor_and_moves_cursor() {
+        // Arrange: cursor at row 3
+        let mut state = make_state_with_rows(5);
+        for _ in 0..3 {
+            state.move_down();
+        }
+
+        // Act: Shift+Up
+        handle_recording_normal(&mut state, KeyCode::Up, KeyModifiers::SHIFT);
+
+        // Assert: anchor=3, cursor=2
+        assert_eq!(state.table_state.selected(), Some(2));
+        assert_eq!(state.range_preview(), Some((2, 3)));
+    }
+
+    #[test]
+    fn shift_uppercase_j_moves_down_with_range() {
+        // Arrange
+        let mut state = make_state_with_rows(5);
+
+        // Act: Shift+J (uppercase, as crossterm reports)
+        handle_recording_normal(&mut state, KeyCode::Char('J'), KeyModifiers::SHIFT);
+
+        // Assert: anchor=0, cursor=1
+        assert_eq!(state.table_state.selected(), Some(1));
+        assert_eq!(state.range_preview(), Some((0, 1)));
+    }
+
+    #[test]
+    fn select_all_clears_anchor() {
+        // Arrange
+        let mut state = make_state_with_rows(5);
+        handle_recording_normal(&mut state, KeyCode::Down, KeyModifiers::SHIFT);
+        assert!(state.range_preview().is_some());
+
+        // Act
+        handle_recording_normal(&mut state, KeyCode::Char('a'), KeyModifiers::NONE);
+
+        // Assert
+        assert_eq!(state.range_preview(), None);
+    }
+
+    #[test]
+    fn deselect_all_clears_anchor() {
+        // Arrange
+        let mut state = make_state_with_rows(5);
+        handle_recording_normal(&mut state, KeyCode::Down, KeyModifiers::SHIFT);
+
+        // Act
+        handle_recording_normal(&mut state, KeyCode::Char('A'), KeyModifiers::NONE);
+
+        // Assert
+        assert_eq!(state.range_preview(), None);
+    }
+
+    #[test]
+    fn pagedown_clears_anchor() {
+        // Arrange
+        let mut state = make_state_with_rows(5);
+        handle_recording_normal(&mut state, KeyCode::Down, KeyModifiers::SHIFT);
+
+        // Act
+        handle_recording_normal(&mut state, KeyCode::PageDown, KeyModifiers::NONE);
+
+        // Assert
+        assert_eq!(state.range_preview(), None);
+    }
+
+    #[test]
+    fn pageup_clears_anchor() {
+        // Arrange
+        let mut state = make_state_with_rows(5);
+        for _ in 0..3 {
+            state.move_down();
+        }
+        handle_recording_normal(&mut state, KeyCode::Down, KeyModifiers::SHIFT);
+
+        // Act
+        handle_recording_normal(&mut state, KeyCode::PageUp, KeyModifiers::NONE);
+
+        // Assert
+        assert_eq!(state.range_preview(), None);
+    }
+
+    #[test]
+    fn filter_toggle_clears_anchor() {
+        // Arrange
+        let mut state = make_state_with_rows(5);
+        handle_recording_normal(&mut state, KeyCode::Down, KeyModifiers::SHIFT);
+
+        // Act: 'f' (toggle hide unavailable)
+        handle_recording_normal(&mut state, KeyCode::Char('f'), KeyModifiers::NONE);
+
+        // Assert
+        assert_eq!(state.range_preview(), None);
+    }
+
+    #[test]
+    fn enter_clears_anchor() {
+        // Arrange
+        let mut state = make_state_with_rows(5);
+        handle_recording_normal(&mut state, KeyCode::Down, KeyModifiers::SHIFT);
+        // Need selection to proceed
+        state.selected.insert(0);
+
+        // Act
+        handle_recording_normal(&mut state, KeyCode::Enter, KeyModifiers::NONE);
+
+        // Assert: anchor cleared (step changed to ConfigureSettings)
+        assert_eq!(state.range_preview(), None);
     }
 }

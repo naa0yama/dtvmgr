@@ -173,11 +173,13 @@ fn draw_recording_list(frame: &mut Frame, state: &mut EncodeSelectorState) {
     ])
     .style(header_style);
 
+    let range_preview = state.range_preview();
     let rows: Vec<Row> = state
         .filtered_indices()
         .iter()
-        .filter_map(|&idx| state.rows.get(idx))
-        .map(|row| {
+        .enumerate()
+        .filter_map(|(fi, &idx)| state.rows.get(idx).map(|row| (fi, row)))
+        .map(|(fi, row)| {
             let sel = if state.selected.contains(&row.recorded_id) {
                 "[x]"
             } else {
@@ -194,8 +196,13 @@ fn draw_recording_list(frame: &mut Frame, state: &mut EncodeSelectorState) {
                 ""
             };
 
+            let in_range = range_preview.is_some_and(|(lo, hi)| fi >= lo && fi <= hi);
             let style = if !row.file_exists || row.source_video_file_id.is_none() {
                 Style::default().fg(Color::Red)
+            } else if in_range {
+                Style::default()
+                    .fg(Color::Blue)
+                    .add_modifier(Modifier::BOLD)
             } else if state.selected.contains(&row.recorded_id) {
                 Style::default().fg(Color::Green)
             } else {
@@ -261,34 +268,46 @@ fn draw_recording_list(frame: &mut Frame, state: &mut EncodeSelectorState) {
     frame.render_stateful_widget(table, chunks[1], &mut state.table_state);
 
     // Footer
+    // Navigation group
     let mut footer_spans = vec![
         Span::styled(" \u{2191}\u{2193}/jk", Style::default().fg(Color::Cyan)),
         Span::raw(":move "),
-        Span::styled("Space", Style::default().fg(Color::Cyan)),
-        Span::raw(":toggle "),
-        Span::styled("a", Style::default().fg(Color::Cyan)),
-        Span::raw(":all "),
-        Span::styled("A", Style::default().fg(Color::Cyan)),
-        Span::raw(":none "),
-        Span::styled("f", Style::default().fg(Color::Cyan)),
-        Span::raw(":avail "),
-        Span::styled("e", Style::default().fg(Color::Cyan)),
-        Span::raw(":\u{00ac}queue "),
-        Span::styled("R", Style::default().fg(Color::Cyan)),
-        Span::raw(":refresh "),
+        Span::styled("PgUp/Dn", Style::default().fg(Color::Cyan)),
+        Span::raw(":scroll "),
     ];
-    footer_spans.push(Span::styled("PgUp/Dn", Style::default().fg(Color::Cyan)));
-    footer_spans.push(Span::raw(":scroll "));
-    if has_storage {
-        footer_spans.push(Span::styled("1-9", Style::default().fg(Color::Cyan)));
-        footer_spans.push(Span::raw(":storage "));
-    }
     if state.has_prev_page() || state.has_next_page() {
         footer_spans.push(Span::styled(
             "\u{2190}\u{2192}/h/l",
             Style::default().fg(Color::Cyan),
         ));
         footer_spans.push(Span::raw(":page "));
+    }
+    // Selection group
+    footer_spans.extend([
+        Span::styled("Space", Style::default().fg(Color::Cyan)),
+        Span::raw(":toggle "),
+        Span::styled("S-\u{2191}\u{2193}", Style::default().fg(Color::Cyan)),
+        Span::raw(":range "),
+        Span::styled("S-Spc", Style::default().fg(Color::Cyan)),
+        Span::raw(":sel "),
+        Span::styled("a", Style::default().fg(Color::Cyan)),
+        Span::raw(":all "),
+        Span::styled("A", Style::default().fg(Color::Cyan)),
+        Span::raw(":none "),
+    ]);
+    // Filter group
+    footer_spans.extend([
+        Span::styled("f", Style::default().fg(Color::Cyan)),
+        Span::raw(":avail "),
+        Span::styled("e", Style::default().fg(Color::Cyan)),
+        Span::raw(":\u{00ac}queue "),
+        Span::styled("R", Style::default().fg(Color::Cyan)),
+        Span::raw(":refresh "),
+    ]);
+    // Action group
+    if has_storage {
+        footer_spans.push(Span::styled("1-9", Style::default().fg(Color::Cyan)));
+        footer_spans.push(Span::raw(":storage "));
     }
     footer_spans.extend([
         Span::styled("Enter", Style::default().fg(Color::Cyan)),
