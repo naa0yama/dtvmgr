@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.4.2](https://github.com/naa0yama/dtvmgr/compare/v0.4.1...v0.4.2) - 2026-03-27
+### Development Environment 🔧
+- chore(deps): update taiki-e/install-action action to v2.69.2 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/170
+- chore(deps): update taiki-e/install-action action to v2.69.3 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/172
+- chore(deps): update dependency aqua:taiki-e/cargo-llvm-cov to v0.8.5 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/174
+### Other Changes
+- feat(tui): add Shift+arrow range selection to encode selector by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/173
+
 ## [v0.4.1](https://github.com/naa0yama/dtvmgr/compare/v0.4.0...v0.4.1) - 2026-03-26
 
 ### Other Changes
