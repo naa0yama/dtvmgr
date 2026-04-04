@@ -45,6 +45,7 @@ jobs:
                 /^\.github\/actions\/act-setup-rust\//,
                 /^\.github\/workflows\/rust-ci\.yaml$/,
                 /^ast-rules\/.*\.yml$/,
+                /^mise\.toml$/,
                 /^rust-toolchain\.toml$/,
               ],
               miri: [
