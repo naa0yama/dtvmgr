@@ -1,7 +1,6 @@
 [env]
 OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:5080/api/default"
 RUST_LOG = "warn,dtvmgr=trace"
-RUSTC_WRAPPER = "sccache"
 ## renovate: datasource=github-releases packageName=openobserve/openobserve versioning=semver automerge=true
 OPENOBSERVE_VERSION = "v0.70.1"
 _.source = [".devcontainer/o2-env.sh"]
@@ -21,7 +20,9 @@ codeql = { version = "latest", bin_path = "codeql", platforms = { linux-x64 = { 
 
 [tasks.setup]
 description = "Initial project setup"
-run = "chmod +x .githooks/*"
+run = """
+if [ -d .githooks ]; then chmod +x .githooks/*; fi
+"""
 
 [tasks.build]
 description = "Debug build"
@@ -183,6 +184,7 @@ git worktree add --detach "${tmp}"
 git -C "${tmp}" config --local --unset core.hookspath 2>/dev/null || true
 cd "${tmp}"
 git checkout --orphan badges
+git rm -rf . > /dev/null 2>&1
 git clean -fd > /dev/null 2>&1
 
 # Empty placeholders — octocov overwrites these on first CI run
