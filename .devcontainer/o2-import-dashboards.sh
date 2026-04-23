@@ -22,6 +22,17 @@ fi
 imported=0
 skipped=0
 
+# Fetch existing dashboard titles once to avoid N+1 API calls.
+existing_titles=$(curl -sf --retry 3 --retry-delay 2 --retry-connrefused -u "$AUTH" "${BASE}/api/${ORG}/dashboards" 2>/dev/null \
+  | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for d in data.get('dashboards', []):
+    t = d.get('title', '')
+    if t:
+        print(t)
+" 2>/dev/null || true)
+
 for f in "$DASHBOARDS_DIR"/*.json; do
   [ -f "$f" ] || continue
 
@@ -32,22 +43,14 @@ for f in "$DASHBOARDS_DIR"/*.json; do
     continue
   fi
 
-  # List existing dashboards and check if one with the same title exists.
-  exists=$(curl -sf -u "$AUTH" "${BASE}/api/${ORG}/dashboards" 2>/dev/null \
-    | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-dashboards = data.get('dashboards', [])
-print(any(d.get('title') == '$title' for d in dashboards))
-" 2>/dev/null || echo "False")
-
-  if [ "$exists" = "True" ]; then
+  # Check if a dashboard with the same title already exists.
+  if echo "$existing_titles" | grep -qxF "$title"; then
     echo "  SKIP $(basename "$f"): \"${title}\" already exists"
     skipped=$((skipped + 1))
     continue
   fi
 
-  status=$(curl -sf -o /dev/null -w '%{http_code}' \
+  status=$(curl -sf --retry 3 --retry-delay 2 --retry-connrefused -o /dev/null -w '%{http_code}' \
     -u "$AUTH" \
     -H 'Content-Type: application/json' \
     -X POST "${BASE}/api/${ORG}/dashboards" \

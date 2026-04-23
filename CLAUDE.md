@@ -35,7 +35,6 @@ All tasks use `mise run <task>`:
 | Miri (UB detection)   | `mise run miri`               |
 | Clean (full)          | `mise run clean`              |
 | Clean (sweep)         | `mise run clean:sweep`        |
-| Clean (cache)         | `mise run clean:cache`        |
 | Badges (init)         | `mise run badges:init`        |
 | Claude Code (install) | `mise run claudecode:install` |
 | O2 (install)          | `mise run o2:install`         |

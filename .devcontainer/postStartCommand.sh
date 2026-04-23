@@ -35,8 +35,27 @@ else
 	echo "All mounts validated successfully!"
 fi
 
+# mise bootstrap: install or upgrade to pinned version
+export PATH="$HOME/.local/bin:$PATH"
+## renovate: datasource=github-releases packageName=jdx/mise versioning=calver:YYYY.M.D automerge=true
+MISE_PINNED_VERSION="2026.4.18"
+
+installed_version=""
+if command -v mise > /dev/null 2>&1; then
+	installed_version="$(mise --version | awk '{print $1}')"
+fi
+
+if [ "$installed_version" != "$MISE_PINNED_VERSION" ]; then
+	echo "Installing mise v${MISE_PINNED_VERSION} (installed: ${installed_version:-none})..."
+	MISE_VERSION="v${MISE_PINNED_VERSION}" \
+		curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
+		https://mise.jdx.dev/install.sh | sh
+fi
+mise --version
+
 chmod +x .githooks/*
 git config --local --unset core.hookspath || true
+mise trust -y /app
 mise settings add trusted_config_paths /app
 mise install
 
