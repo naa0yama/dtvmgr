@@ -7,15 +7,21 @@
 		{
 			"type": "lldb",
 			"request": "launch",
+			// gh-sync:keep-start
 			"name": "Debug executable 'dtvmgr'",
+			// gh-sync:keep-end
 			"cargo": {
 				"args": [
 					"build",
+					// gh-sync:keep-start
 					"--bin=dtvmgr",
 					"--package=dtvmgr"
+					// gh-sync:keep-end
 				],
 				"filter": {
+					// gh-sync:keep-start
 					"name": "dtvmgr",
+					// gh-sync:keep-end
 					"kind": "bin"
 				}
 			},
@@ -25,16 +31,22 @@
 		{
 			"type": "lldb",
 			"request": "launch",
+			// gh-sync:keep-start
 			"name": "Debug unit tests in executable 'dtvmgr'",
+			// gh-sync:keep-end
 			"cargo": {
 				"args": [
 					"test",
 					"--no-run",
+					// gh-sync:keep-start
 					"--bin=dtvmgr",
 					"--package=dtvmgr"
+					// gh-sync:keep-end
 				],
 				"filter": {
+					// gh-sync:keep-start
 					"name": "dtvmgr",
+					// gh-sync:keep-end
 					"kind": "bin"
 				}
 			},

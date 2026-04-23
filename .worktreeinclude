@@ -2,9 +2,13 @@
 .claude/skills/lib-*/SKILL.md
 .claude/skills/tool-*/SKILL.md
 
+# o2
+.mcp.json
+
+# gh-sync:keep-start
+# Project-specific dependencies are listed here.
+
 # dtvmgr
 dtvmgr.db
 dtvmgr.toml
-
-# o2
-.mcp.json
+# gh-sync:keep-end
