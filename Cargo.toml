@@ -41,7 +41,6 @@ dtvmgr-vmaf = { path = "crates/dtvmgr-vmaf" }
 # Core
 chrono = "0.4"
 futures = "0.3"
-gethostname = "1"
 libc = "0.2"
 regex = "1"
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
@@ -70,10 +69,10 @@ wiremock = "0.6"
 
 # gh-sync:keep-end
 
-# Core
+## Core
 anyhow = "1.0"
 
-# Logging
+## Logging
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", default-features = false, features = ["env-filter", "fmt", "ansi", "std"] }
 
@@ -83,6 +82,9 @@ sysinfo = { version = "0.38", default-features = false, features = ["system"] }
 ## OpenTelemetry semantic conventions (optional, behind `process-metrics` feature)
 ## semconv_experimental: enables process.* metric name constants (currently experimental)
 opentelemetry-semantic-conventions = { version = "0.31", default-features = false, features = ["semconv_experimental"] }
+
+## Hostname (optional, behind `otel` feature)
+gethostname = "1.1.0"
 
 ## OpenTelemetry (optional, behind `otel` feature)
 opentelemetry = { version = "0.31", default-features = false, features = ["trace", "metrics", "logs"] }

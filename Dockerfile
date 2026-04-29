@@ -128,8 +128,6 @@ RUN --mount=type=bind,source=rust-toolchain.toml,target=/rust-toolchain.toml \
 #-
 FROM ghcr.io/naa0yama/join_logo_scp_trial:v26.03.08.01-ubuntu2404@sha256:faaf043461e7f8d05a3cbdd7d5e20756418e99b06ed60061853827e7489dc725 AS jlse
 # gh-sync:keep-end
-
-
 #- -------------------------------------------------------------------------------------------------
 #- Development
 #-
