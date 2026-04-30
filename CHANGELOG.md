@@ -1,5 +1,74 @@
 # Changelog
 
+## [v0.4.3](https://github.com/naa0yama/dtvmgr/compare/v0.4.2...v0.4.3) - 2026-04-30
+### Documentation 🗒️
+- ci: backport infrastructure from brust template by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/222
+### Dependency Updates 📦
+- chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/183
+- chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/200
+- chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/217
+- chore(deps): update rust crate clap to v4.6.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/225
+- chore(deps): update rust crate clap_complete to v4.6.2 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/226
+- chore(deps): update rust crate libc to v0.2.185 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/227
+- chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/229
+- chore(deps): update rust crate assert_cmd to v2.2.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/234
+- chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/237
+### Development Environment 🔧
+- chore(deps): update github/codeql-action action to v4.34.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/175
+- chore(deps): update github/codeql-action action to v4.34.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/177
+- chore(deps): update taiki-e/install-action action to v2.69.4 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/178
+- chore(deps): update taiki-e/install-action action to v2.69.5 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/179
+- chore(deps): update taiki-e/install-action action to v2.69.6 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/180
+- chore(deps): update jdx/mise-action action to v4.0.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/181
+- chore(deps): update taiki-e/install-action action to v2.69.7 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/185
+- chore(deps): update taiki-e/install-action action to v2.69.8 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/186
+- chore(deps): update taiki-e/install-action action to v2.69.9 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/187
+- chore(deps): update taiki-e/install-action action to v2.69.10 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/188
+- chore(deps): update dependency openobserve/openobserve to v0.70.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/189
+- chore(deps): update dependency dprint to v0.53.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/190
+- chore(deps): update taiki-e/install-action action to v2.69.11 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/191
+- chore(deps): update taiki-e/install-action action to v2.69.12 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/192
+- chore(deps): update github/codeql-action action to v4.35.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/193
+- chore(deps): update all action update by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/194
+- ci: backport boilerplate-rust infrastructure changes by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/195
+- chore: backport boilerplate-rust followup (CI trigger, sccache isolation) by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/196
+- chore(deps): update taiki-e/install-action action to v2.69.14 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/197
+- chore(deps): update taiki-e/install-action action to v2.70.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/198
+- chore(deps): update taiki-e/install-action action to v2.70.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/199
+- chore(deps): update taiki-e/install-action action to v2.70.2 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/201
+- chore(deps): update dependency actionlint to v1.7.12 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/202
+- chore(deps): update taiki-e/install-action action to v2.70.3 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/203
+- chore(deps): update dependency openobserve/openobserve to v0.70.2 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/204
+- chore(deps): update taiki-e/install-action action to v2.70.4 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/206
+- chore(deps): update dependency dprint to v0.53.2 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/207
+- chore(deps): update taiki-e/install-action action to v2.71.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/208
+- chore(deps): update taiki-e/install-action action to v2.71.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/209
+- chore(deps): update taiki-e/install-action action to v2.71.2 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/210
+- chore(deps): update docker/login-action action to v4.1.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/211
+- chore(deps): update taiki-e/install-action action to v2.71.3 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/212
+- chore(deps): update dependency aqua:ast-grep/ast-grep to v0.42.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/213
+- chore(deps): update taiki-e/install-action action to v2.72.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/214
+- chore(deps): update all action update by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/215
+- chore(deps): update dependency openobserve/openobserve to v0.70.3 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/216
+- chore(deps): update songmu/tagpr action to v1.18.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/218
+- chore(deps): update taiki-e/install-action action to v2.74.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/219
+- chore(deps): update taiki-e/install-action action to v2.75.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/220
+- chore(deps): update dependency aqua:embarkstudios/cargo-deny to v0.19.4 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/224
+- chore(deps): update all action update by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/223
+- chore(deps): update rust docker tag to v1.94.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/184
+- chore(deps): update devcontainers/ci action to v0.3.1900000448 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/231
+- chore(deps): update taiki-e/install-action action to v2.75.16 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/232
+- chore(deps): update devcontainers/ci action to v0.3.1900000449 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/233
+- chore(deps): update taiki-e/install-action action to v2.75.17 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/235
+- chore(deps): update taiki-e/install-action action to v2.75.18 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/236
+- chore(deps): update taiki-e/install-action action to v2.75.19 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/238
+- chore(deps): update dependency usage to v3.2.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/239
+- chore(deps): update dependency ghalint to v1.5.5 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/241
+- chore(deps): update dependency zizmor to v1.16.3 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/242
+- chore: backport naa0yama/boilerplate-rust changes by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/240
+- chore(deps): update dependency jdx/mise to v2026.4.19 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/244
+- chore(deps): update mozilla-actions/sccache-action action to v0.0.10 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/245
+
 ## [v0.4.2](https://github.com/naa0yama/dtvmgr/compare/v0.4.1...v0.4.2) - 2026-03-27
 
 ### Development Environment 🔧
