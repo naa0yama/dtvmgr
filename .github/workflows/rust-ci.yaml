@@ -288,15 +288,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          #!/usr/bin/env bash
           set -euo pipefail
 
           [[ -f coverage.svg && -f time.svg ]] || { echo "Badge files not found, skipping"; exit 0; }
-
-          # Skip if badges branch does not exist yet (run: mise run badges:init first)
-          if ! gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/badges" --silent 2>/dev/null; then
-            echo "badges branch not found, skipping (run: mise run badges:init)"
-            exit 0
-          fi
 
           # Create blobs via stdin (avoids shell argument size limits)
           coverage_blob=$(base64 -w0 coverage.svg \
