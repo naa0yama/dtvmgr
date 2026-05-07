@@ -1,9 +1,13 @@
 # Changelog
 
 ## [v0.4.3](https://github.com/naa0yama/dtvmgr/compare/v0.4.2...v0.4.3) - 2026-05-07
+
 ### Documentation 🗒️
+
 - ci: backport infrastructure from brust template by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/222
+
 ### Dependency Updates 📦
+
 - chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/183
 - chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/200
 - chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/217
@@ -14,7 +18,9 @@
 - chore(deps): update rust crate assert_cmd to v2.2.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/234
 - chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/237
 - chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/253
+
 ### Development Environment 🔧
+
 - chore(deps): update github/codeql-action action to v4.34.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/175
 - chore(deps): update github/codeql-action action to v4.34.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/177
 - chore(deps): update taiki-e/install-action action to v2.69.4 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/178
