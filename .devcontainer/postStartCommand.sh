@@ -72,7 +72,8 @@ if [ -S "${_gpg_rtdir}/gnupg/S.gpg-agent" ] && \
 fi
 unset _gpg_rtdir _gpg_home
 
-# ~/.ssh may not exist if the host bind-mount was not set up yet
+# SSH: add github.com host keys to known_hosts inside the container.
+# ~/.ssh may not exist if the host bind-mount was not set up yet.
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
 if ! grep -qF 'github.com' ~/.ssh/known_hosts 2>/dev/null; then
 	ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
@@ -97,4 +98,3 @@ mise run o2
 # Project-specific dependencies are listed here.
 
 # graft:keep-end
-

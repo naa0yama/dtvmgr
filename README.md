@@ -212,7 +212,7 @@ mise run miri             # 未定義動作検出
 ### コミット前チェック
 
 ```bash
-mise run pre-commit       # fmt:check + clippy:strict + ast-grep + lint:gh
+mise run pre-commit       # fmt:check + clippy:strict + ast-grep + lint:gh + check:no-plans
 ```
 
 ### OTel 対応
