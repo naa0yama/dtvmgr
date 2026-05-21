@@ -1,6 +1,12 @@
 # gitleaks:ignore entries for false positives
 # Format: <commit>:<file>:<rule-id>:<line>
-#
-# a0b7d3e6 chore: ast-rules — documentation bad-example in _rules.md
+
+# cb741372 Initial commit — ast-rules/_rules.md documentation bad-example
 # The key "sk-1234..." is a fake placeholder illustrating the no-hardcoded-credentials rule.
-a0b7d3e6fbf03977055f6c660e3a62a279d076b1:ast-rules/_rules.md:generic-api-key:463
+cb7413723b8e5625ce78b02939f7d1b6d160dc0a:ast-rules/_rules.md:generic-api-key:181
+
+# 59116293 Dev/1st build (#24) — TMDB API spec samples (not real credentials)
+# These are example tokens from the TMDB API documentation used as request/response samples.
+591162937fae577244663afe0772d4cfc2c64cec:docs/specs/external/themoviedb/tmdb-api.json:jwt:1520
+591162937fae577244663afe0772d4cfc2c64cec:docs/specs/external/themoviedb/tmdb-api.json:generic-api-key:1466
+591162937fae577244663afe0772d4cfc2c64cec:docs/specs/external/themoviedb/tmdb-api.json:generic-api-key:1576
