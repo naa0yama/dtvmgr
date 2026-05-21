@@ -1,0 +1,22 @@
+id: no-real-ipv6
+language: rust
+severity: warning
+message: "Real IPv6 address — use RFC 3849 documentation prefix (2001:db8::/32) instead"
+note: |
+  Approved ranges:
+    2001:db8::/32    RFC 3849 documentation  e.g. 2001:db8::1
+           ::1       loopback
+        fe80::/10    link-local              e.g. fe80::1
+            ::       unspecified
+rule:
+  all:
+    - any:
+        - kind: string_literal
+        - kind: line_comment
+        - kind: block_comment
+    - regex: "(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{0,4}"
+    - not:
+        # [0-2]\d:[0-5]\d:[0-5]\d — clock time HH:MM:SS (datetimes, ffmpeg time= output)
+        # \b[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\b — 2-char hex triplets (ab:cd:ef invalid-time tests)
+        # scale=\d{3,4}:\d{3,4} — ffmpeg scale filter resolution (1920:1080)
+        regex: '(2001:[Dd][Bb]8:|::1\b|^::$|[Ff][Ee]80::|[0-2]\d:[0-5]\d:[0-5]\d|\b[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\b|scale=\d{3,4}:\d{3,4})'
