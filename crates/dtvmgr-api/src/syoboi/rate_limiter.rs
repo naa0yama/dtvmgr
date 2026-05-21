@@ -62,7 +62,7 @@ impl SyoboiRateLimiter {
         if self.hourly_window.len() >= self.hourly_limit
             && let Some(&oldest) = self.hourly_window.front()
         {
-            let wait_until = oldest + Duration::from_secs(3600);
+            let wait_until = oldest + Duration::from_hours(1);
             let now = Instant::now();
             if now < wait_until {
                 tracing::warn!(
@@ -77,7 +77,7 @@ impl SyoboiRateLimiter {
         if self.daily_window.len() >= self.daily_limit
             && let Some(&oldest) = self.daily_window.front()
         {
-            let wait_until = oldest + Duration::from_secs(86400);
+            let wait_until = oldest + Duration::from_hours(24);
             let now = Instant::now();
             if now < wait_until {
                 tracing::warn!(
@@ -101,8 +101,8 @@ impl SyoboiRateLimiter {
 
     /// Removes expired entries from sliding windows.
     fn cleanup_windows(&mut self, now: Instant) {
-        let hour_ago = now.checked_sub(Duration::from_secs(3600));
-        let day_ago = now.checked_sub(Duration::from_secs(86400));
+        let hour_ago = now.checked_sub(Duration::from_hours(1));
+        let day_ago = now.checked_sub(Duration::from_hours(24));
 
         if let Some(hour_ago) = hour_ago {
             while self.hourly_window.front().is_some_and(|&t| t < hour_ago) {
@@ -176,7 +176,7 @@ mod tests {
         let mut limiter = SyoboiRateLimiter::new(Duration::from_secs(0), 500, 10_000);
         let now = Instant::now();
         // Insert timestamps from 2 hours ago (expired for hourly, not for daily)
-        let two_hours_ago = now.checked_sub(Duration::from_secs(7200)).unwrap();
+        let two_hours_ago = now.checked_sub(Duration::from_hours(2)).unwrap();
         limiter.hourly_window.push_back(two_hours_ago);
         limiter.daily_window.push_back(two_hours_ago);
         // Insert a recent timestamp
@@ -225,7 +225,7 @@ mod tests {
         let mut limiter = SyoboiRateLimiter::new(Duration::from_secs(0), 500, 10_000);
         let now = Instant::now();
         // Insert a timestamp from 2 days ago (expired for both hourly and daily)
-        let two_days_ago = now.checked_sub(Duration::from_secs(172_800)).unwrap();
+        let two_days_ago = now.checked_sub(Duration::from_hours(48)).unwrap();
         limiter.hourly_window.push_back(two_days_ago);
         limiter.daily_window.push_back(two_days_ago);
         // Insert a recent timestamp
@@ -337,7 +337,7 @@ mod tests {
         // Arrange: multiple expired entries in hourly window
         let mut limiter = SyoboiRateLimiter::new(Duration::from_secs(0), 500, 10_000);
         let now = Instant::now();
-        let two_hours_ago = now.checked_sub(Duration::from_secs(7200)).unwrap();
+        let two_hours_ago = now.checked_sub(Duration::from_hours(2)).unwrap();
 
         // Push 3 expired and 2 recent
         for _ in 0..3 {

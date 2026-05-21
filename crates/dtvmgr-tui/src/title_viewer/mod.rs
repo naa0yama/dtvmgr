@@ -259,10 +259,8 @@ fn handle_normal_input(
         KeyCode::Left => state.focus_titles(),
         KeyCode::PageUp => state.page_up(page_size),
         KeyCode::PageDown => state.page_down(page_size),
-        KeyCode::Char('/') => {
-            if state.active_pane == ActivePane::Titles {
-                state.input_mode = InputMode::Filter;
-            }
+        KeyCode::Char('/') if state.active_pane == ActivePane::Titles => {
+            state.input_mode = InputMode::Filter;
         }
         KeyCode::Char('t') => state.toggle_tmdb_filter(),
         KeyCode::Char('p') => state.toggle_programs(),

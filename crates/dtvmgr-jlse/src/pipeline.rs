@@ -468,7 +468,7 @@ fn run_pipeline_inner(
     if ctx.encode {
         // Pre-encode free space check on the output directory.
         if let Some(ref out_dir) = ctx.out_dir {
-            let input_size = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
+            let input_size = std::fs::metadata(&input).map_or(0, |m| m.len());
             if input_size > 0
                 && let Some(free) = storage::free_bytes(out_dir)
             {

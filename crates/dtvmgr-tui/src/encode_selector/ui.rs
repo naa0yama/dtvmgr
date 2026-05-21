@@ -673,11 +673,10 @@ fn draw_confirm_footer(
             clippy::as_conversions,
             clippy::arithmetic_side_effects
         )]
-        let pct = if progress.total == 0 {
-            0
-        } else {
-            ((progress.current * 100) / progress.total).min(100) as u16
-        };
+        let pct = (progress.current * 100)
+            .checked_div(progress.total)
+            .unwrap_or(0)
+            .min(100) as u16;
         let gauge = Gauge::default()
             .block(Block::default().borders(Borders::ALL).title(" Submitting "))
             .gauge_style(Style::default().fg(Color::Green).bg(Color::DarkGray))
