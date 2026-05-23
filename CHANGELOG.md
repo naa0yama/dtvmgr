@@ -1,11 +1,15 @@
 # Changelog
 
 ## [v0.4.3](https://github.com/naa0yama/dtvmgr/compare/v0.4.2...v0.4.3) - 2026-05-23
+
 ### Documentation 🗒️
+
 - ci: backport infrastructure from brust template by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/222
 - build(mise): migrate to cargo-nextest and remove codeql tooling by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/282
 - chore: backport toolchain, ast-rules, and CI updates by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/310
+
 ### Dependency Updates 📦
+
 - chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/183
 - chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/200
 - chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/217
@@ -19,7 +23,9 @@
 - chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/273
 - chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/299
 - chore(deps): update rust crate assert_cmd to v2.2.2 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/303
+
 ### Development Environment 🔧
+
 - chore(deps): update github/codeql-action action to v4.34.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/175
 - chore(deps): update github/codeql-action action to v4.34.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/177
 - chore(deps): update taiki-e/install-action action to v2.69.4 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/178
@@ -126,7 +132,9 @@
 - chore(deps): update taiki-e/install-action action to v2.77.7 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/308
 - chore(deps): update all action update by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/313
 - chore(deps): update dependency jdx/mise to v2026.5.10 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/315
+
 ### Other Changes
+
 - chore: add devcontainer GPG/SSH setup and update graft to 0.5.5 by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/270
 - build(cargo): suppress unexpected_cfgs warning for coverage_nightly by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/283
 
