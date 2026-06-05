@@ -42,7 +42,7 @@ fi
 # mise bootstrap: install or upgrade to pinned version
 export PATH="$HOME/.local/bin:$PATH"
 ## renovate: datasource=github-releases packageName=jdx/mise versioning=calver:YYYY.M.D automerge=true
-MISE_PINNED_VERSION="2026.5.10"
+MISE_PINNED_VERSION="2026.5.16"
 
 installed_version=""
 if command -v mise > /dev/null 2>&1; then
@@ -72,8 +72,8 @@ if [ -S "${_gpg_rtdir}/gnupg/S.gpg-agent" ] && \
 fi
 unset _gpg_rtdir _gpg_home
 
-# SSH: populate known_hosts with github.com host keys inside the container.
-# Always overwrites to prevent stale/duplicate key entries; creates file if absent.
+# SSH: populate known_hosts with github.com host keys inside the container
+# Idempotent: ~/.ssh may not exist if the host bind-mount was not set up yet.
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
 ssh-keyscan -H github.com > ~/.ssh/known_hosts 2>/dev/null
 chmod 600 ~/.ssh/known_hosts

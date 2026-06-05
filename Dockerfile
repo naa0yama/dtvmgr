@@ -1,10 +1,10 @@
-# syntax=docker/dockerfile:1.23.0@sha256:2780b5c3bab67f1f76c781860de469442999ed1a0d7992a5efdf2cffc0e3d769
+# syntax=docker/dockerfile:1.24.0@sha256:87999aa3d42bdc6bea60565083ee17e86d1f3339802f543c0d03998580f9cb89
 #- -------------------------------------------------------------------------------------------------
 #- Global
 #-
 ARG DEBIAN_FRONTEND=noninteractive \
 	TZ=${TZ:-Asia/Tokyo} \
-	USER_NAME=cuser \
+	USER_NAME=user \
 	USER_UID=${USER_UID:-60001} \
 	USER_GID=${USER_GID:-${USER_UID}}
 
@@ -217,7 +217,7 @@ case ":$PATH:" in
 esac
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 export GPG_TTY="$(tty 2>/dev/null || true)"
-alias cc="claude --dangerously-skip-permissions"
+alias cc="claude"
 
 _DOC_
 EOF
