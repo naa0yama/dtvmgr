@@ -2,6 +2,16 @@
 
 ## What's Changed
 
+### Bug Fixes 🐌
+
+- fix(release-manager): handle empty PREV_TAG in changelog generation by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/323
+
+**Full Changelog**: https://github.com/naa0yama/dtvmgr/compare/v0.4.3...v0.4.4
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+## What's Changed
+
 ### Documentation 🗒️
 
 - ci: backport infrastructure from brust template by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/222
