@@ -150,6 +150,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 	echo "**** Dependencies ****" && \
 	set -euxo pipefail && \
 	apt-get -y install --no-install-recommends \
+	python3.13-venv \
 	shellcheck
 
 # User level settings
@@ -221,7 +222,6 @@ alias cc="claude"
 
 _DOC_
 EOF
-
 # graft:keep-start
 # Project-specific dependencies are listed here.
 USER root
@@ -280,3 +280,4 @@ RUN echo  "**** FFmpeg | check library ****" && \
 	egrep -i "[x|h]264|[x|h]265|av1|cuvid|hevc|libmfx|nv[dec|enc]|qsv|vaapi|vp9"; done
 
 # graft:keep-end
+
