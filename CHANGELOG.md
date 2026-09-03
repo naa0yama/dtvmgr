@@ -2,6 +2,54 @@
 
 ## What's Changed
 
+### Bug Fixes 🐌
+
+- fix(release-manager): handle empty PREV_TAG in changelog generation by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/323
+
+### Development Environment 🔧
+
+- chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/326
+- chore(deps): update mise to v2026.5.18 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/328
+- chore(deps): update mise to v2026.6.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/329
+- chore(deps): update all action update to v4.1.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/330
+- chore(deps): update all action update to v2.81.5 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/331
+- chore(deps): update all action update to v2.81.6 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/332
+- chore(deps): update dependency github:naa0yama/graft to v0.5.8 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/333
+- chore(deps): update all action update to v2.81.7 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/334
+- chore(deps): update dependency github:naa0yama/graft to v0.5.9 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/335
+- chore(deps): update mise to v2026.6.1 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/336
+- chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/337
+- chore(deps): update all action update to v2.81.8 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/338
+- chore(deps): update all action update to v2.81.9 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/339
+- chore(deps): update mise to v2026.6.2 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/340
+- chore(deps): update all action update to v2.81.10 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/342
+- chore(deps): update mise to v2026.6.3 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/343
+- chore(deps): update mise to v2026.6.4 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/344
+- chore(deps): update mise to v2026.6.5 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/345
+- chore(deps): update mise to v2026.6.6 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/346
+- chore(deps): lock file maintenance by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/348
+- chore(deps): update mise to v2026.6.9 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/347
+- chore(deps): update mise to v2026.6.10 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/349
+- chore(deps): update all action update by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/350
+- chore(deps): update dependency aqua:embarkstudios/cargo-deny to v0.19.9 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/351
+- chore(deps): update mise (patch) by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/353
+- chore(deps): update all action update by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/354
+- chore(deps): update dependency mozilla/sccache to v0.16.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/356
+- chore(deps): update dependency aqua:cli/cli to v2.96.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/341
+- chore(deps): update dependency usage to v3.5.3 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/325
+- chore(deps): update docker/dockerfile docker tag to v1.25.0 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/357
+- chore(deps): update dependency jdx/mise to v2026.6.14 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/360
+- chore(deps): update dependency github:naa0yama/graft to v0.5.11 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/362
+- chore(deps): update dependency usage to v3.5.4 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/363
+- chore(deps): update dependency cargo:cargo-nextest to v0.9.143 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/366
+- chore(deps): update dependency usage to v3.5.7 by @renovate[bot] in https://github.com/naa0yama/dtvmgr/pull/367
+
+**Full Changelog**: https://github.com/naa0yama/dtvmgr/compare/v0.4.3...v0.4.4
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+## What's Changed
+
 ### Documentation 🗒️
 
 - ci: backport infrastructure from brust template by @naa0yama in https://github.com/naa0yama/dtvmgr/pull/222
