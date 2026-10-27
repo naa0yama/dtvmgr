@@ -657,7 +657,7 @@ dependencies = [
 
 [[package]]
 name = "dtvmgr-api"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "chrono",
@@ -677,7 +677,7 @@ dependencies = [
 
 [[package]]
 name = "dtvmgr-cli"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -710,7 +710,7 @@ dependencies = [
 
 [[package]]
 name = "dtvmgr-db"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "rusqlite",
@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "dtvmgr-jlse"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "csv",
@@ -738,7 +738,7 @@ dependencies = [
 
 [[package]]
 name = "dtvmgr-tsduck"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "libc",
@@ -750,7 +750,7 @@ dependencies = [
 
 [[package]]
 name = "dtvmgr-tui"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "chrono",
@@ -769,7 +769,7 @@ dependencies = [
 
 [[package]]
 name = "dtvmgr-vmaf"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "regex",
